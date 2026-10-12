@@ -5,7 +5,6 @@ a{color:#2081e2;text-decoration:none}button,select,input{font:inherit;color:inhe
 .top{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid #1f1f23;position:sticky;top:0;background:#0c0c0ef0;backdrop-filter:blur(8px);z-index:20}
 .brand{font-weight:800;font-size:17px}.brand span{color:#2081e2}
 .colsel{background:#1a1a1f;border:1px solid #2a2a30;border-radius:10px;padding:7px 10px}
-.notice{display:flex;gap:10px;align-items:center;background:#3a2a05;border-bottom:1px solid #6b4d0a;color:#ffd27a;padding:9px 20px;font-size:13px}
 .banner{position:relative;min-height:380px;background:#111 center/cover;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}
 .banner-art{position:absolute;inset:0;display:grid;grid-template-columns:repeat(6,1fr);opacity:.55;filter:saturate(1.1)}
 .banner-art img{width:100%;height:100%;object-fit:cover;aspect-ratio:1}
@@ -57,8 +56,7 @@ img.broken{opacity:.15}
  .top{padding:10px 14px}.banner{min-height:300px}.banner-art{grid-template-columns:repeat(4,1fr)}.hero{padding:0 14px}.avatar{width:72px;height:72px}h1{font-size:24px}
  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 10px;padding:14px}.stat b{font-size:15px}.stat span{font-size:11px}
  .tipbox{min-width:220px}.stats .stat:nth-child(3n) .tipbox{left:auto;right:0}
- .desc{padding:0 14px;font-size:13px}.tabs{padding:0 14px}.chips{padding:10px 14px}.content{padding:0 10px 30px}.notice{padding:8px 14px;font-size:12px}
- .grid{grid-template-columns:repeat(2,1fr);gap:10px}.sort{max-width:42%}.fbtn{padding:10px}
+ .desc{padding:0 14px;font-size:13px}.tabs{padding:0 14px}.chips{padding:10px 14px}.content{padding:0 10px 30px} .grid{grid-template-columns:repeat(2,1fr);gap:10px}.sort{max-width:42%}.fbtn{padding:10px}
  .acth{display:none}.actr{grid-template-columns:auto 1fr auto;grid-template-areas:"ev ai pr" "ev fr tm";gap:4px 10px}.actr>span:nth-child(1){grid-area:ev}.actr>span:nth-child(2){grid-area:ai}.actr>span:nth-child(3){grid-area:pr;text-align:right}.actr>span:nth-child(4){display:none}.actr>span:nth-child(5){grid-area:fr;color:#888}.actr>span:nth-child(6){grid-area:tm;text-align:right;font-size:12px}.ev b{display:none}
  .mbox{grid-template-columns:1fr}.minfo{max-height:none}.modal{place-items:start center;padding:10px}
  .ctab{grid-template-columns:1fr}

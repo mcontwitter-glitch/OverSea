@@ -1,7 +1,7 @@
 import './style.css';
 import CFG from '../config/collections.json';
 
-type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; notice?: string; note?: string };
+type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number };
 type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
@@ -39,8 +39,7 @@ function header() {
   const fl = summary?.floor;
   const listedPct = summary?.listedCount != null ? ((100 * summary.listedCount) / COL.supply).toFixed(1) + '%' : '-';
   const avatarSrc = COL.logo || (items[0] ? gw[0] + items[0].image : '');
-  const notices = deployedChains.filter(c => chains[c].notice).map(c => `<div class="notice">${logo(c)}<span><b>${chains[c].name}:</b> ${esc(chains[c].notice)}</span></div>`).join('');
-  return `${notices}
+  return `
   <div class="banner" style="${COL.banner ? `background-image:url(${COL.banner})` : ''}">
     <div class="banner-art">${items.slice(0, 12).map(i => img(i.image)).join('')}</div><div class="banner-fade"></div>
     <div class="hero">

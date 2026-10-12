@@ -7,8 +7,7 @@
       "rpc": "https://api.mainnet.abs.xyz",
       "native": "ETH",
       "openseaSlug": "abstract",
-      "explorer": "https://abscan.org",
-      "notice": "Abstract mainnet shuts down on Dec 15, 2026. Bridge or migrate your NFTs before then."
+      "explorer": "https://abscan.org"
     },
     "ethereum": {
       "name": "Ethereum",
