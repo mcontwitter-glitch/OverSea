@@ -4,8 +4,8 @@
  "description": "Multichain NFT collections in one place",
  "start_url": "/",
  "display": "standalone",
- "background_color": "#081633",
- "theme_color": "#0b1f4d",
+ "background_color": "#000000",
+ "theme_color": "#000000",
  "icons": [
   {
    "src": "/icon-192.png",

@@ -23,7 +23,7 @@ for (const s of [16, 32, 48]) await sharp(logo).resize(s, s).png().toFile(`publi
 await sharp(logo).resize(192, 192).png().toFile('public/icon-192.png');
 await sharp(logo).resize(512, 512).png().toFile('public/icon-512.png');
 // apple-touch: full-bleed square on navy (iOS rounds it itself)
-await sharp({ create: { width: 180, height: 180, channels: 4, background: '#0b1f4d' } }).composite([{ input: await sharp(logo).resize(180, 180).toBuffer() }]).png().toFile('public/apple-touch-icon.png');
+await sharp({ create: { width: 180, height: 180, channels: 4, background: '#0a0a0a' } }).composite([{ input: await sharp(logo).resize(180, 180).toBuffer() }]).png().toFile('public/apple-touch-icon.png');
 // favicon.ico (PNG-in-ICO, 32px)
 const p32 = await sharp(logo).resize(32, 32).png().toBuffer();
 const ico = Buffer.alloc(22); ico.writeUInt16LE(0, 0); ico.writeUInt16LE(1, 2); ico.writeUInt16LE(1, 4); ico[6] = 32; ico[7] = 32; ico.writeUInt16LE(1, 10); ico.writeUInt16LE(32, 12); ico.writeUInt32LE(p32.length, 14); ico.writeUInt32LE(22, 18);
@@ -35,6 +35,6 @@ await ban.clone().resize(900).webp({ quality: 80 }).toFile(`${O}/banner-900.webp
 await ban.clone().resize(1500).png({ compressionLevel: 9 }).toFile(`${O}/banner-1500.png`);
 // og:image 1200x630: banner (1200x400) centered on navy
 const b1200 = await ban.clone().resize(1200, 400).toBuffer();
-await sharp({ create: { width: 1200, height: 630, channels: 3, background: '#0b1f4d' } }).composite([{ input: b1200, top: 115, left: 0 }]).png({ compressionLevel: 9 }).toFile('public/og-image.png');
-await fs.writeFile('public/site.webmanifest', JSON.stringify({ name: 'MultiSea', short_name: 'MultiSea', description: 'Multichain NFT collections in one place', start_url: '/', display: 'standalone', background_color: '#081633', theme_color: '#0b1f4d', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }] }, null, 1));
+await sharp({ create: { width: 1200, height: 630, channels: 3, background: '#0a0a0a' } }).composite([{ input: b1200, top: 115, left: 0 }]).png({ compressionLevel: 9 }).toFile('public/og-image.png');
+await fs.writeFile('public/site.webmanifest', JSON.stringify({ name: 'MultiSea', short_name: 'MultiSea', description: 'Multichain NFT collections in one place', start_url: '/', display: 'standalone', background_color: "#000000", theme_color: "#000000", icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }] }, null, 1));
 console.log('bbox', x0, y0, x1, y1, 'side', side);

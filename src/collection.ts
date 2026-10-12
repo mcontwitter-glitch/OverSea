@@ -133,7 +133,7 @@ function doBuy(id: number) {
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
 function card(it: Item, idx = 99) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#202026'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
+  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
