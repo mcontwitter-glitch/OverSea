@@ -4,7 +4,7 @@ Static Vite + TypeScript site. Collections and chains live in `config/collection
     npm i
     npm run data          # node --env-file=.env scripts/index.mjs  -> public/data/<slug>/
     #   flags: --skip-meta  --skip-chain  --chains=ethereum,robinhood
-    npm run build         # dist/ is a static site (base '/OverSea/' for GitHub Pages)
+    npm run build         # dist/ is a static site (base '/' for the custom domain multisea.io)
     npx vite preview      # http://localhost:4173
     node scripts/screens.mjs   # screenshots (needs preview running)
 

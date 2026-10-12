@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export GIT_AUTHOR_NAME=mcontwitter-glitch GIT_AUTHOR_EMAIL=mcontwitter-glitch@users.noreply.github.com GIT_COMMITTER_NAME=mcontwitter-glitch GIT_COMMITTER_EMAIL=mcontwitter-glitch@users.noreply.github.com
-dig +short multisea.io A | grep -q 185.199 || { echo "multisea.io A records not live yet"; exit 1; }
+curl -s -H 'accept: application/dns-json' 'https://cloudflare-dns.com/dns-query?name=multisea.io&type=A' | grep -q 185.199 || { echo "multisea.io A records not live yet"; exit 1; }
 echo multisea.io > public/CNAME
 VITE_BASE=/ npx vite build && touch dist/.nojekyll
 K=$(sed -n "s/^OPENSEA_API_KEY=//p" .env | cut -c1-8); [ -n "$K" ] && ! grep -rqF "$K" dist src worker/src config README.md
