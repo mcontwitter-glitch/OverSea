@@ -18,7 +18,8 @@
     "vite": "^8.3.4"
   },
   "dependencies": {
-    "ethers": "^6.17.0"
+    "ethers": "^6.17.0",
+    "viem": "^2.57.5"
   },
   "type": "module"
 }

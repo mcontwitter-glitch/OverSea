@@ -1,0 +1,8 @@
+name = "multisea-api"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+# Secret (never in code): npx wrangler secret put OPENSEA_API_KEY
+# Optional custom domain once multisea.io is active on Cloudflare (uncomment):
+# routes = [{ pattern = "api.multisea.io", custom_domain = true }]
+[vars]
+ALLOWED_ORIGINS = "https://multisea.io,https://www.multisea.io,https://mcontwitter-glitch.github.io"

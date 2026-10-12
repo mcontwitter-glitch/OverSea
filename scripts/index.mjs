@@ -244,7 +244,7 @@ async function opensea(results) {
         for (const l of lj.listings || []) {
           const offer = l.protocol_data?.parameters?.offer?.[0];
           const price = l.price?.current; if (!offer || !price) continue;
-          out.listings.push({ chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(price.value) / 10 ** price.decimals, currency: price.currency, orderHash: l.order_hash });
+          out.listings.push({ chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(price.value) / 10 ** price.decimals, currency: price.currency, orderHash: l.order_hash, protocolAddress: l.protocol_address, osChain: l.chain || ch, seller: l.protocol_data?.parameters?.offerer, endTime: Number(l.protocol_data?.parameters?.endTime) || null });
         }
         if (!lj.next) break; next = lj.next;
       }

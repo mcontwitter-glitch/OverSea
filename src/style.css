@@ -61,3 +61,14 @@ img.broken{opacity:.15}
  .mbox{grid-template-columns:1fr}.minfo{max-height:none}.modal{place-items:start center;padding:10px}
  .ctab{grid-template-columns:1fr}
 }
+.navr{display:flex;gap:8px;align-items:center}.wbtn{background:#2081e2;border:0;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer;display:flex;gap:6px;align-items:center;white-space:nowrap}.wbtn.on{background:#1a1a1f;border:1px solid #2a2a30;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.wdot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block}.wdot.on{background:#3fd68f}
+.buy{margin-top:8px;width:100%;background:#2081e2;border:0;border-radius:8px;padding:7px;font-weight:700;cursor:pointer}.buy:disabled{background:#26262c;color:#888;cursor:not-allowed}.buy small{font-weight:500;font-size:10px;opacity:.8}.buy.big{padding:12px;font-size:16px;margin:10px 0 0}
+.wbox{position:relative;background:#141418;border:1px solid #26262c;border-radius:18px;width:100%;max-width:420px;padding:20px}.wbox h3{margin:0 0 12px}
+.wopt{display:flex;gap:12px;align-items:center;width:100%;background:#1b1b20;border:1px solid #2a2a30;border-radius:12px;padding:12px;margin:8px 0;cursor:pointer;color:#eee;font-weight:600}.wopt img{width:28px;height:28px;border-radius:6px}.wopt .wdot{width:28px;height:28px;border-radius:6px}
+.bhead{display:flex;gap:12px;align-items:center;margin-bottom:14px}.bhead img{width:64px;height:64px;border-radius:10px;object-fit:cover}.bhead h3{margin:2px 0 0}
+.bbody{min-height:60px}.bkv{grid-template-columns:auto 1fr;gap:8px 14px;font-size:14px}.bkv b{text-align:right;display:flex;gap:6px;justify-content:flex-end;align-items:center}
+.bbtn{display:block;text-align:center;width:100%;background:#2081e2;color:#fff;border:0;border-radius:12px;padding:13px;font-weight:700;font-size:15px;cursor:pointer;margin-top:12px}.bbtn:disabled{background:#26262c;color:#777}.bbtn.ghost{background:#22222a}
+.err{color:#ff6b6b}.errc{color:#ff6b6b!important}.ok{color:#3fd68f}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid #444;border-top-color:#2081e2;border-radius:50%;animation:sp 1s linear infinite;vertical-align:middle;margin-right:8px}@keyframes sp{to{transform:rotate(360deg)}}
+@media (max-width:640px){.brand{font-size:15px}.colsel{display:none}.wbtn{padding:7px 10px;font-size:13px}}

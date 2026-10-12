@@ -1,0 +1,11 @@
+import fs from 'fs';
+import { parseAbiItem, encodeFunctionData, concat } from 'viem';
+const { transaction: t } = JSON.parse(fs.readFileSync(process.argv[2] || '/tmp/ful.json'));
+const toArr = v => Array.isArray(v) ? v.map(toArr) : v && typeof v === 'object' ? Object.values(v).map(toArr) : v;
+const abi = parseAbiItem('function ' + t.function);
+const args = Object.values(t.input_data).map(toArr);
+let data = encodeFunctionData({ abi: [abi], functionName: abi.name, args });
+if (t.calldata_suffix) data = concat([data, t.calldata_suffix]);
+console.log(abi.name, Object.keys(t.input_data), data.length);
+const r = await fetch('https://api.mainnet.abs.xyz', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ from: '0x000000000000000000000000000000000000bEEF', to: t.to, value: t.value_hex, data }, 'latest', { '0x000000000000000000000000000000000000bEEF': { balance: '0x56BC75E2D63100000' } }] }) });
+console.log(await r.text());

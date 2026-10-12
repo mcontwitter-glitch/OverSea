@@ -1,9 +1,10 @@
 import './style.css';
 import CFG from '../config/collections.json';
+import { wallet, openConnect, disconnect, walletLabel, onWallet, checkApi, startBuy, apiReady } from './wallet';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number };
-type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null };
+type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null; orderHash: string; protocolAddress: string };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
 const chains = CFG.chains as Record<string, Chain>;
 const params = new URLSearchParams(location.search);
@@ -70,6 +71,7 @@ function filtered() {
     const loc = owners[it.id];
     if (st.chains.size && !(loc && st.chains.has(loc.chain))) return false;
     if (st.status === 'listed' && !listMap.has(it.id)) return false;
+    if (st.status === 'mine') { const me = wallet.address?.toLowerCase(); if (!me || !(loc && (loc.owner.toLowerCase() === me || loc.also?.some(a => a.owner.toLowerCase() === me)))) return false; }
     if (st.q && !(it.name.toLowerCase().includes(st.q) || String(it.id) === st.q)) return false;
     for (const [t, vs] of st.traits) { if (!vs.size) continue; const v = it.attrs.find(a => a[0] === t)?.[1]; if (!v || !vs.has(v)) return false; }
     return true;
@@ -89,18 +91,28 @@ function sidebar() {
   const T = traits.traits as Record<string, { value: string; count: number; pct: number }[]>;
   return `<aside class="side ${st.sidebar ? 'open' : ''}">
    <div class="side-h"><b>Filters</b><button class="x" data-act="close-side">✕</button></div>
-   <div class="grp"><div class="gh">Status</div><label><input type="radio" name="status" value="all" ${st.status === 'all' ? 'checked' : ''}> All</label><label><input type="radio" name="status" value="listed" ${st.status === 'listed' ? 'checked' : ''} ${summary?.listingsAvailable ? '' : 'disabled'}> Listed ${summary?.listingsAvailable ? '' : '<i class="need">needs API key</i>'}</label></div>
+   <div class="grp"><div class="gh">Status</div><label><input type="radio" name="status" value="all" ${st.status === 'all' ? 'checked' : ''}> All</label><label><input type="radio" name="status" value="listed" ${st.status === 'listed' ? 'checked' : ''} ${summary?.listingsAvailable ? '' : 'disabled'}> Listed ${summary?.listingsAvailable ? '' : '<i class="need">needs API key</i>'}</label><label><input type="radio" name="status" value="mine" ${st.status === 'mine' ? 'checked' : ''}> My items ${wallet.address ? `<em>${myCount()}</em>` : '<i class="need">connect wallet</i>'}</label></div>
    <div class="grp"><div class="gh">Chains</div>${deployedChains.map(c => `<label><input type="checkbox" data-chain-cb="${c}" ${st.chains.has(c) ? 'checked' : ''}> ${logo(c)} ${chains[c].name}<em>${summary?.perChain?.[c]?.live ?? '-'}</em></label>`).join('')}</div>
    <div class="gh pad">Traits</div>
    ${Object.entries(T).map(([t, vals]) => `<details class="grp" ${st.traits.get(t)?.size ? 'open' : ''}><summary>${esc(t)}<em>${vals.length}</em></summary>${vals.map(v => `<label><input type="checkbox" data-trait="${esc(t)}" value="${esc(v.value)}" ${st.traits.get(t)?.has(v.value) ? 'checked' : ''}> ${esc(v.value)}<em>${v.count}</em></label>`).join('')}</details>`).join('')}
   </aside>`;
 }
 
+const sold = new Set<number>();
+const myCount = () => { const me = wallet.address?.toLowerCase(); return me ? Object.values(owners).filter(l => l.owner.toLowerCase() === me || l.also?.some(a => a.owner.toLowerCase() === me)).length : 0; };
+const buyBtn = (id: number, cls = '') => { const l = listMap.get(id); if (!l || !chains[l.chain]?.openseaSlug) return ''; return apiReady ? `<button class="buy ${cls}" data-buy="${id}">Buy</button>` : `<button class="buy ${cls}" disabled title="Buying coming soon">Buy <small>soon</small></button>`; };
+function doBuy(id: number) {
+  const l = listMap.get(id); const it = items.find(i => i.id === id); if (!l || !it) return;
+  const dep = COL.deployments.find(d => d.chain === l.chain)!;
+  startBuy({ id, name: it.name, img: gw[0] + it.image, chain: l.chain, contract: dep.address, listing: l },
+    sid => { listMap.delete(sid); sold.add(sid); const me = wallet.address!; owners[sid] = { chain: l.chain, owner: me }; render(); },
+    gid => { listMap.delete(gid); render(); });
+}
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
 function card(it: Item) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci">${img(it.image)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : '<span class="mut">Not listed</span>'}</div></div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function itemsView() {
@@ -141,16 +153,16 @@ function modal(id: number) {
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
     <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
-  m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
+  m.addEventListener('click', e => { const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
   document.body.appendChild(m);
 }
 
 function render() {
   const y = window.scrollY;
-  app.innerHTML = `<nav class="top"><div class="brand">◆ multichain<span>.view</span></div><select class="colsel">${CFG.collections.map(c => `<option value="${c.slug}" ${c.slug === COL.slug ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></nav>
+  app.innerHTML = `<nav class="top"><div class="brand">◆ multichain<span>.view</span></div><div class="navr"><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button><select class="colsel">${CFG.collections.map(c => `<option value="${c.slug}" ${c.slug === COL.slug ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div></nav>
   ${header()}<div class="content">${st.tab === 'items' ? itemsView() : st.tab === 'activity' ? activityView() : chainsView()}</div>`;
   window.scrollTo(0, y);
 }
@@ -159,7 +171,9 @@ app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
   const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; render(); return; }
   const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
+  const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
   const act = t.closest('[data-act]') as HTMLElement;
+  if (act?.dataset.act === 'wallet') { if (wallet.address) { if (confirm('Disconnect ' + wallet.address + '?')) { disconnect(); if (st.status === 'mine') st.status = 'all'; } } else openConnect(); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }
   const c = t.closest('.card,.ai') as HTMLElement; if (c) modal(+c.dataset.id!);
@@ -175,6 +189,8 @@ app.addEventListener('change', e => {
   st.limit = 60; render();
 });
 let qt: any; app.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (!t.classList.contains('search')) return; clearTimeout(qt); qt = setTimeout(() => { st.q = t.value.trim().toLowerCase(); render(); const s = $('.search') as HTMLInputElement; s.focus(); s.setSelectionRange(s.value.length, s.value.length); }, 250); });
+onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all'; render(); });
+checkApi();
 render();
 if (params.get('item')) modal(+params.get('item')!);
 if (params.get('tab')) { st.tab = params.get('tab')!; render(); }

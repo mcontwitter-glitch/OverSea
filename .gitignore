@@ -3,3 +3,8 @@ dist
 .env
 .cache
 *.log
+worker/node_modules
+worker/.dev.vars
+worker/.wrangler
+.dev.vars
+dist-local
