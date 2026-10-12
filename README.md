@@ -48,7 +48,7 @@ Commands:
     npx wrangler whoami
     npx wrangler kv namespace create COLLECTIONS   # paste the id into wrangler.toml
     npx wrangler kv namespace create NONCES        # paste the id into wrangler.toml
-    npx wrangler r2 bucket create multisea-media   # R2 must be enabled once in the dashboard (free tier)
+    npx wrangler r2 bucket create multisea-media   # R2 must be enabled once in the dashboard first (error 10042 otherwise); then uncomment r2_buckets in wrangler.toml and redeploy
     grep -m1 '^OPENSEA_API_KEY=' ../.env | cut -d= -f2- | npx wrangler secret put OPENSEA_API_KEY
     npx wrangler deploy                            # also creates api.multisea.io (custom_domain route)
     curl https://api.multisea.io/health

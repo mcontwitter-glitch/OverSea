@@ -8,3 +8,4 @@ worker/.dev.vars
 worker/.wrangler
 .dev.vars
 dist-local
+worker/.cf-token

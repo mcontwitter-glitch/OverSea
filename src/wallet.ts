@@ -9,6 +9,7 @@ const chains = CFG.chains as Record<string, ChainCfg>;
 export const API: string = (import.meta.env.VITE_API_BASE as string) || APP.apiBase || '';
 export const wallet = { address: null as string | null, provider: null as any, name: '' };
 export let apiReady = false;
+export let apiFeatures: string[] = [];
 const listeners: (() => void)[] = [];
 export const onWallet = (f: () => void) => listeners.push(f);
 const emit = () => listeners.forEach(f => f());
@@ -18,7 +19,7 @@ const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;',
 // ---- API health: Buy stays disabled ("buying coming soon") until the Worker answers ----
 export async function checkApi() {
   if (!API) return false;
-  try { const ac = new AbortController(); setTimeout(() => ac.abort(), 4000); const r = await fetch(API + '/health', { signal: ac.signal }); apiReady = r.ok; } catch { apiReady = false; }
+  try { const ac = new AbortController(); setTimeout(() => ac.abort(), 4000); const r = await fetch(API + '/health', { signal: ac.signal }); apiReady = r.ok; if (r.ok) apiFeatures = (await r.json()).features || []; } catch { apiReady = false; }
   emit(); return apiReady;
 }
 

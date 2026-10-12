@@ -146,7 +146,7 @@ async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'media'] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', ...(env.MEDIA ? ['media'] : [])] };
 
   // --- SIWE ---
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'nonce') { const n = rand(12); await env.NONCES.put('n:' + n, '1', { expirationTtl: 600 }); return { nonce: n }; }
@@ -175,6 +175,7 @@ async function handle(req, env, url) {
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'me') { const s = await requireSession(req, env); return { address: s.address, isAdmin: admins(env).includes(s.address) }; }
 
   // --- media ---
+  if (p[0] === 'media' && !env.MEDIA) bad('image uploads are coming soon (storage not enabled yet)', 503);
   if (M === 'POST' && p[0] === 'media' && p.length === 1) {
     await requireSession(req, env);
     const len = +(req.headers.get('content-length') || 0); if (len > 2 * 1024 * 1024) bad('max 2MB', 413);

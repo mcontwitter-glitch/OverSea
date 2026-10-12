@@ -1,12 +1,14 @@
 // "Edit collection" modal for verified collection owners (SIWE-authorized in the Worker).
 import { api, uploadImage } from './auth';
 import { esc, media } from './shell';
+import { apiFeatures } from './wallet';
+const mediaOn = () => apiFeatures.includes('media');
 export type Editable = { slug: string; name: string; description?: string; website?: string; x?: string; discord?: string; logo?: string; banner?: string };
 export function openEdit(c: Editable, onSaved: (c: any) => void) {
   const m = document.createElement('div'); m.className = 'modal wov';
   m.innerHTML = `<div class="wbox form"><button class="x mx">✕</button><h3>Edit ${esc(c.name)}</h3>
-   <label>Logo <span class="mut small">(square, re-encoded to WebP ≤512px)</span><div class="pick"><img class="pv lg" src="${esc(media(c.logo))}" alt=""><input type="file" accept="image/*" data-f="logo"></div></label>
-   <label>Banner <span class="mut small">(wide, ≤1500px)</span><div class="pick"><img class="pv bn" src="${esc(media(c.banner))}" alt=""><input type="file" accept="image/*" data-f="banner"></div></label>
+   <label>Logo <span class="mut small">(square, re-encoded to WebP ≤512px)</span><div class="pick"><img class="pv lg" src="${esc(media(c.logo))}" alt="">${mediaOn() ? '<input type="file" accept="image/*" data-f="logo">' : '<span class="mut small">Image uploads coming soon</span>'}</div></label>
+   <label>Banner <span class="mut small">(wide, ≤1500px)</span><div class="pick"><img class="pv bn" src="${esc(media(c.banner))}" alt="">${mediaOn() ? '<input type="file" accept="image/*" data-f="banner">' : '<span class="mut small">Image uploads coming soon</span>'}</div></label>
    <label>Description<textarea name="description" maxlength="1000" rows="4">${esc(c.description || '')}</textarea></label>
    <label>Website<input name="website" placeholder="https://" value="${esc(c.website || '')}"></label>
    <label>X<input name="x" placeholder="https://x.com/handle" value="${esc(c.x || '')}"></label>
