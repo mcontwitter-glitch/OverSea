@@ -108,3 +108,5 @@ img.broken{opacity:.15}
 .wbox.form{max-height:90vh;overflow:auto}
 @media (max-width:640px){.navl{margin-left:10px;gap:10px}.navl a{font-size:13px}.brand span{font-size:16px}.brand img{width:28px;height:28px}.two,.three{grid-template-columns:1fr}.home{padding:16px 12px}.cgrid{grid-template-columns:1fr}.mshero img{max-height:200px}.descrow{padding:0 14px}.hero2{padding:0 14px}}
 @media (max-width:380px){.navl a:first-child{display:none}}
+
+.stat small.usd{display:block;color:#8a8a8a;font-size:11px;font-weight:600;margin-top:1px}.ccstats{grid-template-columns:repeat(4,1fr)}@media(max-width:480px){.ccstats{grid-template-columns:repeat(2,1fr)}}

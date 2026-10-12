@@ -3,7 +3,7 @@ import { checkApi, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media } from './shell';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
-type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; featured?: boolean; thumb?: string };
+type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
 const fmt = (n: number) => (n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(4)).toString());
 let cards: Card[] = []; let is404 = false;
 export function notFound() { is404 = true; render(); }
@@ -11,7 +11,7 @@ async function staticCards() {
   return Promise.all(CFG.collections.map(async c => {
     const s = await fetch(`/data/${c.slug}/summary.json`).then(r => r.json()).catch(() => null);
     const vol = s?.volume ? Object.entries(s.volume).map(([k, v]) => `${fmt(v as number)} ${k}`).join(' + ') : '-';
-    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
+    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: s?.floor ? `${fmt((s.floor.priceEth ?? s.floor.price) * c.supply)} ETH` : '-', volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
   }));
 }
 function card(c: Card) {
@@ -19,7 +19,7 @@ function card(c: Card) {
   return `<a class="ccard ${c.featured ? 'feat' : ''}" href="/c/${esc(c.slug)}"><div class="ccb">${art}${c.featured ? '<span class="ftag">Featured</span>' : ''}</div>
    <div class="ccbody"><img class="cclogo" src="${esc(media(c.logo))}" alt="" width="56" height="56"><div class="ccname">${esc(c.name)}</div>
    <div class="ccchains">${c.chains.map(k => `<img class="cl" src="/logos/${k}.svg" title="${esc(chains[k]?.name)}" alt="">`).join('')}</div>
-   <div class="ccstats"><div><span>Floor</span><b>${esc(c.floor ?? '-')}</b></div><div><span>Volume</span><b>${esc(c.volume ?? '-')}</b></div><div><span>Owners</span><b>${esc(c.owners ?? '-')}</b></div></div></div></a>`;
+   <div class="ccstats"><div><span>Floor</span><b>${esc(c.floor ?? '-')}</b></div><div><span>Volume</span><b>${esc(c.volume ?? '-')}</b></div><div><span>Owners</span><b>${esc(c.owners ?? '-')}</b></div><div title="Floor price × total supply"><span>Market cap</span><b>${esc(c.mcap ?? '-')}</b></div></div></div></a>`;
 }
 function render() {
   app.innerHTML = `${navHtml('home')}
