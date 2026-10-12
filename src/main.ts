@@ -29,7 +29,7 @@ const [summary, items, traits, owners, listings, activity] = await Promise.all([
 const listMap = new Map<number, Listing>(); listings.forEach(l => { const c = listMap.get(l.id); if (!c || l.price < c.price) listMap.set(l.id, l); });
 const deployedChains = COL.deployments.map(d => d.chain);
 
-const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'id-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
+const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'price-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
 
 function header() {
   const pc = summary?.perChain || {};
@@ -72,10 +72,13 @@ function filtered() {
     for (const [t, vs] of st.traits) { if (!vs.size) continue; const v = it.attrs.find(a => a[0] === t)?.[1]; if (!v || !vs.has(v)) return false; }
     return true;
   });
-  const p = (i: Item) => listMap.get(i.id)?.price ?? Infinity;
+  // Price sort: ETH/WETH listings first (comparable unit), then non-ETH listings (APE etc., no USD rate) by price, then unlisted by id.
+  const tier = (i: Item) => { const l = listMap.get(i.id); return !l ? 2 : /^W?ETH$/.test(l.currency) ? 0 : 1; };
+  const pr = (i: Item) => listMap.get(i.id)?.price ?? 0;
   const s: Record<string, (a: Item, b: Item) => number> = {
     'id-asc': (a, b) => a.id - b.id, 'id-desc': (a, b) => b.id - a.id, 'rarity': (a, b) => a.rank - b.rank, 'rarity-desc': (a, b) => b.rank - a.rank,
-    'price-asc': (a, b) => p(a) - p(b) || a.id - b.id, 'price-desc': (a, b) => (p(b) === Infinity ? -1 : p(b)) - (p(a) === Infinity ? -1 : p(a)) || a.id - b.id,
+    'price-asc': (a, b) => tier(a) - tier(b) || (tier(a) < 2 ? pr(a) - pr(b) : 0) || a.id - b.id,
+    'price-desc': (a, b) => tier(a) - tier(b) || (tier(a) < 2 ? pr(b) - pr(a) : 0) || a.id - b.id,
   };
   return arr.sort(s[st.sort]);
 }
@@ -93,7 +96,7 @@ function sidebar() {
 
 function card(it: Item) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci">${img(it.image)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank">#${it.rank}</span></div>
+  return `<div class="card" data-id="${it.id}"><div class="ci">${img(it.image)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div></div></div>`;
 }
 
@@ -133,7 +136,7 @@ function modal(id: number) {
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg">${img(it.image)}</div><div class="minfo">
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
-    <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity #${it.rank}</span></div>
+    <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
