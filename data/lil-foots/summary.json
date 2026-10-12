@@ -1,6 +1,6 @@
 {
  "slug": "lil-foots",
- "generatedAt": "2026-10-12T07:01:53.074Z",
+ "generatedAt": "2026-10-12T07:23:50.878Z",
  "items": 4404,
  "owners": 487,
  "perChain": {
@@ -157,7 +157,8 @@
   "id": 2396,
   "price": 0.00367,
   "currency": "ETH",
-  "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67"
+  "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67",
+  "priceEth": 0.00367
  },
  "floorByChain": {
   "abstract": {
@@ -165,35 +166,64 @@
    "id": 2396,
    "price": 0.00367,
    "currency": "ETH",
-   "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67"
+   "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67",
+   "priceEth": 0.00367
   },
   "ethereum": {
    "chain": "ethereum",
    "id": 3348,
    "price": 0.01,
    "currency": "ETH",
-   "orderHash": "0xc66f11f4159be0c6e6e766e50504caf98ce5ec1459c4e6230192aec8cfc09deb"
+   "orderHash": "0xc66f11f4159be0c6e6e766e50504caf98ce5ec1459c4e6230192aec8cfc09deb",
+   "priceEth": 0.01
   },
   "base": {
    "chain": "base",
    "id": 1942,
    "price": 101,
    "currency": "ETH",
-   "orderHash": "0x76b3f7400cce579b73db72913687f02fe420c0b2ade6167a580deb17e75c278e"
+   "orderHash": "0x76b3f7400cce579b73db72913687f02fe420c0b2ade6167a580deb17e75c278e",
+   "priceEth": 101
   },
   "apechain": {
    "chain": "apechain",
    "id": 3751,
    "price": 160,
    "currency": "APE",
-   "orderHash": "0x4cf2d0bccf8b6119116398f0025826f30b05221cedc450c9c5101b900d7a126e"
+   "orderHash": "0x4cf2d0bccf8b6119116398f0025826f30b05221cedc450c9c5101b900d7a126e",
+   "priceEth": 0.00978115
   },
   "robinhood": {
    "chain": "robinhood",
    "id": 2750,
    "price": 0.009,
    "currency": "ETH",
-   "orderHash": "0xbbac583e0302c5c56fdc45c37b1a8d7cb846e4510c679741c11268dc14c306b1"
+   "orderHash": "0xbbac583e0302c5c56fdc45c37b1a8d7cb846e4510c679741c11268dc14c306b1",
+   "priceEth": 0.009
+  }
+ },
+ "rates": {
+  "ETH": {
+   "eth": 1,
+   "source": "unit"
+  },
+  "WETH": {
+   "eth": 1,
+   "source": "unit"
+  },
+  "APE": {
+   "eth": 0.00006113216061244973,
+   "usd": 0.15715,
+   "ethUsd": 2570.66,
+   "source": "coingecko",
+   "at": "2026-10-12T07:23:50.860Z"
+  },
+  "BNB": {
+   "eth": 0.29406844934763837,
+   "usd": 755.95,
+   "ethUsd": 2570.66,
+   "source": "coingecko",
+   "at": "2026-10-12T07:23:50.860Z"
   }
  },
  "openseaStats": {
