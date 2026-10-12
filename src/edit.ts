@@ -1,0 +1,34 @@
+// "Edit collection" modal for verified collection owners (SIWE-authorized in the Worker).
+import { api, uploadImage } from './auth';
+import { esc, media } from './shell';
+export type Editable = { slug: string; name: string; description?: string; website?: string; x?: string; discord?: string; logo?: string; banner?: string };
+export function openEdit(c: Editable, onSaved: (c: any) => void) {
+  const m = document.createElement('div'); m.className = 'modal wov';
+  m.innerHTML = `<div class="wbox form"><button class="x mx">✕</button><h3>Edit ${esc(c.name)}</h3>
+   <label>Logo <span class="mut small">(square, re-encoded to WebP ≤512px)</span><div class="pick"><img class="pv lg" src="${esc(media(c.logo))}" alt=""><input type="file" accept="image/*" data-f="logo"></div></label>
+   <label>Banner <span class="mut small">(wide, ≤1500px)</span><div class="pick"><img class="pv bn" src="${esc(media(c.banner))}" alt=""><input type="file" accept="image/*" data-f="banner"></div></label>
+   <label>Description<textarea name="description" maxlength="1000" rows="4">${esc(c.description || '')}</textarea></label>
+   <label>Website<input name="website" placeholder="https://" value="${esc(c.website || '')}"></label>
+   <label>X<input name="x" placeholder="https://x.com/handle" value="${esc(c.x || '')}"></label>
+   <label>Discord<input name="discord" placeholder="https://discord.gg/…" value="${esc(c.discord || '')}"></label>
+   <p class="msg"></p><button class="bbtn save">Sign & save</button></div>`;
+  document.body.appendChild(m);
+  const up: Record<string, string> = {}; const msg = m.querySelector('.msg') as HTMLElement;
+  m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
+  m.querySelectorAll<HTMLInputElement>('input[type=file]').forEach(inp => inp.addEventListener('change', async () => {
+    const f = inp.files?.[0]; if (!f) return; const k = inp.dataset.f!;
+    msg.className = 'msg mut'; msg.textContent = 'Uploading ' + k + '…';
+    try { up[k] = await uploadImage(f, k === 'logo' ? 512 : 1500); (inp.previousElementSibling as HTMLImageElement).src = media(up[k]); msg.textContent = k + ' uploaded.'; }
+    catch (e: any) { msg.className = 'msg err'; msg.textContent = e.message; }
+  }));
+  m.querySelector('.save')!.addEventListener('click', async () => {
+    const v = (n: string) => (m.querySelector(`[name=${n}]`) as HTMLInputElement).value.trim();
+    msg.className = 'msg mut'; msg.textContent = 'Check your wallet to sign…';
+    try { const j = await api(`/collections/${c.slug}/update`, { auth: true, body: { description: v('description'), website: v('website'), x: v('x'), discord: v('discord'), ...up } }); onSaved(j.collection); m.remove(); }
+    catch (e: any) { msg.className = 'msg err'; msg.textContent = e.message; }
+  });
+}
+export const linksHtml = (c: { website?: string; x?: string; discord?: string }) => {
+  const x = c.x && !c.x.startsWith('http') ? 'https://x.com/' + c.x.replace('@', '') : c.x;
+  return [c.website && `<a href="${esc(c.website)}" target="_blank" rel="noopener">🌐 Website</a>`, x && `<a href="${esc(x)}" target="_blank" rel="noopener">𝕏</a>`, c.discord && `<a href="${esc(c.discord)}" target="_blank" rel="noopener">Discord</a>`].filter(Boolean).join('');
+};

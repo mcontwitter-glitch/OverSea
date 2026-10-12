@@ -24,7 +24,13 @@ export async function checkApi() {
 
 // ---- EIP-6963 discovery ----
 const found = new Map<string, P6963>();
-window.addEventListener('eip6963:announceProvider', (e: any) => { found.set(e.detail.info.uuid, e.detail); });
+// Silent reconnect across page loads (MultiSea uses full-page navigation): remember the wallet's rdns, use eth_accounts (no prompt).
+const LAST = 'multisea-wallet';
+async function tryRestore(p: P6963) {
+  if (wallet.address || localStorage.getItem(LAST) !== p.info.rdns) return;
+  try { const a: string[] = await p.provider.request({ method: 'eth_accounts' }); if (a?.[0]) { wallet.address = a[0]; wallet.provider = p.provider; wallet.name = p.info.name; p.provider.on?.('accountsChanged', (x: string[]) => { wallet.address = x[0] || null; emit(); }); emit(); } } catch {}
+}
+window.addEventListener('eip6963:announceProvider', (e: any) => { found.set(e.detail.info.uuid, e.detail); tryRestore(e.detail); });
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 function providers(): P6963[] {
   const list = [...found.values()];
@@ -48,8 +54,8 @@ export function openConnect() {
     const list = providers();
     const here = location.href.replace(/^https?:\/\//, '');
     const deep = `<div class="gh">Open in a wallet app</div>
-      <a class="wopt" href="https://metamask.app.link/dapp/${here}"><img src="./logos/metamask.svg" alt="">MetaMask app</a>
-      <a class="wopt" href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(location.href)}"><img src="./logos/coinbase.svg" alt="">Coinbase Wallet app</a>`;
+      <a class="wopt" href="https://metamask.app.link/dapp/${here}"><img src="/logos/metamask.svg" alt="">MetaMask app</a>
+      <a class="wopt" href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(location.href)}"><img src="/logos/coinbase.svg" alt="">Coinbase Wallet app</a>`;
     const m = overlay(`<h3>Connect wallet</h3>
       ${list.length ? list.map(p => `<button class="wopt" data-uuid="${esc(p.info.uuid)}">${p.info.icon ? `<img src="${esc(p.info.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(p.info.name)}</button>`).join('') : `<p class="mut">No browser wallet detected${isMobile() ? '. Open this page in your wallet app:' : '. Install MetaMask, Rabby, Coinbase Wallet or OKX.'}</p>`}
       ${isMobile() || !list.length ? deep : ''}`);
@@ -57,14 +63,14 @@ export function openConnect() {
       const p = list.find(x => x.info.uuid === (b as HTMLElement).dataset.uuid)!;
       try {
         const accts: string[] = await p.provider.request({ method: 'eth_requestAccounts' });
-        wallet.address = accts[0]; wallet.provider = p.provider; wallet.name = p.info.name;
+        wallet.address = accts[0]; wallet.provider = p.provider; wallet.name = p.info.name; localStorage.setItem(LAST, p.info.rdns);
         p.provider.on?.('accountsChanged', (a: string[]) => { wallet.address = a[0] || null; emit(); });
         m.remove(); emit();
       } catch (e: any) { (m.querySelector('h3') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">${esc(e?.code === 4001 ? 'Connection rejected in wallet.' : e?.message || e)}</p>`); }
     }));
   }, 150);
 }
-export function disconnect() { wallet.address = null; wallet.provider = null; emit(); }
+export function disconnect() { localStorage.removeItem(LAST); wallet.address = null; wallet.provider = null; emit(); }
 export const walletLabel = () => (wallet.address ? short(wallet.address) : 'Connect wallet');
 
 // ---- chains ----
@@ -134,7 +140,7 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
     // 4) confirm screen
     body.innerHTML = `<div class="kv bkv"><span>Price</span><b>${f(price)} ${esc(cur)}</b>
       <span>Includes fees</span><b>${f(fees)} ${esc(cur)}</b><span>Seller receives</span><b>${f(price - fees)} ${esc(cur)}</b>
-      <span>Chain</span><b><img class="cl" src="./logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b>
+      <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b>
       <span>You pay now</span><b>${f(value)} ${esc(c.native)} + gas</b>
       <span>Your balance</span><b class="${enough ? '' : 'errc'}">${f(bal)} ${esc(c.native)}</b></div>
       ${enough ? '' : '<p class="err">Insufficient funds for this purchase on ' + esc(c.name) + '.</p>'}

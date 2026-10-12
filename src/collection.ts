@@ -1,6 +1,8 @@
 import './style.css';
 import CFG from '../config/collections.json';
-import { wallet, openConnect, disconnect, walletLabel, onWallet, checkApi, startBuy, apiReady } from './wallet';
+import { wallet, onWallet, checkApi, startBuy, apiReady, API } from './wallet';
+import { navHtml, bindNav, media } from './shell';
+import { openEdit, linksHtml } from './edit';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number; color?: string };
@@ -8,13 +10,17 @@ type Listing = { chain: string; id: number; price: number; currency: string; pri
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
 const chains = CFG.chains as Record<string, Chain>;
 const params = new URLSearchParams(location.search);
-const COL = CFG.collections.find(c => c.slug === (params.get('c') || CFG.default))!;
-const DATA = `./data/${COL.slug}/`;
+const pathSlug = location.pathname.match(/^\/c\/([a-z0-9-]+)/)?.[1] || CFG.default;
+const COL = CFG.collections.find(c => c.slug === pathSlug)!;
+const DATA = `/data/${COL.slug}/`;
+// Owner-editable overrides (logo, banner, description, links) served by the Worker when online.
+let ovr: any = {}; let editable = false;
+document.title = `${COL.name} · MultiSea`;
 const app = document.getElementById('app')!;
 const $ = (s: string, r: ParentNode = document) => r.querySelector(s) as HTMLElement;
 const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const short = (a?: string) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '-');
-const logo = (k: string, cls = 'cl') => `<img class="${cls}" src="./logos/${k}.svg" alt="${esc(chains[k]?.name)}" title="${esc(chains[k]?.name)}">`;
+const logo = (k: string, cls = 'cl') => `<img class="${cls}" src="/logos/${k}.svg" alt="${esc(chains[k]?.name)}" title="${esc(chains[k]?.name)}">`;
 const fmt = (n: number | null | undefined, d = 4) => (n == null || isNaN(n) ? '-' : n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(d)).toString());
 const gw = (COL.ipfsGateways as string[]);
 const img = (p: string) => `<img loading="lazy" decoding="async" src="${gw[0]}${p}" data-p="${p}" data-g="0" onerror="window.__imgFallback(this)">`;
@@ -58,10 +64,10 @@ function header() {
   const volTip = deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c] && Object.keys(pc[c].volume).length ? Object.entries(pc[c].volume).map(([k, v]) => fmt(v as number) + ' ' + k).join(' + ') : pc[c]?.historyComplete ? '0' : '-'}</b></div>`).join('');
   const fl = summary?.floor;
   const listedPct = summary?.listedCount != null ? ((100 * summary.listedCount) / COL.supply).toFixed(1) + '%' : '-';
-  const avatarSrc = COL.logo || (items[0] ? thumbUrl(items[0].id) : '');
+  const avatarSrc = media(ovr.logo) || COL.logo || (items[0] ? thumbUrl(items[0].id) : '');
   return `
-  <div class="banner" style="${COL.banner ? `background-image:url(${COL.banner})` : ''}">
-    <div class="banner-art">${items.slice(0, 12).map(i => `<span style="background:${i.color}">${thumb(i).replace('loading="lazy"', 'loading="lazy" fetchpriority="low"')}</span>`).join('')}</div><div class="banner-fade"></div>
+  <div class="banner ${ovr.banner || COL.banner ? 'has-img' : ''}" style="${ovr.banner || COL.banner ? `background-image:url(${media(ovr.banner) || COL.banner})` : ''}">
+    ${ovr.banner || COL.banner ? '' : `<div class="banner-art">${items.slice(0, 12).map(i => `<span style="background:${i.color}">${thumb(i).replace('loading="lazy"', 'loading="lazy" fetchpriority="low"')}</span>`).join('')}</div>`}<div class="banner-fade"></div>
     <div class="hero">
       <img class="avatar" src="${avatarSrc}" alt="">
       <div class="hero-txt">
@@ -77,7 +83,7 @@ function header() {
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
     </div>
   </div>
-  <p class="desc">${esc(COL.description)}</p>
+  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button></div>
   <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}</div>`;
 }
@@ -178,7 +184,7 @@ function modal(id: number) {
 
 function render() {
   const y = window.scrollY;
-  app.innerHTML = `<nav class="top"><div class="brand">◆ multichain<span>.view</span></div><div class="navr"><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button><select class="colsel">${CFG.collections.map(c => `<option value="${c.slug}" ${c.slug === COL.slug ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div></nav>
+  app.innerHTML = `${navHtml()}
   ${header()}<div class="content">${st.tab === 'items' ? itemsView() : st.tab === 'activity' ? activityView() : chainsView()}</div>`;
   window.scrollTo(0, y);
 }
@@ -189,7 +195,7 @@ app.addEventListener('click', e => {
   const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
   const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
   const act = t.closest('[data-act]') as HTMLElement;
-  if (act?.dataset.act === 'wallet') { if (wallet.address) { if (confirm('Disconnect ' + wallet.address + '?')) { disconnect(); if (st.status === 'mine') st.status = 'all'; } } else openConnect(); return; }
+  if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }
   const c = t.closest('.card,.ai') as HTMLElement; if (c) modal(+c.dataset.id!);
@@ -197,7 +203,6 @@ app.addEventListener('click', e => {
 app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.classList.contains('sort')) st.sort = t.value;
-  else if (t.classList.contains('colsel')) { location.search = '?c=' + t.value; return; }
   else if (t.name === 'status') st.status = t.value;
   else if (t.dataset.chainCb) { const c = t.dataset.chainCb; t.checked ? st.chains.add(c) : st.chains.delete(c); }
   else if (t.dataset.trait) { const k = t.dataset.trait; if (!st.traits.has(k)) st.traits.set(k, new Set()); t.checked ? st.traits.get(k)!.add(t.value) : st.traits.get(k)!.delete(t.value); }
@@ -205,8 +210,14 @@ app.addEventListener('change', e => {
   st.limit = 60; render();
 });
 let qt: any; app.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (!t.classList.contains('search')) return; clearTimeout(qt); qt = setTimeout(() => { st.q = t.value.trim().toLowerCase(); render(); const s = $('.search') as HTMLInputElement; s.focus(); s.setSelectionRange(s.value.length, s.value.length); }, 250); });
-onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all'; render(); });
-checkApi();
+bindNav(() => { if (st.status === 'mine') st.status = 'all'; });
+async function refreshEditable() {
+  editable = false;
+  if (apiReady && wallet.address) { try { editable = !!(await (await fetch(`${API}/collections/${COL.slug}/can-edit?address=${wallet.address}`)).json()).ok; } catch {} }
+  render();
+}
+onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all'; refreshEditable(); });
+checkApi().then(async ok => { if (!ok) return; try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; } catch {} refreshEditable(); });
 render();
 if (params.get('item')) modal(+params.get('item')!);
 if (params.get('tab')) { st.tab = params.get('tab')!; if (st.tab === 'activity') loadActivity(); render(); }

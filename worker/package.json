@@ -1,3 +1,1 @@
-{ "name": "multisea-api", "private": true, "type": "module",
-  "scripts": { "dev": "wrangler dev --port 8787", "deploy": "wrangler deploy" },
-  "devDependencies": { "wrangler": "^3.114.0" } }
+{"name":"multisea-api","private":true,"type":"module","scripts":{"dev":"wrangler dev --port 8787","deploy":"wrangler deploy"},"devDependencies":{"wrangler":"^3.114.0"},"dependencies":{"viem":"^2.57.5"}}

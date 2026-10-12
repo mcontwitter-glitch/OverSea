@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/postbuild.mjs",
     "preview": "vite preview",
     "data": "node --env-file=.env scripts/index.mjs"
   },
