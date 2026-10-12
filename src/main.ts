@@ -3,7 +3,7 @@ import CFG from '../config/collections.json';
 import { wallet, openConnect, disconnect, walletLabel, onWallet, checkApi, startBuy, apiReady } from './wallet';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
-type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number };
+type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number; color?: string };
 type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null; orderHash: string; protocolAddress: string };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
 const chains = CFG.chains as Record<string, Chain>;
@@ -17,16 +17,32 @@ const short = (a?: string) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '-');
 const logo = (k: string, cls = 'cl') => `<img class="${cls}" src="./logos/${k}.svg" alt="${esc(chains[k]?.name)}" title="${esc(chains[k]?.name)}">`;
 const fmt = (n: number | null | undefined, d = 4) => (n == null || isNaN(n) ? '-' : n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(d)).toString());
 const gw = (COL.ipfsGateways as string[]);
-const img = (p: string) => `<img loading="lazy" src="${gw[0]}${p}" data-p="${p}" data-g="0" onerror="window.__imgFallback(this)">`;
-(window as any).__imgFallback = (el: HTMLImageElement) => { const g = +el.dataset.g! + 1; if (g < gw.length) { el.dataset.g = String(g); el.src = gw[g] + el.dataset.p; } else el.classList.add('broken'); };
+const img = (p: string) => `<img loading="lazy" decoding="async" src="${gw[0]}${p}" data-p="${p}" data-g="0" onerror="window.__imgFallback(this)">`;
+// Local WebP thumbnails served by the site (scripts/thumbs.mjs). Falls back to IPFS if a thumb is missing.
+const BASE = import.meta.env.BASE_URL;
+const thumbUrl = (id: number, tier: 's' | 'm' = 's') => `${BASE}img/${COL.slug}/${tier}/${id}.webp`;
+const thumb = (it: Item, eager = false, size = 384) => `<img src="${thumbUrl(it.id)}" width="${size}" height="${size}" alt="${esc(it.name)}" decoding="async" ${eager ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'} data-p="${it.image}" data-g="-1" onerror="window.__imgFallback(this)">`;
+(window as any).__imgFallback = (el: HTMLImageElement) => { const g = +el.dataset.g! + 1; if (g === 0 && el.dataset.hi) { el.removeAttribute('data-hi'); } if (g < gw.length) { el.dataset.g = String(g); el.src = gw[g] + el.dataset.p; } else el.classList.add('broken'); };
 const ago = (ts: number | null) => { if (!ts) return '-'; const s = Date.now() / 1000 - ts; return s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`; };
 const osUrl = (chain: string, id: number) => { const dep = COL.deployments.find(d => d.chain === chain); const s = chains[chain]?.openseaSlug; return dep && s ? `https://opensea.io/item/${s}/${dep.address.toLowerCase()}/${id}` : null; };
 
 async function j<T>(f: string, d: T): Promise<T> { try { const r = await fetch(DATA + f); return r.ok ? await r.json() : d; } catch { return d; } }
-const [summary, items, traits, owners, listings, activity] = await Promise.all([
-  j<any>('summary.json', null), j<Item[]>('items.json', []), j<any>('traits.json', { traits: {} }),
-  j<Record<string, Loc>>('owners.json', {}), j<Listing[]>('listings.json', []), j<any[]>('activity.json', []),
+// First paint loads only compact data; activity is fetched when its tab is opened.
+type ItemsMin = { types: string[]; vals: string[][]; namePrefix: string | null; imgBase: string | null; i: any[][] };
+const decodeItems = (m: ItemsMin | null): Item[] => !m ? [] : m.i.map(r => ({ id: r[0], rank: r[1], score: r[2], color: '#' + r[3],
+  attrs: (r[4] as number[]).map((v, k) => (v < 0 ? null : [m.types[k], m.vals[k][v]])).filter(Boolean) as [string, string][],
+  name: m.namePrefix != null ? m.namePrefix + r[0] : r[5], image: m.imgBase != null ? m.imgBase + r[0] : r[m.namePrefix != null ? 5 : 6] }));
+const decodeOwners = (m: any): Record<string, Loc> => { const o: Record<string, Loc> = {}; if (!m) return o;
+  for (const [id, a] of Object.entries(m.d as Record<string, number[]>)) { o[id] = { chain: m.chains[a[0]], owner: m.addrs[a[1]] }; for (let k = 2; k < a.length; k += 2) (o[id].also ??= []).push({ chain: m.chains[a[k]], owner: m.addrs[a[k + 1]] }); }
+  return o; };
+const [summary, itemsMin, traits, ownersMin, listings] = await Promise.all([
+  j<any>('summary.json', null), j<ItemsMin | null>('items.min.json', null), j<any>('traits.json', { traits: {} }),
+  j<any>('owners.min.json', null), j<Listing[]>('listings.json', []),
 ]);
+const items = itemsMin ? decodeItems(itemsMin) : await j<Item[]>('items.json', []);
+const owners = ownersMin ? decodeOwners(ownersMin) : await j<Record<string, Loc>>('owners.json', {});
+let activity: any[] = []; let activityLoaded = false;
+async function loadActivity() { if (activityLoaded) return; activityLoaded = true; activity = await j<any[]>('activity.json', []); render(); }
 const listMap = new Map<number, Listing>(); listings.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); });
 const deployedChains = COL.deployments.map(d => d.chain);
 
@@ -42,10 +58,10 @@ function header() {
   const volTip = deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c] && Object.keys(pc[c].volume).length ? Object.entries(pc[c].volume).map(([k, v]) => fmt(v as number) + ' ' + k).join(' + ') : pc[c]?.historyComplete ? '0' : '-'}</b></div>`).join('');
   const fl = summary?.floor;
   const listedPct = summary?.listedCount != null ? ((100 * summary.listedCount) / COL.supply).toFixed(1) + '%' : '-';
-  const avatarSrc = COL.logo || (items[0] ? gw[0] + items[0].image : '');
+  const avatarSrc = COL.logo || (items[0] ? thumbUrl(items[0].id) : '');
   return `
   <div class="banner" style="${COL.banner ? `background-image:url(${COL.banner})` : ''}">
-    <div class="banner-art">${items.slice(0, 12).map(i => img(i.image)).join('')}</div><div class="banner-fade"></div>
+    <div class="banner-art">${items.slice(0, 12).map(i => `<span style="background:${i.color}">${thumb(i).replace('loading="lazy"', 'loading="lazy" fetchpriority="low"')}</span>`).join('')}</div><div class="banner-fade"></div>
     <div class="hero">
       <img class="avatar" src="${avatarSrc}" alt="">
       <div class="hero-txt">
@@ -104,14 +120,14 @@ const buyBtn = (id: number, cls = '') => { const l = listMap.get(id); if (!l || 
 function doBuy(id: number) {
   const l = listMap.get(id); const it = items.find(i => i.id === id); if (!l || !it) return;
   const dep = COL.deployments.find(d => d.chain === l.chain)!;
-  startBuy({ id, name: it.name, img: gw[0] + it.image, chain: l.chain, contract: dep.address, listing: l },
+  startBuy({ id, name: it.name, img: thumbUrl(it.id), chain: l.chain, contract: dep.address, listing: l },
     sid => { listMap.delete(sid); sold.add(sid); const me = wallet.address!; owners[sid] = { chain: l.chain, owner: me }; render(); },
     gid => { listMap.delete(gid); render(); });
 }
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
-function card(it: Item) {
+function card(it: Item, idx = 99) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci">${img(it.image)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
+  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#202026'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
@@ -121,7 +137,7 @@ function itemsView() {
   return `<div class="bar"><button class="fbtn" data-act="toggle-side">☰ Filters</button><input class="search" placeholder="Search by name or ID" value="${esc(st.q)}"><select class="sort">
     ${[['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low'], ['rarity', 'Rarity: rarest first'], ['rarity-desc', 'Rarity: common first']].map(([v, n]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
    <div class="layout">${sidebar()}<section class="main"><div class="count">${arr.length.toLocaleString()} items ${activeTraits ? `<span class="pills">${activeTraits}<button class="pill clr" data-act="clear">Clear all</button></span>` : ''}</div>
-   <div class="grid">${arr.slice(0, st.limit).map(card).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
+   <div class="grid">${arr.slice(0, st.limit).map((it, k) => card(it, k)).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
 }
 
 function activityView() {
@@ -129,7 +145,7 @@ function activityView() {
   const byId = new Map(items.map(i => [i.id, i]));
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
    ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : 'Transfer'}</b></span>
-     <span class="ai" data-id="${a.id}">${it ? img(it.image) : ''}<span>${esc(it?.name || '#' + a.id)}${a.ids?.length > 1 ? ` +${a.ids.length - 1}` : ''}</span></span>
+     <span class="ai" data-id="${a.id}">${it ? thumb(it, false, 40) : ''}<span>${esc(it?.name || '#' + a.id)}${a.ids?.length > 1 ? ` +${a.ids.length - 1}` : ''}</span></span>
      <span>${a.type === 'sale' ? `${fmt(a.price)} ${esc(a.currency.startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span class="mono">${short(a.from)}</span><span class="mono">${short(a.to)}</span>
      <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || '<div class="empty">No activity found</div>'}</div>`;
 }
@@ -149,9 +165,9 @@ function modal(id: number) {
   const T = traits.traits as Record<string, { value: string; count: number; pct: number }[]>;
   const osLinks = deployedChains.filter(c => chains[c].openseaSlug).map(c => `<a class="osl ${loc?.chain === c ? 'cur' : ''}" href="${osUrl(c, id)}" target="_blank" rel="noopener">${logo(c)} ${chains[c].name}</a>`).join('');
   const m = document.createElement('div'); m.className = 'modal';
-  m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg">${img(it.image)}</div><div class="minfo">
+  m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg" style="background:${it.color}"><img src="${thumbUrl(id)}" width="768" height="768" alt="" class="lo"><img src="${thumbUrl(id, 'm')}" width="768" height="768" alt="${esc(it.name)}" class="hi" onload="this.classList.add('in')" onerror="this.onerror=null;this.src='${gw[0]}${it.image}'"></div><div class="minfo">
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
-    <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span></div>
+    <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
@@ -169,7 +185,7 @@ function render() {
 
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
-  const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; render(); return; }
+  const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; if (st.tab === 'activity') loadActivity(); render(); return; }
   const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
   const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
   const act = t.closest('[data-act]') as HTMLElement;
@@ -193,4 +209,4 @@ onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all';
 checkApi();
 render();
 if (params.get('item')) modal(+params.get('item')!);
-if (params.get('tab')) { st.tab = params.get('tab')!; render(); }
+if (params.get('tab')) { st.tab = params.get('tab')!; if (st.tab === 'activity') loadActivity(); render(); }
