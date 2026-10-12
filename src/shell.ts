@@ -18,3 +18,8 @@ export function bindNav(onDisconnect?: () => void) {
 }
 export const soon = (what = 'This') => `<div class="soon">🚧 ${esc(what)} is coming online soon. The MultiSea API isn't live yet.</div>`;
 export { apiReady };
+
+let _eu: Promise<number | null> | null = null;
+export function ethUsdRate(): Promise<number | null> { return _eu ??= fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd').then(r => r.json()).then(j => j?.ethereum?.usd || null).catch(() => null); }
+export function mcapUsd(floorEth: number | null | undefined, supply: number, usd: number | null | undefined) { return floorEth && supply && usd ? '$' + Math.round(floorEth * supply * usd).toLocaleString() : '-'; }
+export const mcapStatHtml = (v: string) => `<div class="stat tip mcap"><b>${v}</b><span>Market cap ⓘ</span><div class="tipbox"><div class="tipnote">Floor price × total supply</div></div></div>`;

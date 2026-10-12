@@ -1,7 +1,7 @@
 import './style.css';
 import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, startBuy, apiReady, API } from './wallet';
-import { navHtml, bindNav, media } from './shell';
+import { navHtml, bindNav, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
 import { openEdit, linksHtml } from './edit';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
@@ -57,12 +57,9 @@ try { Object.keys(localStorage).filter(k => /sort/i.test(k)).forEach(k => localS
 if (params.has('sort')) { params.delete('sort'); history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash); }
 const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'price-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
 
+let liveUsd: number | null = null; ethUsdRate().then(r => { if (r && !findEthUsd(summary)) { liveUsd = r; document.querySelectorAll('.mcap b').forEach(e => e.textContent = mcapUsd(summary?.floor?.priceEth ?? null, COL.supply, r)); } });
 function findEthUsd(o: any): number | null { if (!o || typeof o !== 'object') return null; if (typeof o.ethUsd === 'number') return o.ethUsd; for (const v of Object.values(o)) { const r = findEthUsd(v); if (r) return r; } return null; }
-function mcapStat(floorEth: number | null | undefined, supply: number, usd: number | null) {
-  if (!floorEth || !supply) return `<div class="stat tip"><b>-</b><span>Market cap ⓘ</span><div class="tipbox"><div class="tipnote">Floor price × total supply</div></div></div>`;
-  const m = floorEth * supply; const u = usd ? '$' + Math.round(m * usd).toLocaleString() : '';
-  return `<div class="stat tip mcap"><b>${fmt(m)} ETH</b>${u ? `<small class="usd">≈ ${u}</small>` : ''}<span>Market cap ⓘ</span><div class="tipbox"><div class="tipnote">Floor price × total supply<br>${fmt(floorEth)} ETH × ${supply.toLocaleString()}${u ? ' ≈ ' + u : ''}</div></div></div>`;
-}
+function mcapStat(floorEth: number | null | undefined, supply: number, usd: number | null) { return mcapStatHtml(mcapUsd(floorEth, supply, usd)); }
 function header() {
   const pc = summary?.perChain || {};
   const vol = summary?.volume || {};
@@ -87,7 +84,7 @@ function header() {
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
       <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
-      ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary))}
+      ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary) ?? liveUsd)}
     </div>
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>

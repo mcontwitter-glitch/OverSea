@@ -1,6 +1,6 @@
 import CFG from '../config/collections.json';
 import { checkApi, onWallet, API, apiReady } from './wallet';
-import { navHtml, bindNav, esc, media } from './shell';
+import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
 type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
@@ -11,7 +11,7 @@ async function staticCards() {
   return Promise.all(CFG.collections.map(async c => {
     const s = await fetch(`/data/${c.slug}/summary.json`).then(r => r.json()).catch(() => null);
     const vol = s?.volume ? Object.entries(s.volume).map(([k, v]) => `${fmt(v as number)} ${k}`).join(' + ') : '-';
-    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: s?.floor ? `${fmt((s.floor.priceEth ?? s.floor.price) * c.supply)} ETH` : '-', volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
+    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: mcapUsd(s?.floor ? (s.floor.priceEth ?? s.floor.price) : null, c.supply, JSON.stringify(s ?? {}).match(/"ethUsd":([\d.]+)/)?.[1] ? +JSON.stringify(s).match(/"ethUsd":([\d.]+)/)![1] : await ethUsdRate()), volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
   }));
 }
 function card(c: Card) {
