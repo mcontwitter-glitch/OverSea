@@ -2,7 +2,7 @@ import{t as e}from"./collections-D3tCsCNy.js";import{a as t,d as n,f as r,l as i
    <div class="ccbody"><img class="cclogo" src="${a(o(e.logo))}" alt="" width="56" height="56"><div class="ccname">${a(e.name)}</div>
    <div class="ccchains">${e.chains.map(e=>`<img class="cl" src="/logos/${e}.svg" title="${a(f[e]?.name)}" alt="">`).join(``)}</div>
    <div class="ccstats"><div><span>Floor</span><b>${a(e.floor??`-`)}</b></div><div><span>Volume</span><b>${a(e.volume??`-`)}</b></div><div><span>Owners</span><b>${a(e.owners??`-`)}</b></div><div title="Floor price × total supply"><span>Market cap</span><b>${a(e.mcap??`-`)}</b></div></div></div></a>`}function y(){d.innerHTML=`${l(`home`)}
-  <header class="mshero"><picture><source srcset="/brand/banner-900.webp?v=5218b50e 900w, /brand/banner-1500.webp?v=c148c0fe 1500w" type="image/webp" sizes="100vw"><img src="/brand/banner-1500.png?v=2b679047" alt="Multisea.io" width="1500" height="500" fetchpriority="high"></picture></header>
+  <header class="mshero"><picture><source srcset="/brand/banner-900.webp?v=30b60469 900w, /brand/banner-1500.webp?v=0071b6aa 1500w" type="image/webp" sizes="100vw"><img src="/brand/banner-1500.png?v=cfda66c8" alt="Multisea.io" width="1500" height="500" fetchpriority="high"></picture></header>
   <section class="home">${h?`<p class="soon">Page not found. Here are our collections:</p>`:``}
    <div class="homeh"><h2>Collections</h2><a class="bbtn sm" href="/submit">+ Submit a collection</a></div>
    <p class="mut">One collection, every chain. MultiSea combines multichain NFT collections into a single view: items, owners, floor and activity, across chains.</p>
