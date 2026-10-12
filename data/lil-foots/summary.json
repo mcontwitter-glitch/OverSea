@@ -1,6 +1,6 @@
 {
  "slug": "lil-foots",
- "generatedAt": "2026-10-12T07:23:50.878Z",
+ "generatedAt": "2026-10-12T20:46:22.544Z",
  "items": 4404,
  "owners": 487,
  "perChain": {
@@ -157,7 +157,11 @@
   "id": 2396,
   "price": 0.00367,
   "currency": "ETH",
-  "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67",
+  "orderHash": "0x0c20728b1c7de1483615e9a7fb5394961e8870d6a0c057057b009d6895b91188",
+  "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+  "osChain": "abstract",
+  "seller": "0x1125f61abe820d4e06766e73e1f5992c3dfb54f1",
+  "endTime": 1791880598,
   "priceEth": 0.00367
  },
  "floorByChain": {
@@ -166,7 +170,11 @@
    "id": 2396,
    "price": 0.00367,
    "currency": "ETH",
-   "orderHash": "0x0b86cd43887bf5c27de9bc2c3764793ddf05c7b6582f46ca85659749691f1b67",
+   "orderHash": "0x0c20728b1c7de1483615e9a7fb5394961e8870d6a0c057057b009d6895b91188",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "abstract",
+   "seller": "0x1125f61abe820d4e06766e73e1f5992c3dfb54f1",
+   "endTime": 1791880598,
    "priceEth": 0.00367
   },
   "ethereum": {
@@ -175,6 +183,10 @@
    "price": 0.01,
    "currency": "ETH",
    "orderHash": "0xc66f11f4159be0c6e6e766e50504caf98ce5ec1459c4e6230192aec8cfc09deb",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "ethereum",
+   "seller": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+   "endTime": 1799004530,
    "priceEth": 0.01
   },
   "base": {
@@ -183,6 +195,10 @@
    "price": 101,
    "currency": "ETH",
    "orderHash": "0x76b3f7400cce579b73db72913687f02fe420c0b2ade6167a580deb17e75c278e",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "base",
+   "seller": "0xcfa91e557b07a81d0244cf902e27934b1a9bde74",
+   "endTime": 1806816755,
    "priceEth": 101
   },
   "apechain": {
@@ -191,7 +207,11 @@
    "price": 160,
    "currency": "APE",
    "orderHash": "0x4cf2d0bccf8b6119116398f0025826f30b05221cedc450c9c5101b900d7a126e",
-   "priceEth": 0.00978115
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "ape_chain",
+   "seller": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+   "endTime": 1799004465,
+   "priceEth": 0.00968596
   },
   "robinhood": {
    "chain": "robinhood",
@@ -199,6 +219,10 @@
    "price": 0.009,
    "currency": "ETH",
    "orderHash": "0xbbac583e0302c5c56fdc45c37b1a8d7cb846e4510c679741c11268dc14c306b1",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "robinhood",
+   "seller": "0x02b1b8d283907a21d12395c461ae5de028eb8bbe",
+   "endTime": 1799184983,
    "priceEth": 0.009
   }
  },
@@ -212,18 +236,18 @@
    "source": "unit"
   },
   "APE": {
-   "eth": 0.00006113216061244973,
-   "usd": 0.15715,
-   "ethUsd": 2570.66,
+   "eth": 0.00006053723433793722,
+   "usd": 0.152618,
+   "ethUsd": 2521.06,
    "source": "coingecko",
-   "at": "2026-10-12T07:23:50.860Z"
+   "at": "2026-10-12T20:46:22.529Z"
   },
   "BNB": {
-   "eth": 0.29406844934763837,
-   "usd": 755.95,
-   "ethUsd": 2570.66,
+   "eth": 0.29632376857353654,
+   "usd": 747.05,
+   "ethUsd": 2521.06,
    "source": "coingecko",
-   "at": "2026-10-12T07:23:50.860Z"
+   "at": "2026-10-12T20:46:22.529Z"
   }
  },
  "openseaStats": {
