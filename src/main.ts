@@ -3,7 +3,7 @@ import CFG from '../config/collections.json';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; notice?: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number };
-type Listing = { chain: string; id: number; price: number; currency: string };
+type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
 const chains = CFG.chains as Record<string, Chain>;
 const params = new URLSearchParams(location.search);
@@ -26,7 +26,7 @@ const [summary, items, traits, owners, listings, activity] = await Promise.all([
   j<any>('summary.json', null), j<Item[]>('items.json', []), j<any>('traits.json', { traits: {} }),
   j<Record<string, Loc>>('owners.json', {}), j<Listing[]>('listings.json', []), j<any[]>('activity.json', []),
 ]);
-const listMap = new Map<number, Listing>(); listings.forEach(l => { const c = listMap.get(l.id); if (!c || l.price < c.price) listMap.set(l.id, l); });
+const listMap = new Map<number, Listing>(); listings.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); });
 const deployedChains = COL.deployments.map(d => d.chain);
 
 const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'price-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
@@ -52,7 +52,7 @@ function header() {
     </div>
     <div class="stats">
       <div class="stat tip"><b>${volMain}</b><span>Total volume ⓘ</span><div class="tipbox">${volTip}<div class="tipnote">${summary?.volumeSource === 'opensea' ? 'Source: OpenSea API' : 'On-chain Seaport 1.6 sales'}</div></div></div>
-      <div class="stat"><b>${fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
+      <div class="stat"><b>${fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}${/^W?ETH$/.test(fl.currency) ? '' : ` (≈ ${fmt(fl.priceEth)} ETH)`}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
       <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
@@ -72,9 +72,9 @@ function filtered() {
     for (const [t, vs] of st.traits) { if (!vs.size) continue; const v = it.attrs.find(a => a[0] === t)?.[1]; if (!v || !vs.has(v)) return false; }
     return true;
   });
-  // Price sort: ETH/WETH listings first (comparable unit), then non-ETH listings (APE etc., no USD rate) by price, then unlisted by id.
-  const tier = (i: Item) => { const l = listMap.get(i.id); return !l ? 2 : /^W?ETH$/.test(l.currency) ? 0 : 1; };
-  const pr = (i: Item) => listMap.get(i.id)?.price ?? 0;
+  // Price sort: all listings by ETH equivalent (rates from summary.json), listings without a rate after by price, then unlisted by id.
+  const tier = (i: Item) => { const l = listMap.get(i.id); return !l ? 2 : l.priceEth != null ? 0 : 1; };
+  const pr = (i: Item) => { const l = listMap.get(i.id); return l ? l.priceEth ?? l.price : 0; };
   const s: Record<string, (a: Item, b: Item) => number> = {
     'id-asc': (a, b) => a.id - b.id, 'id-desc': (a, b) => b.id - a.id, 'rarity': (a, b) => a.rank - b.rank, 'rarity-desc': (a, b) => b.rank - a.rank,
     'price-asc': (a, b) => tier(a) - tier(b) || (tier(a) < 2 ? pr(a) - pr(b) : 0) || a.id - b.id,
@@ -94,10 +94,11 @@ function sidebar() {
   </aside>`;
 }
 
+const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
 function card(it: Item) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci">${img(it.image)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div></div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : '<span class="mut">Not listed</span>'}</div></div></div>`;
 }
 
 function itemsView() {
@@ -138,7 +139,7 @@ function modal(id: number) {
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
     <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });

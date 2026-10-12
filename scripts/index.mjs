@@ -294,8 +294,19 @@ for (const r of chainResults) {
 const os = await opensea(chainResults);
 const listings = os.available ? os.listings : [];
 // Floor compares like with like: only ETH-denominated listings (ETH/WETH) are compared across chains; APE/BNB floors are kept per chain.
-const ethL = listings.filter(l => /^W?ETH$/.test(l.currency));
-const floor = ethL.length ? ethL.reduce((a, b) => (a.price <= b.price ? a : b)) : null;
+// Convert non-ETH listings to ETH: live CoinGecko rate at build time, fallback to user-provided rate (160 APE = 0.01 ETH).
+const FALLBACK_RATES = { APE: { eth: 0.0000625, source: 'user-provided (160 APE = 0.01 ETH)' } };
+const rates = { ETH: { eth: 1, source: 'unit' }, WETH: { eth: 1, source: 'unit' } };
+try {
+  const r = await (await fetchT('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin&vs_currencies=usd', {}, 15000)).json();
+  const e = r.ethereum?.usd; const at = new Date().toISOString();
+  if (e && r.apecoin?.usd) rates.APE = { eth: r.apecoin.usd / e, usd: r.apecoin.usd, ethUsd: e, source: 'coingecko', at };
+  if (e && r.binancecoin?.usd) rates.BNB = { eth: r.binancecoin.usd / e, usd: r.binancecoin.usd, ethUsd: e, source: 'coingecko', at };
+} catch (e) { log('coingecko failed', e.message); }
+for (const [k, v] of Object.entries(FALLBACK_RATES)) rates[k] ??= v;
+listings.forEach(l => { const r = rates[l.currency]; l.priceEth = r ? +(l.price * r.eth).toPrecision(6) : null; });
+const ethL = listings.filter(l => l.priceEth != null);
+const floor = ethL.length ? ethL.reduce((a, b) => (a.priceEth <= b.priceEth ? a : b)) : null;
 const floorByChain = {}; listings.forEach(l => { if (!floorByChain[l.chain] || l.price < floorByChain[l.chain].price) floorByChain[l.chain] = l; });
 const volTotal = {};
 if (os.available && Object.keys(os.stats).length) {
@@ -315,7 +326,7 @@ const summary = {
   volumeSource: os.available ? 'opensea' : 'onchain-seaport-1.6',
   listingsAvailable: os.available, listingsReason: os.available ? null : os.reason,
   listedCount: os.available ? new Set(listings.map(l => l.id)).size : null,
-  floor, floorByChain, openseaStats: os.stats || null,
+  floor, floorByChain, rates, openseaStats: os.stats || null,
   livePlaced: Object.keys(location).length,
 };
 await fs.writeFile(path.join(OUT, 'summary.json'), JSON.stringify(summary, null, 1));
