@@ -29,6 +29,9 @@ const [summary, items, traits, owners, listings, activity] = await Promise.all([
 const listMap = new Map<number, Listing>(); listings.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); });
 const deployedChains = COL.deployments.map(d => d.chain);
 
+// Always open on 'Price: low to high': never restore a sort from URL or storage; clear any old saved values.
+try { Object.keys(localStorage).filter(k => /sort/i.test(k)).forEach(k => localStorage.removeItem(k)); } catch {}
+if (params.has('sort')) { params.delete('sort'); history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash); }
 const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'price-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
 
 function header() {
@@ -104,7 +107,7 @@ function itemsView() {
   const arr = filtered();
   const activeTraits = [...st.traits].flatMap(([t, vs]) => [...vs].map(v => `<button class="pill" data-rm-trait="${esc(t)}" data-v="${esc(v)}">${esc(t)}: ${esc(v)} ✕</button>`)).join('');
   return `<div class="bar"><button class="fbtn" data-act="toggle-side">☰ Filters</button><input class="search" placeholder="Search by name or ID" value="${esc(st.q)}"><select class="sort">
-    ${[['id-asc', 'Token ID: low to high'], ['id-desc', 'Token ID: high to low'], ['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low'], ['rarity', 'Rarity: rarest first'], ['rarity-desc', 'Rarity: common first']].map(([v, n]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    ${[['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low'], ['rarity', 'Rarity: rarest first'], ['rarity-desc', 'Rarity: common first']].map(([v, n]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
    <div class="layout">${sidebar()}<section class="main"><div class="count">${arr.length.toLocaleString()} items ${activeTraits ? `<span class="pills">${activeTraits}<button class="pill clr" data-act="clear">Clear all</button></span>` : ''}</div>
    <div class="grid">${arr.slice(0, st.limit).map(card).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
 }
