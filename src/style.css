@@ -111,8 +111,11 @@ img.broken{opacity:.15}
 
 .stat small.usd{display:block;color:#8a8a8a;font-size:11px;font-weight:600;margin-top:1px}.ccstats{grid-template-columns:repeat(4,1fr)}@media(max-width:480px){.ccstats{grid-template-columns:repeat(2,1fr)}}
 /* silver accent */
-.verified,.more button,.osl.cur,.wbtn,.buy,.bbtn{background:#d9d9d9!important;color:#000!important}
-.more button:hover,.wbtn:hover,.buy:hover,.bbtn:hover{background:#fff!important}
+.verified,.osl.cur{background:#d9d9d9!important;color:#000!important}
+/* primary buttons: navy */
+.more button,.wbtn,.buy,.bbtn{background:#1e40af!important;color:#fff!important;border-color:#1e40af!important}
+.more button:hover,.wbtn:hover,.buy:hover,.bbtn:hover{background:#2550c8!important}
+.bbtn:disabled,.buy:disabled{background:#1a2a55!important;color:#9aa4c0!important}
 .ccard.feat{border-color:#d9d9d988;box-shadow:0 0 0 1px #d9d9d944,0 8px 30px #ffffff14}
 :root{--beam-blue:#d9d9d9;--beam-cyan:#f2f2f2;--beam-amber:#bfbfbf;--beam-violet:#8c8c8c;--beam-lime:#e6e6e6}
 .editbtn,.ftag{color:#000!important}
