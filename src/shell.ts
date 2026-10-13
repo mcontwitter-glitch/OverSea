@@ -1,9 +1,10 @@
+import AV from './assetv.json';
 // Shared MultiSea chrome: top bar, wallet button, helpers.
 import { wallet, openConnect, disconnect, walletLabel, API, apiReady } from './wallet';
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const media = (u?: string | null) => (!u ? '' : u.startsWith('/media/') ? API + u : u);
 export function navHtml(active = '') {
-  return `<nav class="top"><a class="brand" href="/"><img src="/brand/logo-64.webp" width="32" height="32" alt=""><span>Multi<b>Sea</b></span></a>
+  return `<nav class="top"><a class="brand" href="/"><img src="${AV['brand/icon-64.webp']}" srcset="${AV['brand/icon-64.webp']} 1x, ${AV['brand/icon-128.webp']} 2x" width="34" height="34" alt="MultiSea"><span>Multi<b>Sea</b></span></a>
   <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/submit" class="${active === 'submit' ? 'on' : ''}">Submit</a></div>
   <div class="navr"><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button></div></nav>`;
 }

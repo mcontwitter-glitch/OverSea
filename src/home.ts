@@ -1,3 +1,4 @@
+import AV from './assetv.json';
 import CFG from '../config/collections.json';
 import { checkApi, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
@@ -23,13 +24,13 @@ function card(c: Card) {
 }
 function render() {
   app.innerHTML = `${navHtml('home')}
-  <header class="mshero"><picture><source srcset="/brand/banner-900.webp 900w, /brand/banner-1500.webp 1500w" type="image/webp" sizes="100vw"><img src="/brand/banner-1500.png" alt="Multisea.io" width="1500" height="500" fetchpriority="high"></picture></header>
+  <header class="mshero"><picture><source srcset="${AV['brand/banner-900.webp']} 900w, ${AV['brand/banner-1500.webp']} 1500w, ${AV['brand/banner-2048.webp']} 2048w" type="image/webp" sizes="100vw"><img src="${AV['brand/banner-1500.jpg']}" alt="MultiSea" width="1500" height="502" fetchpriority="high"></picture></header>
   <section class="home">${is404 ? '<p class="soon">Page not found. Here are our collections:</p>' : ''}
    <div class="homeh"><h2>Collections</h2><a class="bbtn sm" href="/submit">+ Submit a collection</a></div>
    <p class="mut">One collection, every chain. MultiSea combines multichain NFT collections into a single view: items, owners, floor and activity, across chains.</p>
    <div class="cgrid">${cards.map(card).join('')}</div>
    ${apiReady ? '' : '<p class="mut small">Community collections will appear here once the MultiSea API is online.</p>'}
-  </section><footer class="foot"><img src="/brand/logo-64.webp" width="20" height="20" alt=""> MultiSea · multichain NFT collections</footer>`;
+  </section><footer class="foot"><img src="${AV['brand/icon-64.webp']}" width="20" height="20" alt=""> MultiSea · multichain NFT collections</footer>`;
 }
 bindNav();
 cards = await staticCards(); render();

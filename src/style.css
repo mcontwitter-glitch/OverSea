@@ -113,9 +113,26 @@ img.broken{opacity:.15}
 /* silver accent */
 .verified,.osl.cur{background:#d9d9d9!important;color:#000!important}
 /* primary buttons: navy */
-.more button,.wbtn,.buy,.bbtn{background:#1e40af!important;color:#fff!important;border-color:#1e40af!important}
-.more button:hover,.wbtn:hover,.buy:hover,.bbtn:hover{background:#2550c8!important}
-.bbtn:disabled,.buy:disabled{background:#1a2a55!important;color:#9aa4c0!important}
 .ccard.feat{border-color:#d9d9d988;box-shadow:0 0 0 1px #d9d9d944,0 8px 30px #ffffff14}
 :root{--beam-blue:#d9d9d9;--beam-cyan:#f2f2f2;--beam-amber:#bfbfbf;--beam-violet:#8c8c8c;--beam-lime:#e6e6e6}
 .editbtn,.ftag{color:#000!important}
+
+/* ===== MultiSea brand palette (sampled from the new logo) ===== */
+:root{--brand-deep:#1a5694;--brand:#2684ce;--brand-bright:#45bdfa;--brand-silver:#dfe8ef;--beam-blue:#45bdfa;--beam-cyan:#dfe8ef;--beam-amber:#2684ce;--beam-violet:#1a5694;--beam-lime:#45bdfa}
+.more button,.wbtn,.buy,.bbtn{background:linear-gradient(135deg,#1f6fd8 0%,#2684ce 45%,#45bdfa 100%)!important;color:#fff!important;border:1px solid #45bdfa55!important;box-shadow:0 0 0 1px #0000,0 2px 10px #2684ce33;transition:box-shadow .15s,filter .15s}
+.more button:hover,.wbtn:hover,.buy:hover,.bbtn:hover{filter:brightness(1.08);box-shadow:0 0 0 1px #45bdfa88,0 0 18px #45bdfa66!important}
+.bbtn:disabled,.buy:disabled{background:#12324f!important;color:#8fa3b5!important;box-shadow:none!important;filter:none}
+a{color:#45bdfa}.mcol,.pill.clr,.trait em{color:#45bdfa!important}
+.chip.on{border-color:#45bdfa!important;background:#2684ce1f!important}
+.verified{background:linear-gradient(135deg,#2684ce,#45bdfa)!important;color:#fff!important}
+.osl.cur{background:#2684ce!important;color:#fff!important}
+:focus-visible{outline:2px solid #45bdfa;outline-offset:2px}
+input:focus,select:focus,textarea:focus{border-color:#45bdfa!important;box-shadow:0 0 0 2px #45bdfa33}
+.top::after,.top:after{background:linear-gradient(90deg,transparent,#1a5694,#45bdfa,#dfe8ef,#45bdfa,#1a5694,transparent)!important}
+.ccard.feat{border-color:#45bdfa77!important;box-shadow:0 0 0 1px #45bdfa33,0 8px 30px #2684ce22!important}
+.ftag{background:linear-gradient(135deg,#dfe8ef,#45bdfa)!important;color:#00131f!important}
+.brand img{border-radius:50%!important;box-shadow:0 0 10px #45bdfa44}.brand b{color:#45bdfa!important}
+.spin{border-top-color:#45bdfa!important}
+.mshero{background:#000;line-height:0;overflow:hidden}
+.mshero img{display:block;width:100%;height:auto;max-height:520px;object-fit:cover;object-position:center center;-webkit-mask-image:none!important;mask-image:none!important}
+@media (max-width:640px){.mshero img{height:210px!important;max-height:none!important;object-position:center 40%}}
