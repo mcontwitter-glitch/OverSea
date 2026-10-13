@@ -136,3 +136,24 @@ input:focus,select:focus,textarea:focus{border-color:#45bdfa!important;box-shado
 .mshero{background:#000;line-height:0;overflow:hidden}
 .mshero img{display:block;width:100%;height:auto;max-height:520px;object-fit:cover;object-position:center center;-webkit-mask-image:none!important;mask-image:none!important}
 @media (max-width:640px){.mshero img{height:210px!important;max-height:none!important;object-position:center 40%}}
+
+/* ===== About / features / showcase / chains (poster look) ===== */
+.about{max-width:1100px;margin:0 auto;padding:26px 16px 6px;text-align:center}
+.tagl{letter-spacing:.32em;font-size:13px;color:#dfe8ef;margin:0 0 12px;font-weight:600}
+.intro{max-width:760px;margin:0 auto 22px;color:#c7d3dd;font-size:17px;line-height:1.55}
+.feats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.feat,.chc{background:linear-gradient(180deg,#0d1622cc,#070b12cc);backdrop-filter:blur(6px)}
+.feat{border:1px solid #45bdfa55;border-radius:16px;padding:20px 14px 18px;box-shadow:0 0 0 1px #45bdfa14 inset,0 0 22px #2684ce22,inset 0 1px 0 #ffffff10}
+.feat svg{width:46px;height:46px;fill:none;stroke:#6fc6ff;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;filter:drop-shadow(0 0 6px #45bdfa88)}
+.feat h3{margin:10px 0 6px;font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:#e8f3fb;font-weight:700}
+.feat p{margin:0;color:#b9c6d1;font-size:14px;line-height:1.45}
+.sech{text-align:center;letter-spacing:.28em;font-size:14px;color:#dfe8ef;font-weight:600;margin:0 0 16px;text-transform:uppercase}
+.showcase{max-width:1100px;margin:10px auto 0;padding:24px 16px 6px}.showcase img{width:100%;height:auto;display:block;border-radius:14px}
+.chains{max-width:1100px;margin:0 auto;padding:22px 16px 30px}
+.chrow{display:flex;flex-wrap:wrap;justify-content:center;gap:18px 22px}
+.chb{display:flex;flex-direction:column;align-items:center;gap:8px;color:#e8eef4;font-size:13px;text-decoration:none;width:84px}
+.chc{width:62px;height:62px;border-radius:50%;display:grid;place-items:center;border:1.5px solid #45bdfa88;box-shadow:0 0 16px #2684ce44}
+.chc img{width:34px;height:34px}.chc.more{font-size:22px;color:#dfe8ef;letter-spacing:2px}
+a.chb:hover .chc{border-color:#45bdfa;box-shadow:0 0 20px #45bdfa77}
+.foot a{color:#45bdfa}
+@media (max-width:800px){.feats{grid-template-columns:repeat(2,1fr);gap:10px}.feat{padding:16px 10px}.feat p{font-size:13px}.intro{font-size:15px}.tagl{font-size:11px;letter-spacing:.22em}.chb{width:74px;font-size:12px}.chc{width:54px;height:54px}.chc img{width:30px;height:30px}}
