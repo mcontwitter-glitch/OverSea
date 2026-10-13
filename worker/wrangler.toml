@@ -11,10 +11,8 @@ kv_namespaces = [
   { binding = "COLLECTIONS", id = "fad2fd1bd7624356b252df2f38d16b28" },
   { binding = "NONCES", id = "512ac01fc76f43b08429aab9b040665a" },
 ]
-# Create with: npx wrangler r2 bucket create multisea-media
-# R2 not enabled on the account yet (error 10042). After enabling R2 in the dashboard:
-#   npx wrangler r2 bucket create multisea-media  and uncomment:
-# r2_buckets = [{ binding = "MEDIA", bucket_name = "multisea-media" }]
+# Media uploads (logos/banners) go to R2 bucket multisea-media.
+r2_buckets = [{ binding = "MEDIA", bucket_name = "multisea-media" }]
 
 # Secret (never in code): npx wrangler secret put OPENSEA_API_KEY
 [vars]
