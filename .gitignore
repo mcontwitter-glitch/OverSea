@@ -9,3 +9,6 @@ worker/.wrangler
 .dev.vars
 dist-local
 worker/.cf-token
+
+# testnet preview config (generated; never deploy fork addresses)
+public/bridge.json

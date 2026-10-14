@@ -1,0 +1,79 @@
+{
+ "chains": {
+  "sepolia": {
+   "factory": "0x8080FB5cbFE2cBD8fbdda20684017544c4559c65",
+   "eid": 40161,
+   "chainId": 11155111
+  },
+  "baseSepolia": {
+   "factory": "0x712ed562265e540246B87212E58231a83e3e9DF2",
+   "eid": 40245,
+   "chainId": 84532
+  }
+ },
+ "listings": {
+  "sepolia:1": {
+   "native": "sepolia",
+   "nft": "0xBC171365D461A356BE2a80Be328476Ba3f4eF356",
+   "owner": "0x0F84abC1CE26fCa7Ed8c733603BD91a88032be4F",
+   "paid": "80000000000000000",
+   "escrows": {
+    "sepolia": "0xbb4294099036Da580385aF873c1e799d54cfcbd4",
+    "baseSepolia": "0x522fE5677A9522f287341AeEc6b32351229E7b54"
+   },
+   "mirrors": {
+    "baseSepolia": "0x558e08CF99E1F2F5b8Aa804598E67350aa370744"
+   }
+  },
+  "sepolia:2": {
+   "native": "sepolia",
+   "nft": "0xB0bF5af151c72326231605D6Cf9136050866E578",
+   "owner": "0x9eD7D6e983000dED4aF1FC4773B91B68ED8b1eAf",
+   "paid": "80000000000000000",
+   "escrows": {
+    "sepolia": "0x00C7B2e078f760725De6527F2962EC3748aDCD67",
+    "baseSepolia": "0xDF58FAD93D799c30a286E1C35E8Fad09EF505A42"
+   },
+   "mirrors": {
+    "baseSepolia": "0x1709556acFe46BD7Cc1c3A38A8b5D75F3c3AB90A"
+   }
+  },
+  "sepolia:3": {
+   "native": "sepolia",
+   "nft": "0xf5C52870e320E0F1f625b2f8d208f7F52d50978e",
+   "owner": "0x9eD7D6e983000dED4aF1FC4773B91B68ED8b1eAf",
+   "paid": "80000000000000000",
+   "escrows": {
+    "sepolia": "0xC939b9Fc226AC3bef0AAa70BD0576381E1400A11",
+    "baseSepolia": "0x09BB6707a475b3F2b13d2846e3Aa4a2554c2C8A5"
+   },
+   "mirrors": {
+    "baseSepolia": "0x13afF7c73D009b5a08a779E06c148280AD8c82Ad"
+   }
+  }
+ },
+ "roundtrip": {
+  "mode": "fork",
+  "at": "2026-10-14T02:15:26.233Z",
+  "test collection (Sepolia)": "0xBC171365D461A356BE2a80Be328476Ba3f4eF356",
+  "listing fee paid": "0.08 ETH -> fee wallet +0.08",
+  "escrow Sepolia": "0xbb4294099036Da580385aF873c1e799d54cfcbd4",
+  "escrow Base Sepolia": "0x522fE5677A9522f287341AeEc6b32351229E7b54",
+  "mirror Base Sepolia": "0x558e08CF99E1F2F5b8Aa804598E67350aa370744",
+  "quote Sepolia->Base": "$0.30 = 0.000119977444240483 ETH + LZ 0.000104621792596558 ETH",
+  "platform fee received": "0.000119977444240483 ETH",
+  "#7 owner on Sepolia": "escrow",
+  "#7 owner on Base Sepolia": "holder",
+  "quote Base->Sepolia": "$0.30 = 0.000119823178968436 ETH + LZ 0.000098985467566447 ETH",
+  "#7 owner back on Sepolia": "holder",
+  "#7 on Base Sepolia": "escrow"
+ },
+ "testCollection": {
+  "sepolia": "0xBC171365D461A356BE2a80Be328476Ba3f4eF356",
+  "baseSepoliaMirror": "0x558e08CF99E1F2F5b8Aa804598E67350aa370744"
+ },
+ "fromBlock": {
+  "sepolia": 11910193,
+  "baseSepolia": 48087850
+ }
+}

@@ -5,7 +5,7 @@ export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': 
 export const media = (u?: string | null) => (!u ? '' : u.startsWith('/media/') ? API + u : u);
 export function navHtml(active = '') {
   return `<nav class="top"><a class="brand" href="/"><img src="${AV['brand/icon-64.webp']}" srcset="${AV['brand/icon-64.webp']} 1x, ${AV['brand/icon-128.webp']} 2x" width="34" height="34" alt="MultiSea"><span>Multi<b>Sea</b></span></a>
-  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/submit" class="${active === 'submit' ? 'on' : ''}">Submit</a></div>
+  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/bridge" class="${active === 'bridge' ? 'on' : ''}">Bridge</a><a href="/submit" class="${active === 'submit' ? 'on' : ''}">Submit</a></div>
   <div class="navr"><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button></div></nav>`;
 }
 let bound = false;

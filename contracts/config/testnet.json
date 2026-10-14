@@ -1,0 +1,12 @@
+{
+  "admin": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+  "feeWallet": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+  "supportedChains": 6,
+  "maxPriceAge": 86400,
+  "chains": {
+    "sepolia": { "name": "Sepolia", "chainId": 11155111, "eid": 40161, "rpc": "https://ethereum-sepolia-rpc.publicnode.com", "forkRpc": "http://127.0.0.1:8545",
+      "endpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f", "ethUsdFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306", "explorer": "https://sepolia.etherscan.io" },
+    "baseSepolia": { "name": "Base Sepolia", "chainId": 84532, "eid": 40245, "rpc": "https://sepolia.base.org", "forkRpc": "http://127.0.0.1:8546",
+      "endpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f", "ethUsdFeed": "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1", "explorer": "https://sepolia.basescan.org" }
+  }
+}

@@ -1,0 +1,10 @@
+import { navHtml, bindNav } from './shell';
+import { checkApi, onWallet } from './wallet';
+import { mountBridge } from './bridgekit';
+document.title = 'Bridge · MultiSea';
+const app = document.getElementById('app')!;
+app.innerHTML = `${navHtml('bridge')}<section class="page bpage"><div id="bridgebox"></div></section>`;
+bindNav(); checkApi();
+mountBridge(document.getElementById('bridgebox')!);
+const nav = () => { const n = app.querySelector('nav'); if (n) { n.outerHTML = navHtml('bridge'); bindNav(); } };
+onWallet(nav);
