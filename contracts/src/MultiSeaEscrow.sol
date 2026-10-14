@@ -112,7 +112,7 @@ contract MultiSeaEscrow is OApp, ReentrancyGuard, IERC721Receiver {
 
     /// @dev Only the endpoint can call lzReceive, and OAppReceiver rejects any sender that is not the configured peer.
     function _lzReceive(Origin calldata origin, bytes32 guid, bytes calldata message, address, bytes calldata)
-        internal override nonReentrant
+        internal virtual override nonReentrant
     {
         (address to, uint256 tokenId) = abi.decode(message, (address, uint256));
         if (isMirror && !IMultiSeaMirror(address(nft)).exists(tokenId)) {

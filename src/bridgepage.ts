@@ -5,6 +5,6 @@ document.title = 'Bridge · MultiSea';
 const app = document.getElementById('app')!;
 app.innerHTML = `${navHtml('bridge')}<section class="page bpage"><div id="bridgebox"></div></section>`;
 bindNav(); checkApi();
-mountBridge(document.getElementById('bridgebox')!);
+import('./bridgeflag').then(f => f.bridgeEnabled()).then(on => { const box = document.getElementById('bridgebox')!; if (on) mountBridge(box); else box.innerHTML = '<div class="bridge"><div class="gh">Bridge</div><p class="mut">The MultiSea bridge is not live yet.</p></div>'; });
 const nav = () => { const n = app.querySelector('nav'); if (n) { n.outerHTML = navHtml('bridge'); bindNav(); } };
 onWallet(nav);

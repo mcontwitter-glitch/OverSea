@@ -35,7 +35,7 @@ function render() {
    <p class="msg ${msgCls}">${esc(msg)}</p>
    <button class="bbtn go" type="button" data-act="submit">${wallet.address ? (getSession() ? 'Submit for review' : 'Sign in & submit') : 'Connect wallet to submit'}</button>
   </fieldset><div id="listpay"></div></section>`;
-  import('./listpay').then(m => { const el = document.getElementById('listpay'); if (el && !el.childElementCount) m.mountListPay(el); });
+  import('./bridgeflag').then(f => f.bridgeEnabled()).then(on => { if (on) import('./listpay').then(m => { const el = document.getElementById('listpay'); if (el && !el.childElementCount) m.mountListPay(el); }); });
 }
 const val = (n: string) => (app.querySelector(`[name=${n}]`) as HTMLInputElement)?.value.trim() || '';
 const keep = () => { const f: Record<string, string> = {}; app.querySelectorAll<HTMLInputElement>('[name]').forEach(i => (f[i.name] = i.value)); return f; };

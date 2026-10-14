@@ -4,3 +4,4 @@ cache/
 .secrets/
 broadcast/
 .env
+plans/

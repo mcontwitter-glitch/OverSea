@@ -12,3 +12,10 @@ worker/.cf-token
 
 # testnet preview config (generated; never deploy fork addresses)
 public/bridge.json
+
+# keys / local secrets
+*.key
+*.pem
+.secrets/
+contracts/.secrets/
+contracts/plans/

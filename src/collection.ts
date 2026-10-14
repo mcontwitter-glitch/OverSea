@@ -1,3 +1,4 @@
+import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, startBuy, apiReady, API } from './wallet';
@@ -88,7 +89,7 @@ function header() {
     </div>
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
-  <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
+  <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}</div>`;
 }
 
@@ -191,7 +192,8 @@ function render() {
   app.innerHTML = `${navHtml()}
   ${header()}<div class="content">${st.tab === 'items' ? itemsView() : st.tab === 'activity' ? activityView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
   window.scrollTo(0, y);
-  if (st.tab === 'bridge') import('./bridgekit').then(b => b.mountBridge(document.getElementById('bridgebox')!, { slug: COL.slug }));
+  applyBridgeFlag();
+  if (st.tab === 'bridge') bridgeEnabled().then(on => { if (!on) { st.tab = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(document.getElementById('bridgebox')!, { slug: COL.slug })); });
 }
 
 app.addEventListener('click', e => {
