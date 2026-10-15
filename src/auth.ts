@@ -2,7 +2,7 @@
 import { createSiweMessage } from 'viem/siwe';
 import { wallet, API, openConnect } from './wallet';
 const KEY = 'multisea-session';
-type Sess = { token: string; address: string; isAdmin: boolean; exp: number };
+type Sess = { token: string; address: string; isAdmin: boolean; isFee?: boolean; exp: number };
 export function getSession(): Sess | null {
   try { const s = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (s && s.exp > Date.now() && s.address === wallet.address?.toLowerCase()) return s; } catch {}
   return null;
@@ -16,7 +16,7 @@ export async function signIn(statement = 'Sign in to MultiSea'): Promise<Sess> {
   const signature = await wallet.provider.request({ method: 'personal_sign', params: [toHex(message), wallet.address] });
   const r = await fetch(API + '/auth/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Sign-in failed');
-  const s = { token: j.token, address: j.address, isAdmin: j.isAdmin, exp: Date.now() + j.expiresIn * 1000 };
+  const s = { token: j.token, address: j.address, isAdmin: j.isAdmin, isFee: !!j.isFee, exp: Date.now() + j.expiresIn * 1000 };
   sessionStorage.setItem(KEY, JSON.stringify(s)); return s;
 }
 const toHex = (s: string) => '0x' + [...new TextEncoder().encode(s)].map(b => b.toString(16).padStart(2, '0')).join('');

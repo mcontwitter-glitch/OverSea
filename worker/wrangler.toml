@@ -16,6 +16,8 @@ r2_buckets = [{ binding = "MEDIA", bucket_name = "multisea-media" }]
 
 # Secret (never in code): npx wrangler secret put OPENSEA_API_KEY
 [vars]
+# MultiSea fee wallet (Relay app-fee recipient); may view /admin Fees and claim.
+FEE_WALLET = "0x25411039F77529A543344603bD8acdd65fABA4d0"
 ALLOWED_ORIGINS = "https://multisea.io,https://www.multisea.io,https://mcontwitter-glitch.github.io"
 SIWE_DOMAINS = "multisea.io,www.multisea.io,mcontwitter-glitch.github.io"
 # LIL FOOTS deployer / owner() on Abstract

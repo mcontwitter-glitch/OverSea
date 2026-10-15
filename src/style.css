@@ -257,3 +257,12 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .xsrc small{font-size:11px;color:#6fd3a0}.xsrc.low small{color:#c88}.xsrc.low{opacity:.75}
 .bkv i.usd{font-style:normal;font-weight:500;font-size:12px;color:#8a8a8a;margin-left:4px}.bkv .xtot{color:#fff}
 .bbtn.ghost.xpay{background:#202020!important;border:1px solid #45bdfa88!important;box-shadow:none!important}
+/* admin fees panel */
+.fees{margin-top:28px}.fh{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}.fh h2{margin:0}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:12px}
+.fcard{background:#141414;border:1px solid #222;border-radius:14px;padding:16px;min-width:0}
+.fbig{font-size:26px;font-weight:800;margin:4px 0 8px}
+.frow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #1f1f1f}.frow span{flex:1;min-width:0;display:flex;flex-direction:column}
+.frow em{font-style:normal;font-size:12px;color:#999}.frow .bbtn{width:auto;margin:0;padding:7px 14px;font-size:13px}.fusd{font-weight:600}
+@media (max-width:640px){.fgrid{grid-template-columns:1fr}.fbig{font-size:22px}}
+.fcard .need{white-space:normal;display:block;line-height:1.4;padding:6px 10px;border-radius:8px}

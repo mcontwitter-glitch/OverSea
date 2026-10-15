@@ -180,6 +180,17 @@ async function bustListings(contract, key) {
   for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
 }
 
+// ---------- fees helpers ----------
+const RELAY_API = 'https://api.relay.link';
+const feeWallet = env => lc(env.FEE_WALLET || '0x25411039F77529A543344603bD8acdd65fABA4d0');
+// RELAY_API_KEY is an optional Worker secret (`wrangler secret put RELAY_API_KEY`); sent only when set.
+const relayFetch = (env, path, init = {}) => fetch(RELAY_API + path, { ...init, headers: { 'content-type': 'application/json', ...(env.RELAY_API_KEY ? { 'x-api-key': env.RELAY_API_KEY } : {}), ...(init.headers || {}) } });
+async function rpcBalance(chainKey, addr) {
+  const c = chains[chainKey]; if (!c) return null;
+  const r = await fetch(c.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] }) }).catch(() => null);
+  const j = r ? await r.json().catch(() => ({})) : {}; return j.result ? BigInt(j.result).toString() : null;
+}
+
 // ---------- router ----------
 async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
@@ -209,7 +220,7 @@ async function handle(req, env, url) {
     const token = rand(32); const address = lc(f.address);
     const ttl = Math.max(60, Math.min(86400, Math.floor((f.expirationTime.getTime() - Date.now()) / 1000)));
     await env.NONCES.put('s:' + token, JSON.stringify({ address }), { expirationTtl: ttl });
-    return { token, address, isAdmin: admins(env).includes(address), expiresIn: ttl };
+    return { token, address, isAdmin: admins(env).includes(address), isFee: address === feeWallet(env), expiresIn: ttl };
   }
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'me') { const s = await requireSession(req, env); return { address: s.address, isAdmin: admins(env).includes(s.address) }; }
 
@@ -258,6 +269,39 @@ async function handle(req, env, url) {
     const rec = { slug, name, description: str(b.description, 1000), ...cleanLinks(b), logo: str(b.logo, 120, MEDIA), banner: str(b.banner, 120, MEDIA), deployments: checked, escrow, submitter: s.address, status: 'pending', submittedAt: new Date().toISOString() };
     await env.COLLECTIONS.put('pending:' + slug, JSON.stringify(rec));
     return { ok: true, status: 'pending', slug };
+  }
+
+  // --- fees (Relay app fees + fee wallet balances): admins and the fee wallet only ---
+  if (p[0] === 'fees') {
+    const s = await requireSession(req, env); const fee = feeWallet(env);
+    const isAdmin = admins(env).includes(s.address), isFee = s.address === fee;
+    if (!isAdmin && !isFee) bad('admin or fee wallet only', 403);
+    if (M === 'GET' && p[1] === 'summary') {
+      const [relay, natives, claims] = await Promise.all([
+        relayFetch(env, `/app-fees/${fee}/balances`).then(async r => (r.ok ? r.json() : { error: `relay ${r.status}` })).catch(e => ({ error: String(e).slice(0, 120) })),
+        Promise.all(Object.entries(chains).map(async ([k, c]) => ({ chain: k, native: c.native, balance: await rpcBalance(k, fee) }))),
+        env.COLLECTIONS.list({ prefix: 'feeclaim:' }).then(l => Promise.all(l.keys.slice(-50).map(k => env.COLLECTIONS.get(k.name, 'json')))).catch(() => []),
+      ]);
+      return { feeWallet: fee, you: s.address, canClaim: isFee, relayKey: !!env.RELAY_API_KEY, relay, natives, claims: claims.filter(Boolean).reverse() };
+    }
+    if (M === 'POST' && p[1] === 'claim' && p.length === 2) {
+      if (!isFee) bad('connect and sign in with the fee wallet to claim', 403);
+      const b = await body(); if (!Number.isInteger(b.chainId) || !ADDR.test(b.currency || '')) bad('invalid input');
+      const r = await relayFetch(env, `/app-fees/${fee}/claim`, { method: 'POST', body: JSON.stringify({ chainId: b.chainId, currency: b.currency, recipient: fee }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new HttpError(r.status === 401 ? 503 : 422, j.message || 'relay refused', { relayStatus: r.status });
+      return j;
+    }
+    if (M === 'POST' && p[1] === 'claim' && p[2] === 'submit') {
+      if (!isFee) bad('fee wallet only', 403);
+      const b = await body();
+      if (typeof b.endpoint !== 'string' || !/^\/execute\/[a-z0-9/_-]+$/i.test(b.endpoint) || !['POST', 'post'].includes(b.method || 'POST') || !/^0x[0-9a-fA-F]{130,4096}$/.test(b.signature || '')) bad('invalid input');
+      const r = await relayFetch(env, `${b.endpoint}?signature=${b.signature}`, { method: 'POST', body: JSON.stringify(b.body ?? {}) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new HttpError(422, j.message || 'relay refused claim', { relayStatus: r.status });
+      const rec = { at: new Date().toISOString(), by: s.address, chainId: Number(b.chainId) || null, currency: str(b.currency, 42), amountUsd: Number(b.amountUsd) || null, relay: JSON.stringify(j).slice(0, 500) };
+      await env.COLLECTIONS.put('feeclaim:' + Date.now(), JSON.stringify(rec));
+      return { ok: true, result: j };
+    }
+    bad('not found', 404);
   }
 
   // --- admin ---
