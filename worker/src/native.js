@@ -1,5 +1,5 @@
 // MultiSea native marketplace: Seaport 1.6 listings stored in KV, validated server-side and re-checked on read.
-import { createPublicClient, http, parseAbi, parseEventLogs, hashStruct, verifyTypedData } from 'viem';
+import { createPublicClient, http, fallback, parseAbi, parseEventLogs, hashStruct, verifyTypedData } from 'viem';
 
 export const NATIVE_FEE_BPS = 50; // 0.5%
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -21,7 +21,7 @@ const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'funct
 
 export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached }) {
   const SEAPORT = CFG.seaport;
-  const client = k => createPublicClient({ transport: http(chains[k].rpc) });
+  const client = k => createPublicClient({ transport: fallback((chains[k].rpcs?.length ? chains[k].rpcs : [chains[k].rpc]).map(u => http(u, { timeout: 8000, retryCount: 1 }))) });
   const message = p => ({ ...p, offer: p.offer.map(o => ({ ...o, identifierOrCriteria: BigInt(o.identifierOrCriteria), startAmount: BigInt(o.startAmount), endAmount: BigInt(o.endAmount) })), consideration: p.consideration.map(c => ({ ...c, identifierOrCriteria: BigInt(c.identifierOrCriteria), startAmount: BigInt(c.startAmount), endAmount: BigInt(c.endAmount) })), startTime: BigInt(p.startTime), endTime: BigInt(p.endTime), salt: BigInt(p.salt), counter: BigInt(p.counter) });
   const orderHash = p => hashStruct({ data: message(p), primaryType: 'OrderComponents', types: TYPES });
   const domain = k => ({ name: 'Seaport', version: '1.6', chainId: chains[k].chainId, verifyingContract: SEAPORT });
@@ -74,6 +74,8 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     if (!appr) return { ok: false, why: 'not-approved' };
     return { ok: true };
   }
+  // Same check, but RPC trouble becomes a friendly 503 (details go to the Worker log).
+  const liveOrFail = (k, p, hash) => live(k, p, hash).catch(e => { console.log('native rpc', k, e?.shortMessage || e?.message); bad(`Couldn't reach the ${chains[k].name} network. Please try again in a moment.`, 503); });
   const key = (k, p, hash) => `ord:${k}:${lc(p.offer[0].token)}:${p.offer[0].identifierOrCriteria}:${hash}`;
   const bust = async slug => { if (slug) await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {}); };
   async function drop(env, k, rec, why) {
@@ -96,7 +98,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     let okSig = await verifyTypedData({ address: p.offerer, signature: b.signature, ...td }).catch(() => false);
     if (!okSig) okSig = await client(k).verifyTypedData({ address: p.offerer, signature: b.signature, ...td }).catch(() => false); // ERC-1271 smart wallets
     if (!okSig) bad('signature does not match offerer', 401);
-    const l = await live(k, p, hash); if (!l.ok) bad(l.why === 'not-approved' ? 'approve Seaport for this collection first' : 'order not valid on-chain: ' + l.why);
+    const l = await liveOrFail(k, p, hash); if (!l.ok) bad(l.why === 'not-approved' ? 'approve Seaport for this collection first' : 'order not valid on-chain: ' + l.why);
     const rec = { chain: k, hash, parameters: p, signature: b.signature, priceWei: total.toString(), slug: slugs[0], createdAt: new Date().toISOString() };
     await env.COLLECTIONS.put(key(k, p, hash), JSON.stringify(rec), { metadata: { p: total.toString(), s: p.offerer, e: Number(p.endTime) }, expiration: Math.max(Number(p.endTime), Math.floor(Date.now() / 1000) + 120) });
     for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/n:' + s)).catch(() => {});
@@ -128,7 +130,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` });
     const name = l.keys.find(x => x.name.endsWith(':' + lc(hash)))?.name; if (!name) bad('order not found', 404);
     const rec = await env.COLLECTIONS.get(name, 'json'); if (!rec) bad('order not found', 404);
-    const lv = await live(k, rec.parameters, rec.hash); if (!lv.ok) { await drop(env, k, rec, lv.why); bad('listing no longer valid: ' + lv.why, 409); }
+    const lv = await liveOrFail(k, rec.parameters, rec.hash); if (!lv.ok) { await drop(env, k, rec, lv.why); bad('listing no longer valid: ' + lv.why, 409); }
     return { chain: k, orderHash: rec.hash, parameters: rec.parameters, signature: rec.signature, priceWei: rec.priceWei, protocolAddress: lc(SEAPORT) };
   }
   async function remove(env, k, hash, address) {

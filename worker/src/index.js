@@ -38,6 +38,21 @@ async function cached(key, ttl, fn) {
   const hit = await cache.match(req); if (hit) return hit.json();
   const val = await fn(); await cache.put(req, new Response(JSON.stringify(val), { headers: { 'cache-control': `public, max-age=${ttl}` } })); return val;
 }
+const RPC_READ = new Set(['eth_call', 'eth_chainId', 'eth_blockNumber', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_getTransactionByHash', 'eth_getBlockByNumber', 'eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_feeHistory', 'eth_estimateGas', 'net_version']);
+// Try each configured RPC in order (2 rounds); an HTTP error, a non-JSON body or a JSON-RPC rate-limit/internal error moves on to the next.
+async function rpcFanout(c, payload) {
+  const urls = c.rpcs?.length ? c.rpcs : [c.rpc]; let last = 'no rpc';
+  for (let round = 0; round < 2; round++) for (const u of urls) {
+    try {
+      const r = await fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
+      if (!r.ok) { last = u + ' HTTP ' + r.status; continue; }
+      const out = await r.json(); const arr = Array.isArray(out) ? out : [out];
+      if (arr.some(x => x?.error && (x.error.code === -32005 || x.error.code === -32603 || /rate|limit|capacity|timeout|unavailable/i.test(x.error.message || '')))) { last = u + ' ' + (arr.find(x => x.error).error.message || ''); continue; }
+      return out;
+    } catch (e) { last = u + ' ' + (e?.message || e); }
+  }
+  bad('all RPCs failed for ' + c.name + ': ' + last.slice(0, 160), 502);
+}
 async function rpcCall(chainKey, to, data) {
   const c = chains[chainKey]; if (!c) return null;
   const r = await fetch(c.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }) });
@@ -322,6 +337,19 @@ async function handle(req, env, url) {
     if (M === 'POST' && p[1] === 'remove' && p.length === 2) { const s = await requireSession(req, env); const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '')) bad('invalid input'); return await N.remove(env, b.chain, b.orderHash, s.address); }
   }
 
+  // --- Chain RPC proxy for browser reads: POST /rpc/:chain, read-only allowlist, fallback across public RPCs. ---
+  if (p[0] === 'rpc' && p.length === 2) {
+    if (M !== 'POST') bad('method not allowed', 405);
+    if (!corsHeaders(req, env)) bad('origin not allowed', 403);
+    if (limited('rpc:' + (req.headers.get('cf-connecting-ip') || 'x'), 300)) bad('rate limited', 429);
+    const c = chains[p[1]]; if (!c) bad('unknown chain', 404);
+    const txt = await req.text(); if (txt.length > 64_000) bad('too large', 413);
+    let j; try { j = JSON.parse(txt); } catch { bad('bad json'); }
+    const calls = Array.isArray(j) ? j : [j]; if (!calls.length || calls.length > 20) bad('bad batch');
+    for (const x of calls) if (!RPC_READ.has(x?.method)) bad('method not allowed: ' + String(x?.method).slice(0, 40), 403);
+    return new Response(JSON.stringify(await rpcFanout(c, j)), { headers: { 'content-type': 'application/json' } });
+  }
+
   // --- Relay proxy (quote / status / chains / token price). Key stays server-side. ---
   if (p[0] === 'relay') {
     if (!['GET', 'POST'].includes(M)) bad('method not allowed', 405);
@@ -473,7 +501,7 @@ export default {
     const H = ch || {};
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
     const ip = req.headers.get('cf-connecting-ip') || 'local';
-    if (limited(ip, url.pathname.startsWith('/media/') ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
+    if (limited(ip, url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
     try {
       const out = await handle(req, env, url);
       if (out instanceof Response) { for (const [k, v] of Object.entries(H)) out.headers.set(k, v); return out; }

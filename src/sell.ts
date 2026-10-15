@@ -1,7 +1,7 @@
 // Sell flow: list an owned NFT on OpenSea (Seaport 1.6, EIP-712) and cancel it. The OpenSea key lives only in the Worker.
 import { createPublicClient, createWalletClient, custom, http, parseAbi, parseUnits, formatUnits, type Hex } from 'viem';
 import CFG from '../config/collections.json';
-import { API, wallet, openConnect, overlay, vchain, ensureChain, friendly, esc } from './wallet';
+import { API, readClient, wallet, openConnect, overlay, vchain, ensureChain, friendly, esc } from './wallet';
 import { buildListing, orderTypedData, cancelTypedData, splitPrice, EXPIRY, ZERO32, type Fee } from './seaorder';
 
 const chains = CFG.chains as Record<string, any>;
@@ -66,7 +66,7 @@ export async function openSell(it: SellItem, onListed: () => void) {
     const price = priceWei(); const useFees = active();
     const step = (t: string) => { body.innerHTML = `<div class="spin"></div> ${t}`; };
     step(`Switching wallet to ${esc(c.name)}…`); await ensureChain(it.chain);
-    const me = wallet.address as Hex; const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const me = wallet.address as Hex; const pub = readClient(it.chain);
     const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) });
     step('Checking ownership…');
     const owner = await pub.readContract({ address: it.contract as Hex, abi: ERC721, functionName: 'ownerOf', args: [BigInt(it.id)] });
@@ -90,12 +90,12 @@ export async function openSell(it: SellItem, onListed: () => void) {
       ? await fetch(`${API}/native/list`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: it.chain, parameters: order, signature }) })
       : await fetch(`${API}/sell/list`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: c.openseaSlug, protocolAddress: seaport, parameters: order, signature }) });
     const pj = await pr.json();
-    if (!pr.ok) throw Object.assign(new Error(`${market === 'multisea' ? 'MultiSea' : 'OpenSea'}: ${pj.message || pj.error || 'listing rejected'}`), { kind: 'stale' });
+    if (!pr.ok) { console.error('[MultiSea] list rejected', pr.status, pj); throw Object.assign(new Error(pr.status === 503 || pr.status === 502 ? String(pj.error || 'Network busy, please try again.') : `${market === 'multisea' ? 'MultiSea' : 'OpenSea'}: ${String(pj.message || pj.error || 'listing rejected').split('\n')[0].slice(0, 160)}`), { kind: 'stale' }); }
     onListed();
     body.innerHTML = market === 'multisea'
       ? `<p class="ok">✓ Listed on MultiSea for ${fmt(price)} ${esc(c.native)}. It shows after a refresh.</p>`
       : `<p class="ok">✓ Listed for ${fmt(price)} ${esc(c.native)}. It shows on MultiSea after a refresh.</p><a class="bbtn" href="https://opensea.io/item/${c.openseaSlug}/${it.contract}/${it.id}" target="_blank" rel="noopener">View on OpenSea ↗</a>`;
-  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, it?.chain)); }
 }
 
 export async function cancelListing(it: SellItem, orderHash: string, onCancelled: () => void, source: 'opensea' | 'multisea' = 'opensea') {
@@ -119,7 +119,7 @@ export async function cancelListing(it: SellItem, orderHash: string, onCancelled
       const cr = await fetch(`${API}/sell/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: c.openseaSlug, protocolAddress: o.protocolAddress, orderHash, signature, contract: it.contract }) });
       const cj = await cr.json(); if (!cr.ok) throw Object.assign(new Error(`OpenSea: ${cj.message || cj.error}`), { kind: 'stale' });
     } else {
-      const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+      const pub = readClient(it.chain);
       const comp = { ...prm, offer: prm.offer.map((x: any) => ({ ...x, identifierOrCriteria: BigInt(x.identifierOrCriteria), startAmount: BigInt(x.startAmount), endAmount: BigInt(x.endAmount) })), consideration: prm.consideration.map((x: any) => ({ ...x, identifierOrCriteria: BigInt(x.identifierOrCriteria), startAmount: BigInt(x.startAmount), endAmount: BigInt(x.endAmount) })), startTime: BigInt(prm.startTime), endTime: BigInt(prm.endTime), salt: BigInt(prm.salt), counter: BigInt(prm.counter) };
       delete comp.totalOriginalConsiderationItems;
       const h = await wc.writeContract({ account: me, address: o.protocolAddress, abi: SEAPORT, functionName: 'cancel', args: [[comp]] });
@@ -128,7 +128,7 @@ export async function cancelListing(it: SellItem, orderHash: string, onCancelled
     }
     onCancelled();
     body.innerHTML = `<p class="ok">✓ Listing cancelled. MultiSea updates after a refresh.</p>`;
-  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, it?.chain)); }
 }
 
 // MultiSea native listing: cancel on-chain via Seaport, or remove from MultiSea only (order stays valid until expiry).
@@ -152,7 +152,7 @@ async function cancelNative(it: SellItem, orderHash: string, onCancelled: () => 
       onCancelled(); body.innerHTML = '<p class="ok">✓ Removed from MultiSea. The signed order is still valid on-chain until it expires.</p>'; return;
     }
     body.innerHTML = `<div class="spin"></div> Switching wallet to ${esc(c.name)}…`; await ensureChain(it.chain);
-    const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) }); const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) }); const pub = readClient(it.chain);
     const n = (x: any) => BigInt(x);
     const comp: any = { ...prm, offer: prm.offer.map((x: any) => ({ ...x, identifierOrCriteria: n(x.identifierOrCriteria), startAmount: n(x.startAmount), endAmount: n(x.endAmount) })), consideration: prm.consideration.map((x: any) => ({ ...x, identifierOrCriteria: n(x.identifierOrCriteria), startAmount: n(x.startAmount), endAmount: n(x.endAmount) })), startTime: n(prm.startTime), endTime: n(prm.endTime), salt: n(prm.salt), counter: n(prm.counter) };
     delete comp.totalOriginalConsiderationItems;
@@ -163,7 +163,7 @@ async function cancelNative(it: SellItem, orderHash: string, onCancelled: () => 
     onCancelled(); body.innerHTML = '<div class="spin"></div> Cancelled on-chain. Removing from MultiSea…';
     const cr = await fetch(`${API}/native/cancelled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: it.chain, orderHash, txHash: h }) }).catch(() => null);
     body.innerHTML = cr?.ok ? '<p class="ok">✓ Listing cancelled on-chain and removed from MultiSea.</p>' : '<p class="ok">✓ Listing cancelled on-chain.</p><p class="mut small">MultiSea will drop it within 15 minutes.</p>';
-  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, it?.chain)); }
 }
 
 // Buy a MultiSea native listing: Seaport fulfillOrder from the buyer's wallet (or cross-chain via Relay).
@@ -178,7 +178,7 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const me = wallet.address as Hex; const prm = o.parameters;
     const value: bigint = prm.consideration.reduce((s: bigint, x: any) => s + BigInt(x.startAmount), 0n);
     const fees: bigint = prm.consideration.slice(1).reduce((s: bigint, x: any) => s + BigInt(x.startAmount), 0n);
-    const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const pub = readClient(it.chain);
     const bal = await pub.getBalance({ address: me }); const enough = bal >= value;
     body.innerHTML = `<div class="kv bkv"><span>Price</span><b>${fmt(value)} ${esc(c.native)}</b><span>Includes fees</span><b>${fmt(fees)} ${esc(c.native)}</b><span>Seller receives</span><b>${fmt(value - fees)} ${esc(c.native)}</b>
       <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b><span>Your balance</span><b class="${enough ? '' : 'errc'}">${fmt(bal)} ${esc(c.native)}</b></div>
@@ -196,7 +196,7 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const link = `${c.explorer}/tx/${h}`; body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Transaction reverted. The listing may have been filled or cancelled.');
     onSold(it.id); body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;
-  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, it?.chain)); }
 }
 
 // "Cancel all my listings" on one chain: Seaport.incrementCounter invalidates every open Seaport order of this wallet on that chain
@@ -212,7 +212,7 @@ export async function cancelAllNative(chain: string, count: number, onDone: () =
       <button class="bbtn go danger">Cancel all on ${esc(c.name)}</button>`;
     await Promise.race([new Promise<void>(res => body.querySelector('.go')!.addEventListener('click', () => res())), closed(m)]);
     body.innerHTML = `<div class="spin"></div> Switching wallet to ${esc(c.name)}…`; await ensureChain(chain);
-    const wc = createWalletClient({ chain: vchain(chain), transport: custom(wallet.provider) }); const pub = createPublicClient({ chain: vchain(chain), transport: http() });
+    const wc = createWalletClient({ chain: vchain(chain), transport: custom(wallet.provider) }); const pub = readClient(chain);
     body.innerHTML = '<div class="spin"></div> Confirm in your wallet…';
     const h = await wc.writeContract({ account: me, address: CFG.seaport as Hex, abi: SEAPORT, functionName: 'incrementCounter' });
     body.innerHTML = `<div class="spin"></div> Pending… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`;
@@ -221,5 +221,5 @@ export async function cancelAllNative(chain: string, count: number, onDone: () =
     const r = await fetch(`${API}/native/counter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain, seller: me, txHash: h }) }).catch(() => null);
     const j = r?.ok ? await r.json() : null; onDone();
     body.innerHTML = `<p class="ok">✓ All your Seaport listings on ${esc(c.name)} are cancelled${j ? ` (${j.removed} removed from MultiSea)` : ''}.</p>${j ? '' : '<p class="mut small">MultiSea will finish removing them within 15 minutes.</p>'}`;
-  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, chain)); }
 }

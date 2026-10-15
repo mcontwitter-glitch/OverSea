@@ -1,7 +1,7 @@
 // Cross-chain checkout: pay for a listing with native funds from another chain via Relay (relay.link).
 import { createPublicClient, createWalletClient, custom, http, formatUnits, parseAbi, type Hex } from 'viem';
 import CFG from '../config/collections.json';
-import { wallet, overlay, vchain, ensureChain, friendly, esc } from './wallet';
+import { wallet, readClient, overlay, vchain, ensureChain, friendly, esc } from './wallet';
 import { usdRates } from './shell';
 import { RELAY, advancedFulfillCalldata, oneStepOk, quoteWithFlatFee, summarize } from './xpaycore';
 
@@ -21,7 +21,7 @@ export async function openXPay(ctx: XPayCtx) {
   try {
     const rates = await usdRates();
     const order = ctx.orders?.[0]; const oneStep = oneStepOk(order?.parameters);
-    const destPub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const destPub = readClient(it.chain);
     const priceUsd = (+formatUnits(ctx.price, 18)) * ((rates as any)[dest.native] || 0);
     // How much must land on the destination chain.
     let need: bigint; let call: { data: Hex; value: bigint } | null = null;
@@ -33,7 +33,7 @@ export async function openXPay(ctx: XPayCtx) {
     }
     // Balances on every other chain (native), valued in USD.
     const srcs = (await Promise.all(Object.entries(chains).filter(([k]) => k !== it.chain).map(async ([k, c]) => {
-      const b = await createPublicClient({ chain: vchain(k), transport: http() }).getBalance({ address: me }).catch(() => null);
+      const b = await readClient(k).getBalance({ address: me }).catch(() => null);
       const u = b == null ? 0 : (+formatUnits(b, 18)) * ((rates as any)[c.native] || 0);
       return { k, c, b, u };
     }))).filter(s => s.b != null && s.b > 0n);
@@ -72,7 +72,7 @@ export async function openXPay(ctx: XPayCtx) {
     if (fs.totalWei > (current.s.totalWei * 103n) / 100n) throw Object.assign(new Error('The quote moved more than 3%. Please review the new price and try again.'), { kind: 'stale' });
     body.innerHTML = `<div class="spin"></div> Switching wallet to ${esc(src.name)}…`; await ensureChain(srcKey);
     const wc = createWalletClient({ chain: vchain(srcKey), transport: custom(wallet.provider) });
-    const srcPub = createPublicClient({ chain: vchain(srcKey), transport: http() });
+    const srcPub = readClient(srcKey);
     let requestId = fresh.quote.requestId as string; let txh = '';
     for (const step of fresh.quote.steps) for (const item of step.items) {
       if (step.kind !== 'transaction') throw new Error('Unsupported Relay step: ' + step.kind);

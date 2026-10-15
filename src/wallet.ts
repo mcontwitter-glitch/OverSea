@@ -1,10 +1,10 @@
 // Wallet connect (EIP-6963 discovery + window.ethereum fallback) and OpenSea buy flow via the multisea Worker.
-import { createWalletClient, createPublicClient, custom, http, defineChain, parseAbiItem, encodeFunctionData, concat, formatUnits, type Hex, type Chain as VChain } from 'viem';
+import { createWalletClient, createPublicClient, custom, http, fallback, defineChain, parseAbiItem, encodeFunctionData, concat, formatUnits, type Hex, type Chain as VChain } from 'viem';
 import CFG from '../config/collections.json';
 import APP from '../config/app.json';
 
 type P6963 = { info: { uuid: string; name: string; icon: string; rdns: string }; provider: any };
-type ChainCfg = { name: string; chainId: number; rpc: string; native: string; openseaSlug: string | null; explorer: string };
+type ChainCfg = { rpcs?: string[]; name: string; chainId: number; rpc: string; native: string; openseaSlug: string | null; explorer: string };
 const chains = CFG.chains as Record<string, ChainCfg>;
 export const API: string = (import.meta.env.VITE_API_BASE as string) || APP.apiBase || '';
 export const wallet = { address: null as string | null, provider: null as any, name: '' };
@@ -80,6 +80,19 @@ export function vchain(k: string): VChain {
   const c = chains[k];
   return defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: c.native, symbol: c.native, decimals: 18 }, rpcUrls: { default: { http: [c.rpc] } }, blockExplorers: { default: { name: 'Explorer', url: c.explorer } } });
 }
+// Browser chain reads: MultiSea Worker RPC proxy (server-side fallback across public RPCs) first, then the public RPCs
+// directly, then the connected wallet's own provider when it is on that chain. Retries on each.
+const readCache: Record<string, any> = {};
+export function readClient(k: string) {
+  if (readCache[k]) return readCache[k];
+  const c = chains[k]; const direct: string[] = c.rpcs?.length ? c.rpcs : [c.rpc];
+  const viaWallet = custom({ async request(a: any) {
+    if (!wallet.provider) throw new Error('no wallet');
+    if (parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16) !== c.chainId) throw new Error('wallet on another chain');
+    try { return await wallet.provider.request(a); } catch (e: any) { if (e?.code === 3 || /revert/i.test(e?.message || '')) throw e; throw new Error('RPC Request failed (wallet provider): ' + (e?.message || e)); }
+  } }, { retryCount: 0 });
+  return (readCache[k] = createPublicClient({ chain: vchain(k), transport: fallback([http(`${API}/rpc/${k}`, { timeout: 15_000, retryCount: 2, retryDelay: 400 }), ...direct.slice(0, 3).map(u => http(u, { timeout: 10_000, retryCount: 1 })), viaWallet]) }));
+}
 export async function ensureChain(k: string) {
   const c = chains[k]; const hex = '0x' + c.chainId.toString(16);
   const cur = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16);
@@ -97,13 +110,24 @@ export async function ensureChain(k: string) {
 // ---- buy ----
 export type BuyItem = { id: number; name: string; img: string; chain: string; contract: string; listing: { orderHash: string; protocolAddress: string; osChain?: string } };
 const toArr = (v: any): any => (Array.isArray(v) ? v.map(toArr) : v && typeof v === 'object' ? Object.values(v).map(toArr) : v);
-export function friendly(e: any): string {
+const RPC_FAIL = /RPC Request failed|HTTP request failed|Failed to fetch|fetch failed|NetworkError|Load failed|timed? ?out|TimeoutError|all RPCs failed|rate limit|429|50[234]|Network request failed/i;
+function chainOfErr(e: any, m: string): string | undefined {
+  const all = [m, e?.message, e?.details, e?.cause?.message, e?.url].filter(Boolean).join(' ');
+  const viaProxy = all.match(/\/rpc\/([a-z]+)/)?.[1]; if (viaProxy && chains[viaProxy]) return chains[viaProxy].name;
+  for (const k of Object.keys(chains)) for (const u of (chains[k].rpcs || [chains[k].rpc])) { try { if (all.includes(new URL(u).host)) return chains[k].name; } catch {} }
+}
+export function friendly(e: any, chainKey?: string): string {
+  try { console.error('[MultiSea]', e); } catch {}
   const m = String(e?.shortMessage || e?.details || e?.message || e);
+  const full = m + ' ' + String(e?.message || '') + ' ' + String(e?.details || '');
+  if (!(e?.code === 4001) && !/user rejected|denied/i.test(full) && (RPC_FAIL.test(full) || e?.name === 'HttpRequestError' || e?.name === 'TimeoutError' || /ContractFunctionExecutionError/.test(String(e?.name)) && RPC_FAIL.test(String(e?.cause?.message || e?.cause?.shortMessage || '')))) {
+    const n = (chainKey && chains[chainKey]?.name) || chainOfErr(e, full); return `Couldn't reach the ${n || 'blockchain'} network. Please try again in a moment.`;
+  }
   if (e?.code === 4001 || /user rejected|denied|rejected the request/i.test(m)) return 'You rejected the request in your wallet.';
   if (/insufficient funds|exceeds balance/i.test(m)) return 'Insufficient funds for price + gas on this chain.';
   if (e?.kind === 'wrong-chain' || /chain mismatch|does not match the target chain/i.test(m)) return 'Wrong network. Switch your wallet to the listing’s chain and try again.';
   if (e?.kind === 'stale') return m;
-  return m.slice(0, 220);
+  return m.split('\n')[0].replace(/\s*(Request body|URL|Raw Call Arguments|Contract Call|Docs|Version):.*$/s, '').slice(0, 200);
 }
 
 export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone: (id: number) => void) {
@@ -131,7 +155,7 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
     let data = encodeFunctionData({ abi: [abi], functionName: abi.name, args: Object.values(tx.input_data).map(toArr) });
     if (tx.calldata_suffix) data = concat([data, tx.calldata_suffix as Hex]);
     const value = BigInt(tx.value || 0);
-    const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const pub = readClient(it.chain);
     const bal = await pub.getBalance({ address: wallet.address as Hex });
     const dec = L.price?.decimals ?? 18, cur = L.price?.currency || c.native;
     const price = BigInt(L.price?.value || value);

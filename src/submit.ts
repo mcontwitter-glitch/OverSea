@@ -1,7 +1,7 @@
 import CFG from '../config/collections.json';
 import { pickHtml, picked } from './filepick';
 import { checkApi, onWallet, wallet, apiReady, openConnect } from './wallet';
-import { apiFeatures } from './wallet';
+import { apiFeatures, API } from './wallet';
 const mediaOn = () => apiFeatures.includes('media');
 import { navHtml, bindNav, esc, soon, media } from './shell';
 import { api, uploadImage, getSession } from './auth';
@@ -12,7 +12,8 @@ let rows = [{ chain: 'ethereum', address: '' }]; let esc_rows: { chain: string; 
 const up: Record<string, string> = {}; let msg = ''; let msgCls = 'mut'; let done = '';
 const chainOpts = (sel: string) => Object.entries(chains).map(([k, c]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 async function isErc721(chain: string, address: string) {
-  const r = await fetch(chains[chain].rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: address, data: '0x01ffc9a780ac58cd' + '0'.repeat(56) }, 'latest'] }) });
+  const opts = (u: string) => fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: address, data: '0x01ffc9a780ac58cd' + '0'.repeat(56) }, 'latest'] }) });
+  let r = await opts(`${API}/rpc/${chain}`).catch(() => null); if (!r?.ok) r = await opts(chains[chain].rpc).catch(() => null); if (!r) return false;
   const j = await r.json().catch(() => ({})); return !!j.result && j.result !== '0x' && BigInt(j.result) === 1n;
 }
 function render() {
