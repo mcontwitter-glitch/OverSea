@@ -277,3 +277,4 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .lpfaq .kv b{color:#eee}
 @media(max-width:600px){.lphero h1{font-size:26px}.lpcta .big{width:100%}}
 @media(max-width:480px){.navl .navsub{display:none}.navl a{white-space:nowrap}}
+.cabar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;margin:0 0 12px;background:#141414;border:1px solid #222;border-radius:12px;font-size:13px}.cabar span{flex:1;min-width:180px;display:flex;align-items:center;gap:4px;flex-wrap:wrap}.cabar .cl{width:16px;height:16px}.wov .bbtn.danger,.bbtn.danger{background:linear-gradient(90deg,#b91c1c,#ef4444)}

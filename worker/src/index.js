@@ -317,6 +317,8 @@ async function handle(req, env, url) {
     if (M === 'GET' && p.length === 3 && p[2] === 'listings') return { listings: await N.listings(env, p[1]) };
     if (M === 'GET' && p[1] === 'order' && p.length === 4) { if (!chains[p[2]] || !HASH.test(p[3])) bad('invalid input'); return await N.getOrder(env, p[2], p[3]); }
     if (M === 'POST' && p[1] === 'list' && p.length === 2) return await N.list(env, await body());
+    if (M === 'POST' && p[1] === 'cancelled' && p.length === 2) { const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '') || (b.txHash && !HASH.test(b.txHash))) bad('invalid input'); return await N.cancelled(env, b.chain, b.orderHash, b.txHash); }
+    if (M === 'POST' && p[1] === 'counter' && p.length === 2) { const b = await body(); if (!chains[b.chain] || !ADDR.test(b.seller || '') || (b.txHash && !HASH.test(b.txHash))) bad('invalid input'); return await N.counterBumped(env, b.chain, b.seller, b.txHash); }
     if (M === 'POST' && p[1] === 'remove' && p.length === 2) { const s = await requireSession(req, env); const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '')) bad('invalid input'); return await N.remove(env, b.chain, b.orderHash, s.address); }
   }
 

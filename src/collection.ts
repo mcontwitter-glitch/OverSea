@@ -76,6 +76,12 @@ let rates: UsdRates | null = null; usdRates().then(r => { if (r.ETH || r.APE) { 
 // "≈ $9.32" from the listing's own currency (APE converts from APE); falls back to the ETH equivalent.
 const usdOf = (l: Listing) => { if (!rates) return null; const c = l.currency.replace(/^W/, ''); const r = (rates as any)[c]; const v = r ? l.price * r : l.priceEth != null && rates.ETH ? l.priceEth * rates.ETH : null; return v == null ? null : v; };
 const usdTxt = (v: number) => '$' + v.toLocaleString(undefined, { minimumFractionDigits: v < 1000 ? 2 : 0, maximumFractionDigits: v < 1000 ? 2 : 0 });
+// "Cancel all my listings" (per chain) in My items, for chains where I have MultiSea listings.
+function myNative() { const me = wallet.address?.toLowerCase(); const by: Record<string, number> = {}; if (!me) return by; listMap.forEach(l => { if (l.source === 'multisea' && l.seller?.toLowerCase() === me) by[l.chain] = (by[l.chain] || 0) + 1; }); return by; }
+function cancelAllBar() {
+  if (st.status !== 'mine') return ''; const by = myNative(); const ks = Object.keys(by); if (!ks.length) return '';
+  return `<div class="cabar"><span>Your MultiSea listings: ${ks.map(k => `${logo(k)} ${by[k]}`).join(' · ')}</span>${ks.map(k => `<button class="obtn sm" data-cancelall="${k}">Cancel all on ${esc(chains[k]?.name)}</button>`).join('')}</div>`;
+}
 const srcBadge = (l: Listing) => l.source === 'multisea' ? ' <span class="src ms" title="Listed on MultiSea">MultiSea</span>' : ' <span class="src os" title="Listed on OpenSea">OpenSea</span>';
 const usd = (l: Listing) => { const v = usdOf(l); return v == null ? '' : ` <span class="usd">≈ ${usdTxt(v)}</span>`; };
 let liveUsd: number | null = null; ethUsdRate().then(r => { if (r && !findEthUsd(summary)) { liveUsd = r; document.querySelectorAll('.mcap b').forEach(e => e.textContent = mcapUsd(summary?.floor?.priceEth ?? null, COL.supply, r)); } });
@@ -180,6 +186,7 @@ function itemsView() {
   return `<div class="bar"><button class="fbtn" data-act="toggle-side">☰ Filters</button><input class="search" placeholder="Search by name or ID" value="${esc(st.q)}"><select class="sort">
     ${[['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low'], ['rarity', 'Rarity: rarest first'], ['rarity-desc', 'Rarity: common first']].map(([v, n]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
    <div class="layout">${sidebar()}<section class="main"><div class="count">${arr.length.toLocaleString()} items ${activeTraits ? `<span class="pills">${activeTraits}<button class="pill clr" data-act="clear">Clear all</button></span>` : ''}</div>
+   ${cancelAllBar()}
    <div class="grid">${arr.slice(0, st.limit).map((it, k) => card(it, k)).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
 }
 
@@ -236,6 +243,8 @@ app.addEventListener('click', e => {
   const sb = t.closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { e.stopPropagation(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; }
   if (t.closest('.nosell')) { e.stopPropagation(); return; }
   const act = t.closest('[data-act]') as HTMLElement;
+  const ca = (e.target as HTMLElement).closest('[data-cancelall]') as HTMLElement | null;
+  if (ca) { const k = ca.dataset.cancelall!; import('./sell').then(m => m.cancelAllNative(k, myNative()[k] || 0, () => { const me = wallet.address?.toLowerCase(); [...listMap].forEach(([id, l]) => { if (l.source === 'multisea' && l.chain === k && l.seller?.toLowerCase() === me) listMap.delete(id); }); render(); })); return; }
   if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }

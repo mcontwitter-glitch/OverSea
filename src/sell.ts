@@ -9,7 +9,7 @@ export type SellItem = { id: number; name: string; img: string; chain: string; c
 export const canSellNative = (chainKey: string) => !!chains[chainKey];
 export const canSell = (chainKey: string) => !!chains[chainKey]?.openseaSlug && !!chains[chainKey]?.conduit;
 const ERC721 = parseAbi(['function ownerOf(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function setApprovalForAll(address,bool)']);
-const SEAPORT = parseAbi(['function getCounter(address) view returns (uint256)', 'function cancel((address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)[]) returns (bool)']);
+const SEAPORT = parseAbi(['function getCounter(address) view returns (uint256)', 'function incrementCounter() returns (uint256)', 'function cancel((address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)[]) returns (bool)']);
 
 function head(it: SellItem, title: string) {
   const c = chains[it.chain];
@@ -144,7 +144,7 @@ async function cancelNative(it: SellItem, orderHash: string, onCancelled: () => 
     body.innerHTML = `<p>Cancel on-chain to make the signed order permanently unusable (costs a little gas on ${esc(c.name)}).</p>
       <button class="bbtn go" data-how="chain">Cancel on-chain</button>
       <button class="bbtn ghost" data-how="off">Remove from MultiSea only (free)</button>
-      <p class="mut small">“Remove only” hides it on MultiSea, but the signed order stays valid until it expires. To invalidate all your open Seaport orders at once, call Seaport’s incrementCounter().</p>`;
+      <p class="mut small">“Remove only” hides it on MultiSea, but the signed order stays valid until it expires. To invalidate all your open orders on this chain at once, use “Cancel all” in My items.</p>`;
     const how = await Promise.race([new Promise<string>(res => body.addEventListener('click', e => { const b = (e.target as HTMLElement).closest('[data-how]') as HTMLElement; if (b) res(b.dataset.how!); })), closed(m)]);
     if (how === 'off') {
       body.innerHTML = '<div class="spin"></div> Sign in to prove you are the seller…';
@@ -160,7 +160,9 @@ async function cancelNative(it: SellItem, orderHash: string, onCancelled: () => 
     const h = await wc.writeContract({ account: me, address: o.protocolAddress, abi: SEAPORT, functionName: 'cancel', args: [[comp]] });
     body.innerHTML = `<div class="spin"></div> Pending… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Cancel transaction failed.');
-    onCancelled(); body.innerHTML = '<p class="ok">✓ Listing cancelled on-chain. MultiSea drops it on the next refresh.</p>';
+    onCancelled(); body.innerHTML = '<div class="spin"></div> Cancelled on-chain. Removing from MultiSea…';
+    const cr = await fetch(`${API}/native/cancelled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: it.chain, orderHash, txHash: h }) }).catch(() => null);
+    body.innerHTML = cr?.ok ? '<p class="ok">✓ Listing cancelled on-chain and removed from MultiSea.</p>' : '<p class="ok">✓ Listing cancelled on-chain.</p><p class="mut small">MultiSea will drop it within 15 minutes.</p>';
   } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
 }
 
@@ -194,5 +196,30 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const link = `${c.explorer}/tx/${h}`; body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Transaction reverted. The listing may have been filled or cancelled.');
     onSold(it.id); body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+}
+
+// "Cancel all my listings" on one chain: Seaport.incrementCounter invalidates every open Seaport order of this wallet on that chain
+// (MultiSea and OpenSea alike); the Worker then purges MultiSea orders with the old counter right away.
+export async function cancelAllNative(chain: string, count: number, onDone: () => void) {
+  if (!wallet.address) { openConnect(); return; }
+  const c = chains[chain]; const me = wallet.address as Hex;
+  const m = overlay(`<div class="bhead"><div><div class="mut">${esc(c.name)} · Seaport</div><h3>Cancel all my listings</h3></div></div><div class="bbody"></div>`); const body = m.querySelector('.bbody') as HTMLElement;
+  const fail = (msg: string) => { body.innerHTML = `<p class="err">${esc(msg)}</p><button class="bbtn ghost mx2">Close</button>`; body.querySelector('.mx2')!.addEventListener('click', () => m.remove()); };
+  try {
+    body.innerHTML = `<p>This cancels <b>every</b> open Seaport listing from your wallet on ${esc(c.name)} in one transaction (${count} on MultiSea${c.openseaSlug ? ', plus any on OpenSea' : ''}).</p>
+      <p class="mut small">Calls Seaport incrementCounter(). Costs a little gas. Your NFTs stay in your wallet; you can list again afterwards.</p>
+      <button class="bbtn go danger">Cancel all on ${esc(c.name)}</button>`;
+    await Promise.race([new Promise<void>(res => body.querySelector('.go')!.addEventListener('click', () => res())), closed(m)]);
+    body.innerHTML = `<div class="spin"></div> Switching wallet to ${esc(c.name)}…`; await ensureChain(chain);
+    const wc = createWalletClient({ chain: vchain(chain), transport: custom(wallet.provider) }); const pub = createPublicClient({ chain: vchain(chain), transport: http() });
+    body.innerHTML = '<div class="spin"></div> Confirm in your wallet…';
+    const h = await wc.writeContract({ account: me, address: CFG.seaport as Hex, abi: SEAPORT, functionName: 'incrementCounter' });
+    body.innerHTML = `<div class="spin"></div> Pending… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`;
+    const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Transaction failed.');
+    body.innerHTML = '<div class="spin"></div> Removing your listings from MultiSea…';
+    const r = await fetch(`${API}/native/counter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain, seller: me, txHash: h }) }).catch(() => null);
+    const j = r?.ok ? await r.json() : null; onDone();
+    body.innerHTML = `<p class="ok">✓ All your Seaport listings on ${esc(c.name)} are cancelled${j ? ` (${j.removed} removed from MultiSea)` : ''}.</p>${j ? '' : '<p class="mut small">MultiSea will finish removing them within 15 minutes.</p>'}`;
   } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
 }

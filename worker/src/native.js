@@ -1,5 +1,5 @@
 // MultiSea native marketplace: Seaport 1.6 listings stored in KV, validated server-side and re-checked on read.
-import { createPublicClient, http, parseAbi, hashStruct, verifyTypedData } from 'viem';
+import { createPublicClient, http, parseAbi, parseEventLogs, hashStruct, verifyTypedData } from 'viem';
 
 export const NATIVE_FEE_BPS = 50; // 0.5%
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -15,6 +15,8 @@ const TYPES = {
   ConsiderationItem: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }],
 };
 const SEA = parseAbi(['function getCounter(address) view returns (uint256)', 'function getOrderStatus(bytes32) view returns (bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize)']);
+const EV = parseAbi(['event OrderCancelled(bytes32 orderHash, address indexed offerer, address indexed zone)', 'event CounterIncremented(uint256 newCounter, address indexed offerer)']);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)']);
 
 export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached }) {
@@ -73,8 +75,9 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     return { ok: true };
   }
   const key = (k, p, hash) => `ord:${k}:${lc(p.offer[0].token)}:${p.offer[0].identifierOrCriteria}:${hash}`;
+  const bust = async slug => { if (slug) await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {}); };
   async function drop(env, k, rec, why) {
-    await env.COLLECTIONS.delete(key(k, rec.parameters, rec.hash));
+    await env.COLLECTIONS.delete(key(k, rec.parameters, rec.hash)); await bust(rec.slug);
     if (why === 'filled') {
       const feeWei = rec.parameters.consideration.filter(c => c.recipient === feeWallet(env)).reduce((s, c) => s + BigInt(c.startAmount), 0n);
       await env.COLLECTIONS.put(`nfill:${Date.now()}:${rec.hash.slice(2, 10)}`, JSON.stringify({ at: new Date().toISOString(), chain: k, hash: rec.hash, id: rec.parameters.offer[0].identifierOrCriteria, priceWei: rec.priceWei, feeWei: feeWei.toString(), seller: rec.parameters.offerer }));
@@ -134,6 +137,41 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     await env.COLLECTIONS.delete(name); if (rec.slug) await caches.default.delete(new Request('https://cache.multisea/n:' + rec.slug)).catch(() => {});
     return { ok: true, note: 'Removed from MultiSea. The signed order stays valid on-chain until it expires; cancel on-chain or call Seaport incrementCounter() to invalidate all your open orders.' };
   }
+  // Instant removal after an on-chain Seaport.cancel: verify isCancelled (or the tx's OrderCancelled event), then delete.
+  async function cancelled(env, k, hash, txHash) {
+    const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` }); const name = l.keys.find(x => x.name.endsWith(':' + lc(hash)))?.name;
+    if (!name) return { ok: true, removed: false, note: 'not stored (already removed)' };
+    const rec = await env.COLLECTIONS.get(name, 'json'); if (!rec) return { ok: true, removed: false };
+    const c = client(k);
+    for (let i = 0; i < 4; i++) { // public RPCs can lag the wallet's RPC by a block or two
+      const st = await c.readContract({ address: SEAPORT, abi: SEA, functionName: 'getOrderStatus', args: [rec.hash] }).catch(() => null);
+      let ev = false;
+      if (txHash) { const rc = await c.getTransactionReceipt({ hash: txHash }).catch(() => null); if (rc?.status === 'success') ev = parseEventLogs({ abi: EV, logs: rc.logs.filter(g => lc(g.address) === lc(SEAPORT)), eventName: 'OrderCancelled' }).some(e => lc(e.args.orderHash) === lc(rec.hash) && lc(e.args.offerer) === lc(rec.parameters.offerer)); }
+      if (st?.[1] || ev) { await drop(env, k, rec, 'cancelled'); return { ok: true, removed: true }; }
+      if (st && st[2] > 0n) { await drop(env, k, rec, 'filled'); return { ok: true, removed: true, why: 'filled' }; }
+      if (i < 3) await sleep(1500);
+    }
+    bad('order is not cancelled on-chain (yet)', 409);
+  }
+  // Instant purge after Seaport.incrementCounter: drop every stored order of this seller on this chain with an older counter.
+  async function counterBumped(env, k, seller, txHash) {
+    const c = client(k); let ctr = 0n;
+    for (let i = 0; i < 4; i++) {
+      ctr = await c.readContract({ address: SEAPORT, abi: SEA, functionName: 'getCounter', args: [seller] });
+      if (txHash) { const rc = await c.getTransactionReceipt({ hash: txHash }).catch(() => null); const e = rc && parseEventLogs({ abi: EV, logs: rc.logs.filter(g => lc(g.address) === lc(SEAPORT)), eventName: 'CounterIncremented' }).find(e => lc(e.args.offerer) === lc(seller)); if (e && ctr < e.args.newCounter) { await sleep(1500); continue; } }
+      break;
+    }
+    let cursor, removed = 0;
+    do {
+      const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:`, cursor }); cursor = l.list_complete ? null : l.cursor;
+      for (const kk of l.keys) {
+        if (kk.metadata?.s && lc(kk.metadata.s) !== lc(seller)) continue;
+        const rec = await env.COLLECTIONS.get(kk.name, 'json'); if (!rec || lc(rec.parameters.offerer) !== lc(seller)) continue;
+        if (BigInt(rec.parameters.counter) < ctr) { await drop(env, k, rec, 'counter'); removed++; }
+      }
+    } while (cursor);
+    return { ok: true, counter: ctr.toString(), removed };
+  }
   // Cron: re-validate every stored order.
   async function sweep(env) {
     let cursor, n = 0, dropped = 0;
@@ -146,5 +184,5 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   async function fills(env) {
     const l = await env.COLLECTIONS.list({ prefix: 'nfill:' }); return (await Promise.all(l.keys.slice(-100).map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).reverse();
   }
-  return { list, listings, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean };
+  return { cancelled, counterBumped, list, listings, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean };
 }
