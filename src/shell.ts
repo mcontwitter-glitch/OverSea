@@ -22,7 +22,18 @@ export function bindNav(onDisconnect?: () => void) {
 export const soon = (what = 'This') => `<div class="soon">🚧 ${esc(what)} is coming online soon. The MultiSea API isn't live yet.</div>`;
 export { apiReady };
 
-let _eu: Promise<number | null> | null = null;
-export function ethUsdRate(): Promise<number | null> { return _eu ??= fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd').then(r => r.json()).then(j => j?.ethereum?.usd || null).catch(() => null); }
+// Live USD rates (CoinGecko), shared by market cap and listing prices; cached 10 min in sessionStorage.
+export type UsdRates = { ETH: number | null; APE: number | null; BNB: number | null };
+let _ur: Promise<UsdRates> | null = null;
+export function usdRates(): Promise<UsdRates> {
+  return _ur ??= (async () => {
+    try { const c = JSON.parse(sessionStorage.getItem('multisea-usd') || 'null'); if (c && Date.now() - c.t < 600_000) return c.r; } catch {}
+    const r: UsdRates = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin&vs_currencies=usd').then(r => r.json())
+      .then(j => ({ ETH: j?.ethereum?.usd || null, APE: j?.apecoin?.usd || null, BNB: j?.binancecoin?.usd || null })).catch(() => ({ ETH: null, APE: null, BNB: null }));
+    if (r.ETH) try { sessionStorage.setItem('multisea-usd', JSON.stringify({ t: Date.now(), r })); } catch {}
+    return r;
+  })();
+}
+export function ethUsdRate(): Promise<number | null> { return usdRates().then(r => r.ETH); }
 export function mcapUsd(floorEth: number | null | undefined, supply: number, usd: number | null | undefined) { return floorEth && supply && usd ? '$' + Math.round(floorEth * supply * usd).toLocaleString() : '-'; }
 export const mcapStatHtml = (v: string) => `<div class="stat tip mcap"><b>${v}</b><span>Market cap ⓘ</span><div class="tipbox"><div class="tipnote">Floor price × total supply</div></div></div>`;

@@ -2,7 +2,7 @@ import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, startBuy, apiReady, apiFeatures, API } from './wallet';
-import { navHtml, bindNav, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
+import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
 import { openEdit, linksHtml } from './edit';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
@@ -68,6 +68,11 @@ try { Object.keys(localStorage).filter(k => /sort/i.test(k)).forEach(k => localS
 if (params.has('sort')) { params.delete('sort'); history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash); }
 const st = { tab: 'items', chains: new Set<string>(), traits: new Map<string, Set<string>>(), sort: 'price-asc', q: '', status: 'all', limit: 60, sidebar: window.innerWidth > 900 };
 
+let rates: UsdRates | null = null; usdRates().then(r => { if (r.ETH || r.APE) { rates = r; render(); } });
+// "≈ $9.32" from the listing's own currency (APE converts from APE); falls back to the ETH equivalent.
+const usdOf = (l: Listing) => { if (!rates) return null; const c = l.currency.replace(/^W/, ''); const r = (rates as any)[c]; const v = r ? l.price * r : l.priceEth != null && rates.ETH ? l.priceEth * rates.ETH : null; return v == null ? null : v; };
+const usdTxt = (v: number) => '$' + v.toLocaleString(undefined, { minimumFractionDigits: v < 1000 ? 2 : 0, maximumFractionDigits: v < 1000 ? 2 : 0 });
+const usd = (l: Listing) => { const v = usdOf(l); return v == null ? '' : ` <span class="usd">≈ ${usdTxt(v)}</span>`; };
 let liveUsd: number | null = null; ethUsdRate().then(r => { if (r && !findEthUsd(summary)) { liveUsd = r; document.querySelectorAll('.mcap b').forEach(e => e.textContent = mcapUsd(summary?.floor?.priceEth ?? null, COL.supply, r)); } });
 function findEthUsd(o: any): number | null { if (!o || typeof o !== 'object') return null; if (typeof o.ethUsd === 'number') return o.ethUsd; for (const v of Object.values(o)) { const r = findEthUsd(v); if (r) return r; } return null; }
 function mcapStat(floorEth: number | null | undefined, supply: number, usd: number | null) { return mcapStatHtml(mcapUsd(floorEth, supply, usd)); }
@@ -161,7 +166,7 @@ const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? 
 function card(it: Item, idx = 99) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${eq(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function itemsView() {
@@ -202,7 +207,7 @@ function modal(id: number) {
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
     <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
