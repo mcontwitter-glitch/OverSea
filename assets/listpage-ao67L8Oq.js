@@ -1,4 +1,4 @@
-import{i as e}from"./wallet-BnJQqh8U.js";import{s as t,t as n}from"./shell-9zCuI0Hh.js";var r=document.getElementById(`app`);document.title=`List your collection · MultiSea`;function i(){r.innerHTML=`${t(`list`)}<section class="page lp">
+import{i as e}from"./wallet-91UYTykv.js";import{s as t,t as n}from"./shell-C3ZKaIwe.js";var r=document.getElementById(`app`);document.title=`List your collection · MultiSea`;function i(){r.innerHTML=`${t(`list`)}<section class="page lp">
   <div class="lphero"><h1>List your collection on MultiSea</h1>
     <p class="lpsub">One page for your collection across every chain it lives on. Holders list and buy on MultiSea's own Seaport marketplace, with OpenSea listings shown side by side.</p>
     <div class="lpcta"><a class="bbtn big" href="/submit">Submit your collection</a><a class="obtn big" href="/c/lil-foots">See an example</a></div></div>
