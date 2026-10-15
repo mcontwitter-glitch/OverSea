@@ -228,3 +228,11 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .msg.ok{color:#5fe3a1}
 @media (max-width:640px){.bridge,.lp{padding:16px}.bnfts{grid-template-columns:repeat(3,1fr)}.navl a{font-size:12.5px}.navl{gap:9px;margin-left:8px}}
 @media (max-width:480px){.brand span{display:none}}
+.pick{justify-content:flex-start;flex-wrap:wrap}.pv[src=""]{display:none}
+.fpick{position:relative;display:inline-flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;font-weight:400}
+.fin{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)}
+.upbtn{display:inline-flex;align-items:center;gap:6px;flex:none;background:#0d1a26;border:1px solid #2684ce;color:#dfe8ef;border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.upbtn::before{content:'⤒';color:#45bdfa}
+.fpick:hover .upbtn,.fin:focus-visible+.upbtn{border-color:#45bdfa;box-shadow:0 0 14px #45bdfa55}
+.fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:220px}
+@media (max-width:640px){.fname{max-width:150px}.upbtn{padding:8px 14px}}

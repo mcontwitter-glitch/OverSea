@@ -1,4 +1,5 @@
 import CFG from '../config/collections.json';
+import { pickHtml, picked } from './filepick';
 import { checkApi, onWallet, wallet, apiReady, openConnect } from './wallet';
 import { apiFeatures } from './wallet';
 const mediaOn = () => apiFeatures.includes('media');
@@ -24,8 +25,8 @@ function render() {
    <div class="two"><label>Project name<input name="name" maxlength="60" required></label><label>Slug <span class="mut small">multisea.io/c/<b class="slugpv">your-slug</b></span><input name="slug" pattern="[a-z0-9-]{3,40}" maxlength="40" placeholder="lowercase-with-dashes" required></label></div>
    <label>Description<textarea name="description" rows="4" maxlength="1000"></textarea></label>
    <div class="three"><label>Website<input name="website" placeholder="https://"></label><label>X<input name="x" placeholder="https://x.com/handle"></label><label>Discord<input name="discord" placeholder="https://discord.gg/…"></label></div>
-   <div class="two"><label>Logo <span class="mut small">square image</span><div class="pick"><img class="pv lg" src="${esc(media(up.logo))}" alt="">${mediaOn() ? '<input type="file" accept="image/*" data-f="logo">' : '<span class="mut small">Image uploads coming soon</span>'}</div></label>
-   <label>Banner <span class="mut small">about 3:1</span><div class="pick"><img class="pv bn" src="${esc(media(up.banner))}" alt="">${mediaOn() ? '<input type="file" accept="image/*" data-f="banner">' : '<span class="mut small">Image uploads coming soon</span>'}</div></label></div>
+   <div class="two"><label>Logo <span class="mut small">square image</span>${pickHtml('logo', media(up.logo), mediaOn())}</label>
+   <label>Banner <span class="mut small">about 3:1</span>${pickHtml('banner', media(up.banner), mediaOn())}</label></div>
    <div class="gh">Chains & contracts <span class="mut small">(ERC-721, checked on-chain)</span></div>
    ${rows.map((r, i) => `<div class="crow"><select data-row="${i}" data-k="chain">${chainOpts(r.chain)}</select><input data-row="${i}" data-k="address" placeholder="0x… contract" value="${esc(r.address)}"><span class="chk" id="chk${i}"></span>${rows.length > 1 ? `<button type="button" class="x" data-rm="${i}">✕</button>` : ''}</div>`).join('')}
    <button type="button" class="pill" data-act="addrow">+ Add chain</button>
@@ -51,7 +52,7 @@ app.addEventListener('change', async e => {
   const t = e.target as HTMLInputElement;
   if (t.dataset.row) { rows[+t.dataset.row][t.dataset.k as 'chain'] = t.value; const r = rows[+t.dataset.row]; const el = document.getElementById('chk' + t.dataset.row)!;
     if (/^0x[0-9a-fA-F]{40}$/.test(r.address)) { el.textContent = '…'; el.textContent = (await isErc721(r.chain, r.address)) ? '✓ ERC-721' : '✗ not ERC-721'; el.className = 'chk ' + (el.textContent.startsWith('✓') ? 'ok' : 'err'); } }
-  if (t.type === 'file' && t.files?.[0]) { const k = t.dataset.f!; msg = 'Uploading ' + k + '… (you may be asked to sign in)'; msgCls = 'mut'; rerender();
+  if (t.type === 'file' && t.files?.[0]) { picked(t); const k = t.dataset.f!; msg = 'Uploading ' + k + '… (you may be asked to sign in)'; msgCls = 'mut'; rerender();
     try { up[k] = await uploadImage(t.files[0], k === 'logo' ? 512 : 1500); msg = k + ' uploaded.'; } catch (er: any) { msg = er.message; msgCls = 'err'; } rerender(); }
 });
 app.addEventListener('click', async e => {
