@@ -88,7 +88,7 @@ export async function openXPay(ctx: XPayCtx) {
     const t0 = Date.now(); let st = '';
     while (Date.now() - t0 < 15 * 60_000) {
       await sleep(3000);
-      const j = await (await fetch(`${RELAY}/intents/status/v3?requestId=${requestId}`)).json().catch(() => ({}));
+      const j = await (await fetch(`${RELAY()}/intents/status/v3?requestId=${requestId}`)).json().catch(() => ({}));
       st = j.status || st;
       if (['success', 'refund', 'refunded', 'failure'].includes(st)) break;
     }

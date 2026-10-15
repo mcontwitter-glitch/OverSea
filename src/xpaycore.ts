@@ -1,6 +1,7 @@
 // Pure helpers for cross-chain checkout via Relay (no DOM / wallet). Used by xpay.ts and the fork/quote tests.
 import { encodeFunctionData, parseAbi, type Hex } from 'viem';
-export const RELAY = 'https://api.relay.link';
+import { API } from './wallet';
+export const RELAY = () => `${API}/relay`;
 export const FEE_WALLET = '0x25411039F77529A543344603bD8acdd65fABA4d0';
 export const FLAT_FEE_USD = 0.3;
 export const ZERO = '0x0000000000000000000000000000000000000000';
@@ -29,7 +30,7 @@ export async function relayQuote(q: QuoteReq, f: typeof fetch = fetch) {
   const body: any = { user: q.user, recipient: q.user, refundTo: q.user, originChainId: q.originChainId, destinationChainId: q.destinationChainId, originCurrency: ZERO, destinationCurrency: q.destinationCurrency || ZERO, amount: q.amount.toString(), tradeType: 'EXACT_OUTPUT' };
   if (q.txs) body.txs = q.txs;
   if (q.feeBps && +q.feeBps > 0) body.appFees = [{ recipient: FEE_WALLET, fee: q.feeBps }];
-  const r = await f(`${RELAY}/quote/v2`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await f(`${RELAY()}/quote/v2`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(j.message || `Relay quote failed (${r.status})`), { kind: 'stale', code: j.errorCode });
   return j;

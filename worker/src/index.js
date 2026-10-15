@@ -304,6 +304,33 @@ async function handle(req, env, url) {
     bad('not found', 404);
   }
 
+
+  // --- Relay proxy (quote / status / chains / token price). Key stays server-side. ---
+  if (p[0] === 'relay') {
+    if (!['GET', 'POST'].includes(M)) bad('method not allowed', 405);
+    if (!corsHeaders(req, env)) bad('origin not allowed', 403); // browser calls from MultiSea origins only
+    const rest = '/' + p.slice(1).join('/');
+    // Allowlist: quotes, status polling, chain/price metadata. App-fee claim stays on /fees/*.
+    const ok = (
+      (M === 'POST' && /^\/quote(\/v2)?$/.test(rest)) ||
+      (M === 'GET' && /^\/intents\/status(\/v\d+)?$/.test(rest) && url.searchParams.has('requestId') && /^0x[0-9a-fA-F]{64}$/.test(url.searchParams.get('requestId') || '')) ||
+      (M === 'GET' && /^\/(?:chains|currencies\/token\/price)$/.test(rest))
+    );
+    if (!ok) bad('not found', 404);
+    if (limited(req.headers.get('cf-connecting-ip') || 'local', 30)) bad('rate limited', 429);
+    // Cap quote bodies; status/metadata have none.
+    let init = { method: M };
+    if (M === 'POST') {
+      const raw = await req.text(); if (raw.length > 80_000) bad('body too large');
+      try { JSON.parse(raw); } catch { bad('invalid JSON'); }
+      init.body = raw;
+    }
+    const qs = url.search; // carries requestId for status
+    const r = await relayFetch(env, rest + qs, init);
+    const text = await r.text();
+    return new Response(text, { status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'application/json' } });
+  }
+
   // --- admin ---
   if (p[0] === 'admin') {
     const s = await requireSession(req, env); if (!admins(env).includes(s.address)) bad('admin only', 403);

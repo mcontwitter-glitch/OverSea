@@ -19,3 +19,4 @@ public/bridge.json
 .secrets/
 contracts/.secrets/
 contracts/plans/
+worker/.relay-key
