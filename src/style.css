@@ -242,6 +242,7 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .pin input{flex:1;background:none;border:0;color:#fff;font-size:18px;padding:11px 0;outline:none;min-width:0}.pin b{color:#d9d9d9}
 .wbox .pill.on{border-color:#45bdfa;color:#cfe9ff;box-shadow:0 0 10px #45bdfa44}.wbox .pills .pill{font-size:13px;padding:7px 14px}
 .wbox .chk{display:flex;gap:8px;align-items:center;margin:6px 0;white-space:normal;color:#bbb}
-.sfees b:last-child{color:#fff}.buy.ghost{background:#202020;color:#d9d9d9;border:1px solid #333}
+.sfees b:last-child{color:#fff}
+.buy.ghost{background:#202020!important;color:#d9d9d9!important;border:1px solid #3a3a3a!important;box-shadow:none!important}.buy.ghost:hover{border-color:#45bdfa!important;filter:none}
 .nosell{display:block;margin-top:6px;font-size:11px}
 .wbox .bhead{padding-right:34px}
