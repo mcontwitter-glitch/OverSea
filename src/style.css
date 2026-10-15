@@ -249,3 +249,11 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 /* USD value next to listing prices */
 .usd{color:#8a8a8a;font-weight:500;white-space:nowrap}.cp .usd{font-size:12px}.big .usd{font-size:15px;align-self:flex-end;margin-bottom:5px}
 .cp{display:flex;flex-wrap:wrap;column-gap:6px;align-items:baseline}
+/* cross-chain checkout */
+.xsrcs{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px}
+.xsrc{display:flex;align-items:center;gap:10px;background:#141414;border:1px solid #262626;border-radius:12px;padding:9px 12px;cursor:pointer}
+.xsrc:has(input:checked){border-color:#45bdfa;box-shadow:0 0 10px #45bdfa33}.xsrc input{accent-color:#45bdfa;margin:0}
+.xsrc span{flex:1;min-width:0;display:flex;flex-direction:column}.xsrc em{font-style:normal;font-size:12px;color:#bbb}.xsrc em i{color:#8a8a8a;font-style:normal}
+.xsrc small{font-size:11px;color:#6fd3a0}.xsrc.low small{color:#c88}.xsrc.low{opacity:.75}
+.bkv i.usd{font-style:normal;font-weight:500;font-size:12px;color:#8a8a8a;margin-left:4px}.bkv .xtot{color:#fff}
+.bbtn.ghost.xpay{background:#202020!important;border:1px solid #45bdfa88!important;box-shadow:none!important}

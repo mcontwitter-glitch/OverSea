@@ -144,11 +144,12 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
       <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b>
       <span>You pay now</span><b>${f(value)} ${esc(c.native)} + gas</b>
       <span>Your balance</span><b class="${enough ? '' : 'errc'}">${f(bal)} ${esc(c.native)}</b></div>
-      ${enough ? '' : '<p class="err">Insufficient funds for this purchase on ' + esc(c.name) + '.</p>'}
+      ${enough ? '' : '<p class="err">Insufficient funds for this purchase on ' + esc(c.name) + '.</p><button class="bbtn ghost xpay">Pay with ETH from another chain</button>'}
       <p class="mut small">Fulfilled through OpenSea's Seaport 1.6 contract. You'll confirm in ${esc(wallet.name || 'your wallet')}.</p>
       <button class="bbtn go" ${enough ? '' : 'disabled'}>Confirm purchase</button>`;
     await new Promise<void>((res, rej) => {
       body.querySelector('.go')!.addEventListener('click', () => res());
+      body.querySelector('.xpay')?.addEventListener('click', () => { m.remove(); import('./xpay').then(x => x.openXPay({ it, price, currency: cur, tx, orders: fj.orders, onSold, restart: () => startBuy(it, onSold, onGone) })); rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
       m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
     });
     // 5) send
