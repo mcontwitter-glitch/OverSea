@@ -120,7 +120,7 @@ async function osListings(env, col) {
     for (const l of j.listings || []) {
       const offer = l.protocol_data?.parameters?.offer?.[0]; const p = l.price?.current; if (!offer || !p) continue;
       if (lc(offer.token) !== lc(d.address)) continue;
-      out.push({ chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(p.value) / 10 ** p.decimals, currency: p.currency, orderHash: l.order_hash, protocolAddress: l.protocol_address });
+      out.push({ chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(p.value) / 10 ** p.decimals, currency: p.currency, orderHash: l.order_hash, protocolAddress: l.protocol_address, seller: lc(l.protocol_data?.parameters?.offerer) || undefined });
     }
   }
   return out;
@@ -141,12 +141,51 @@ async function osItems(env, col, chainKey, next) {
   return { chain: d.chain, next: j.next || null, nfts: (j.nfts || []).map(n => ({ id: Number(n.identifier), name: n.name, image: n.display_image_url || n.image_url, chain: d.chain })) };
 }
 
+// ---------- selling helpers ----------
+const OS_FEE = '0x0000a26b00c1f0df003000390027140000faa719';
+const ZERO = '0x0000000000000000000000000000000000000000';
+const U256 = /^\d{1,78}$/;
+async function sellConfig(env, chain, contract) {
+  const key = osToKey[chain]; const c = chains[key];
+  if (!c?.conduit) bad('selling not supported on this chain');
+  const slug = await osSlugFor(env, key, contract); if (!slug) bad('collection not found on OpenSea', 404);
+  const fees = await cached(`fees:${slug}`, 600, async () => {
+    const j = await (await osFetch(env, `/collections/${slug}`)).json().catch(() => ({}));
+    return (j.fees || []).map(f => ({ recipient: lc(f.recipient), bps: Math.round(Number(f.fee) * 100), required: !!f.required, kind: lc(f.recipient) === OS_FEE ? 'opensea' : 'creator' }));
+  });
+  return { chain, chainKey: key, chainId: c.chainId, native: c.native, slug, fees, conduitKey: c.conduit.key, conduit: c.conduit.address, zone: CFG.seaportZone };
+}
+function cleanOrder(o) {
+  if (!o || typeof o !== 'object') bad('missing parameters');
+  const now = Math.floor(Date.now() / 1000);
+  const num = (v, re = U256) => { v = String(v ?? ''); if (!re.test(v)) bad('invalid number'); return v; };
+  if (!ADDR.test(o.offerer || '') || !ADDR.test(o.zone || '') || !HASH.test(o.zoneHash || '') || !HASH.test(o.conduitKey || '')) bad('invalid order fields');
+  if (!Array.isArray(o.offer) || o.offer.length !== 1) bad('exactly one offer item');
+  const f = o.offer[0];
+  if (Number(f.itemType) !== 2 || !ADDR.test(f.token || '') || !ID.test(String(f.identifierOrCriteria)) || String(f.startAmount) !== '1' || String(f.endAmount) !== '1') bad('offer must be one ERC-721');
+  if (!Array.isArray(o.consideration) || o.consideration.length < 1 || o.consideration.length > 6) bad('bad consideration');
+  const cons = o.consideration.map(c => {
+    if (Number(c.itemType) !== 0 || lc(c.token) !== ZERO || String(c.identifierOrCriteria) !== '0' || !ADDR.test(c.recipient || '')) bad('consideration must be native currency');
+    const a = num(c.startAmount); if (String(c.endAmount) !== a || BigInt(a) === 0n) bad('fixed, non-zero amounts only');
+    return { itemType: 0, token: ZERO, identifierOrCriteria: '0', startAmount: a, endAmount: a, recipient: c.recipient };
+  });
+  const st = Number(num(o.startTime, /^\d{1,12}$/)), et = Number(num(o.endTime, /^\d{1,12}$/));
+  if (st > now + 600 || et <= now || et > now + 31 * 86400 + 600 || et <= st) bad('bad start/end time');
+  const ot = Number(o.orderType); if (![0, 1, 2, 3].includes(ot)) bad('bad orderType');
+  if (Number(o.totalOriginalConsiderationItems) !== cons.length) bad('bad consideration count');
+  return { offerer: o.offerer, zone: o.zone, offer: [{ itemType: 2, token: f.token, identifierOrCriteria: String(f.identifierOrCriteria), startAmount: '1', endAmount: '1' }], consideration: cons, orderType: ot, startTime: String(st), endTime: String(et), zoneHash: o.zoneHash, salt: num(o.salt), conduitKey: o.conduitKey, totalOriginalConsiderationItems: cons.length, counter: num(o.counter) };
+}
+async function bustListings(contract, key) {
+  const slugs = CFG.collections.filter(c => c.deployments.some(d => d.chain === key && lc(d.address) === lc(contract))).map(c => c.slug);
+  for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
+}
+
 // ---------- router ----------
 async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', ...(env.MEDIA ? ['media'] : [])] };
 
   // --- SIWE ---
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'nonce') { const n = rand(12); await env.NONCES.put('n:' + n, '1', { expirationTtl: 600 }); return { nonce: n }; }
@@ -281,6 +320,58 @@ async function handle(req, env, url) {
     const tx = j.fulfillment_data?.transaction; const offer = j.fulfillment_data?.orders?.[0]?.parameters?.offer?.[0];
     if (!tx || !SEAPORT.has(lc(tx.to)) || !offer || !(await allowedContract(env, b.chain, offer.token))) bad('unexpected fulfillment', 422);
     return { transaction: tx, orders: j.fulfillment_data.orders };
+  }
+  // --- selling (list / cancel via OpenSea; key stays server-side) ---
+  if (p[0] === 'sell') {
+    if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
+    if (M === 'GET' && p[1] === 'config' && p.length === 4) {
+      const [, , chain, contract] = p;
+      if (!osToKey[chain] || !ADDR.test(contract) || !(await allowedContract(env, chain, contract))) bad('invalid chain/contract');
+      return { ...(await sellConfig(env, chain, contract)), seaport: CFG.seaport };
+    }
+    if (M === 'POST' && p[1] === 'list' && p.length === 2) {
+      const b = await body(); const chain = b.chain;
+      if (!osToKey[chain] || !SEAPORT.has(lc(b.protocolAddress)) || !/^0x[0-9a-fA-F]{128,4096}$/.test(b.signature || '')) bad('invalid input');
+      const prm = cleanOrder(b.parameters);
+      const nft = prm.offer[0];
+      if (!(await allowedContract(env, chain, nft.token))) bad('collection not allowed');
+      const cfg = await sellConfig(env, chain, nft.token);
+      if (lc(prm.conduitKey) !== lc(cfg.conduitKey)) bad('wrong conduit for this chain');
+      if (lc(prm.consideration[0].recipient) !== lc(prm.offerer)) bad('first consideration must pay the seller');
+      const total = prm.consideration.reduce((a, c) => a + BigInt(c.startAmount), 0n);
+      for (const f of cfg.fees.filter(f => f.required)) {
+        const need = total * BigInt(f.bps) / 10000n;
+        const got = prm.consideration.slice(1).filter(c => lc(c.recipient) === lc(f.recipient)).reduce((a, c) => a + BigInt(c.startAmount), 0n);
+        if (got + 1n < need) bad(`missing required fee to ${f.recipient}`);
+      }
+      const owner = await rpcCall(osToKey[chain], nft.token, '0x6352211e' + BigInt(nft.identifierOrCriteria).toString(16).padStart(64, '0'));
+      if (!owner || '0x' + owner.slice(-40).toLowerCase() !== lc(prm.offerer)) bad('offerer does not own this NFT', 403);
+      const payload = { parameters: prm, protocol_address: lc(b.protocolAddress), signature: b.signature };
+      if (env.ALLOW_DRY_RUN === '1' && req.headers.get('x-dry-run') === '1') return { dryRun: true, wouldPost: `/orders/${chain}/seaport/listings`, payload };
+      const r = await osFetch(env, `/orders/${chain}/seaport/listings`, { method: 'POST', body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new HttpError(422, 'opensea refused', { message: [].concat(j.errors || j.detail || j.message || []).map(String).join('; ').slice(0, 300) });
+      await bustListings(nft.token, osToKey[chain]);
+      return { ok: true, orderHash: j.order?.order_hash || null };
+    }
+    if (M === 'POST' && p[1] === 'cancel' && p.length === 2) {
+      const b = await body();
+      if (!osToKey[b.chain] || !HASH.test(b.orderHash || '') || !SEAPORT.has(lc(b.protocolAddress)) || !/^0x[0-9a-fA-F]{128,4096}$/.test(b.signature || '')) bad('invalid input');
+      const r = await osFetch(env, `/orders/chain/${b.chain}/protocol/${lc(b.protocolAddress)}/${b.orderHash}/cancel`, { method: 'POST', body: JSON.stringify({ offererSignature: b.signature }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new HttpError(422, 'opensea refused', { message: [].concat(j.errors || j.detail || j.message || []).map(String).join('; ').slice(0, 300) });
+      if (ADDR.test(b.contract || '')) await bustListings(b.contract, osToKey[b.chain]);
+      return { ok: true, ...j };
+    }
+    if (M === 'GET' && p[1] === 'order' && p.length === 4) {
+      const [, , chain, hash] = p;
+      if (!osToKey[chain] || !HASH.test(hash)) bad('invalid input');
+      const r = await osFetch(env, `/orders/chain/${chain}/protocol/${CFG.seaport}/${hash}`); const j = await r.json().catch(() => ({}));
+      if (!r.ok) bad('order not found', 404);
+      const o = j.order || j; const prm = o.protocol_data?.parameters; if (!prm) bad('order not found', 404);
+      if (!(await allowedContract(env, chain, prm.offer?.[0]?.token))) bad('collection not allowed');
+      return { parameters: prm, protocolAddress: o.protocol_address || CFG.seaport };
+    }
   }
   bad('not found', 404);
 }

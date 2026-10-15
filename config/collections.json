@@ -7,7 +7,11 @@
       "rpc": "https://api.mainnet.abs.xyz",
       "native": "ETH",
       "openseaSlug": "abstract",
-      "explorer": "https://abscan.org"
+      "explorer": "https://abscan.org",
+      "conduit": {
+        "key": "0x61159fefdfada89302ed55f8b9e89e2d67d8258712b3a3f89aa88525877f1d5e",
+        "address": "0x963F00d3ff000064fFCbA824b800c0000000C300"
+      }
     },
     "ethereum": {
       "name": "Ethereum",
@@ -15,7 +19,11 @@
       "rpc": "https://ethereum-rpc.publicnode.com",
       "native": "ETH",
       "openseaSlug": "ethereum",
-      "explorer": "https://etherscan.io"
+      "explorer": "https://etherscan.io",
+      "conduit": {
+        "key": "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000",
+        "address": "0x1E0049783F008A0085193E00003D00cd54003c71"
+      }
     },
     "base": {
       "name": "Base",
@@ -26,7 +34,11 @@
       ],
       "native": "ETH",
       "openseaSlug": "base",
-      "explorer": "https://basescan.org"
+      "explorer": "https://basescan.org",
+      "conduit": {
+        "key": "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000",
+        "address": "0x1E0049783F008A0085193E00003D00cd54003c71"
+      }
     },
     "apechain": {
       "name": "ApeChain",
@@ -34,7 +46,11 @@
       "rpc": "https://rpc.apechain.com",
       "native": "APE",
       "openseaSlug": "ape_chain",
-      "explorer": "https://apescan.io"
+      "explorer": "https://apescan.io",
+      "conduit": {
+        "key": "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000",
+        "address": "0x1E0049783F008A0085193E00003D00cd54003c71"
+      }
     },
     "robinhood": {
       "name": "Robinhood",
@@ -42,7 +58,11 @@
       "rpc": "https://rpc.mainnet.chain.robinhood.com",
       "native": "ETH",
       "openseaSlug": "robinhood",
-      "explorer": "https://robinhoodchain.blockscout.com"
+      "explorer": "https://robinhoodchain.blockscout.com",
+      "conduit": {
+        "key": "0x61159fefdfada89302ed55f8b9e89e2d67d8258712b3a3f89aa88525877f1d5e",
+        "address": "0x963F00d3ff000064fFCbA824b800c0000000C300"
+      }
     },
     "bnb": {
       "name": "BNB Chain",
@@ -112,5 +132,6 @@
         }
       ]
     }
-  ]
+  ],
+  "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100"
 }

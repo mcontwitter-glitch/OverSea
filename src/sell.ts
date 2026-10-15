@@ -1,0 +1,108 @@
+// Sell flow: list an owned NFT on OpenSea (Seaport 1.6, EIP-712) and cancel it. The OpenSea key lives only in the Worker.
+import { createPublicClient, createWalletClient, custom, http, parseAbi, parseUnits, formatUnits, type Hex } from 'viem';
+import CFG from '../config/collections.json';
+import { API, wallet, openConnect, overlay, vchain, ensureChain, friendly, esc } from './wallet';
+import { buildListing, orderTypedData, cancelTypedData, splitPrice, EXPIRY, type Fee } from './seaorder';
+
+const chains = CFG.chains as Record<string, any>;
+export type SellItem = { id: number; name: string; img: string; chain: string; contract: string };
+export const canSell = (chainKey: string) => !!chains[chainKey]?.openseaSlug && !!chains[chainKey]?.conduit;
+const ERC721 = parseAbi(['function ownerOf(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function setApprovalForAll(address,bool)']);
+const SEAPORT = parseAbi(['function getCounter(address) view returns (uint256)', 'function cancel((address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)[]) returns (bool)']);
+
+function head(it: SellItem, title: string) {
+  const c = chains[it.chain];
+  return overlay(`<div class="bhead"><img src="${esc(it.img)}" alt=""><div><div class="mut">${esc(c.name)} · ${esc(title)}</div><h3>${esc(it.name)}</h3></div></div><div class="bbody"><div class="spin"></div> Loading fees from OpenSea…</div>`);
+}
+const closed = (m: HTMLElement) => new Promise<never>((_, rej) => m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) rej(Object.assign(new Error('closed'), { kind: 'closed' })); }));
+const fmt = (x: bigint) => (+formatUnits(x, 18)).toLocaleString(undefined, { maximumFractionDigits: 6 });
+
+export async function openSell(it: SellItem, onListed: () => void) {
+  if (!wallet.address) { openConnect(); return; }
+  const c = chains[it.chain];
+  if (!canSell(it.chain)) { const m = overlay(`<h3>Not available</h3><p class="mut">${esc(c?.name || it.chain)} isn't supported by OpenSea, so it can't be listed from MultiSea.</p>`); void m; return; }
+  const m = head(it, 'List for sale'); const body = m.querySelector('.bbody') as HTMLElement;
+  const fail = (msg: string) => { body.innerHTML = `<p class="err">${esc(msg)}</p><button class="bbtn ghost mx2">Close</button>`; body.querySelector('.mx2')!.addEventListener('click', () => m.remove()); };
+  try {
+    const r = await fetch(`${API}/sell/config/${c.openseaSlug}/${it.contract}`); const cfg = await r.json();
+    if (!r.ok) throw Object.assign(new Error(cfg.error || 'Could not load fees'), { kind: 'stale' });
+    const fees: Fee[] = cfg.fees; const optional = fees.filter(f => !f.required && f.bps > 0);
+    body.innerHTML = `<label class="sl"><span>Price</span><span class="pin"><input class="sprice" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"><b>${esc(c.native)}</b></span></label>
+      <div class="sl"><span>Expires in</span><div class="pills">${Object.keys(EXPIRY).map((k, i) => `<button type="button" class="pill${i === 1 ? ' on' : ''}" data-exp="${k}">${k.replace('d', ' day' + (k === '1d' ? '' : 's'))}</button>`).join('')}</div></div>
+      ${optional.length ? `<label class="chk"><input type="checkbox" class="sroy"> Pay optional creator royalty (${optional.reduce((a, f) => a + f.bps, 0) / 100}%)</label>` : ''}
+      <div class="kv bkv sfees"></div>
+      <p class="mut small">Listed on OpenSea via Seaport 1.6. First listing on ${esc(c.name)} needs a one-time approval transaction (gas); the listing itself is a free signature.</p>
+      <button class="bbtn go" disabled>List for sale</button>`;
+    const $ = (s: string) => body.querySelector(s) as HTMLInputElement;
+    let exp: keyof typeof EXPIRY = '7d';
+    const active = () => fees.filter(f => f.required || ($('.sroy')?.checked ?? false));
+    const priceWei = () => { try { const v = $('.sprice').value.trim(); return v && +v > 0 ? parseUnits(v, 18) : 0n; } catch { return 0n; } };
+    const render = () => {
+      const p = priceWei(); const { seller, parts } = splitPrice(p, active());
+      $('.sfees').innerHTML = `<span>Listing price</span><b>${fmt(p)} ${esc(c.native)}</b>` +
+        parts.map(f => `<span>${f.kind === 'opensea' ? 'OpenSea fee' : 'Creator royalty'} (${f.bps / 100}%)${f.required ? '' : ' · optional'}</span><b>−${fmt(f.amount)}</b>`).join('') +
+        `<span>You receive</span><b>${fmt(seller > 0n ? seller : 0n)} ${esc(c.native)}</b>`;
+      ($('.go') as any).disabled = !(p > 0n && seller > 0n);
+    };
+    body.addEventListener('input', render);
+    body.querySelectorAll('[data-exp]').forEach(b => b.addEventListener('click', () => { body.querySelectorAll('[data-exp]').forEach(x => x.classList.remove('on')); b.classList.add('on'); exp = (b as HTMLElement).dataset.exp as any; }));
+    render();
+    await Promise.race([new Promise<void>(res => $('.go').addEventListener('click', () => res())), closed(m)]);
+    const price = priceWei(); const useFees = active();
+    const step = (t: string) => { body.innerHTML = `<div class="spin"></div> ${t}`; };
+    step(`Switching wallet to ${esc(c.name)}…`); await ensureChain(it.chain);
+    const me = wallet.address as Hex; const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+    const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) });
+    step('Checking ownership…');
+    const owner = await pub.readContract({ address: it.contract as Hex, abi: ERC721, functionName: 'ownerOf', args: [BigInt(it.id)] });
+    if (owner.toLowerCase() !== me.toLowerCase()) throw Object.assign(new Error('This wallet no longer owns this NFT.'), { kind: 'stale' });
+    if (!(await pub.readContract({ address: it.contract as Hex, abi: ERC721, functionName: 'isApprovedForAll', args: [me, cfg.conduit] }))) {
+      step('Approve OpenSea’s conduit in your wallet (one-time per collection)…');
+      const h = await wc.writeContract({ account: me, address: it.contract as Hex, abi: ERC721, functionName: 'setApprovalForAll', args: [cfg.conduit, true] });
+      step(`Waiting for approval… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`);
+      const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Approval transaction failed.');
+    }
+    const counter = await pub.readContract({ address: cfg.seaport, abi: SEAPORT, functionName: 'getCounter', args: [me] });
+    const order = buildListing({ offerer: me, token: it.contract, id: it.id, priceWei: price, fees: useFees, conduitKey: cfg.conduitKey, zone: cfg.zone, counter, duration: EXPIRY[exp] });
+    step('Sign the listing in your wallet (free, no gas)…');
+    const signature = await wc.signTypedData({ account: me, ...orderTypedData(c.chainId, cfg.seaport, order) });
+    step('Submitting to OpenSea…');
+    const pr = await fetch(`${API}/sell/list`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: c.openseaSlug, protocolAddress: cfg.seaport, parameters: order, signature }) });
+    const pj = await pr.json();
+    if (!pr.ok) throw Object.assign(new Error(`OpenSea: ${pj.message || pj.error || 'listing rejected'}`), { kind: 'stale' });
+    onListed();
+    body.innerHTML = `<p class="ok">✓ Listed for ${fmt(price)} ${esc(c.native)}. It shows on MultiSea after a refresh.</p><a class="bbtn" href="https://opensea.io/item/${c.openseaSlug}/${it.contract}/${it.id}" target="_blank" rel="noopener">View on OpenSea ↗</a>`;
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+}
+
+export async function cancelListing(it: SellItem, orderHash: string, onCancelled: () => void) {
+  if (!wallet.address) { openConnect(); return; }
+  const c = chains[it.chain]; const m = head(it, 'Cancel listing'); const body = m.querySelector('.bbody') as HTMLElement;
+  const fail = (msg: string) => { body.innerHTML = `<p class="err">${esc(msg)}</p><button class="bbtn ghost mx2">Close</button>`; body.querySelector('.mx2')!.addEventListener('click', () => m.remove()); };
+  try {
+    const r = await fetch(`${API}/sell/order/${c.openseaSlug}/${orderHash}`); const o = await r.json();
+    if (!r.ok) throw Object.assign(new Error('Listing not found on OpenSea (already sold, cancelled or expired?).'), { kind: 'stale' });
+    const prm = o.parameters; const me = wallet.address as Hex;
+    if (prm.offerer.toLowerCase() !== me.toLowerCase()) throw Object.assign(new Error('Only the seller can cancel this listing.'), { kind: 'stale' });
+    const offchain = prm.zone.toLowerCase() === String(CFG.seaportZone).toLowerCase();
+    body.innerHTML = `<p>${offchain ? 'This listing can be cancelled off-chain with a free signature.' : 'This listing must be cancelled on-chain through Seaport (costs gas).'}</p><button class="bbtn go">${offchain ? 'Sign to cancel' : 'Cancel on-chain'}</button>`;
+    await Promise.race([new Promise<void>(res => body.querySelector('.go')!.addEventListener('click', () => res())), closed(m)]);
+    body.innerHTML = `<div class="spin"></div> Switching wallet to ${esc(c.name)}…`; await ensureChain(it.chain);
+    const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) });
+    body.innerHTML = '<div class="spin"></div> Confirm in your wallet…';
+    if (offchain) {
+      const signature = await wc.signTypedData({ account: me, ...cancelTypedData(c.chainId, o.protocolAddress, orderHash) });
+      const cr = await fetch(`${API}/sell/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: c.openseaSlug, protocolAddress: o.protocolAddress, orderHash, signature, contract: it.contract }) });
+      const cj = await cr.json(); if (!cr.ok) throw Object.assign(new Error(`OpenSea: ${cj.message || cj.error}`), { kind: 'stale' });
+    } else {
+      const pub = createPublicClient({ chain: vchain(it.chain), transport: http() });
+      const comp = { ...prm, offer: prm.offer.map((x: any) => ({ ...x, identifierOrCriteria: BigInt(x.identifierOrCriteria), startAmount: BigInt(x.startAmount), endAmount: BigInt(x.endAmount) })), consideration: prm.consideration.map((x: any) => ({ ...x, identifierOrCriteria: BigInt(x.identifierOrCriteria), startAmount: BigInt(x.startAmount), endAmount: BigInt(x.endAmount) })), startTime: BigInt(prm.startTime), endTime: BigInt(prm.endTime), salt: BigInt(prm.salt), counter: BigInt(prm.counter) };
+      delete comp.totalOriginalConsiderationItems;
+      const h = await wc.writeContract({ account: me, address: o.protocolAddress, abi: SEAPORT, functionName: 'cancel', args: [[comp]] });
+      body.innerHTML = `<div class="spin"></div> Pending… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`;
+      const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Cancel transaction failed.');
+    }
+    onCancelled();
+    body.innerHTML = `<p class="ok">✓ Listing cancelled. MultiSea updates after a refresh.</p>`;
+  } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
+}

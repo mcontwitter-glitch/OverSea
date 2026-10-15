@@ -14,7 +14,7 @@ const listeners: (() => void)[] = [];
 export const onWallet = (f: () => void) => listeners.push(f);
 const emit = () => listeners.forEach(f => f());
 const short = (a: string) => a.slice(0, 6) + '…' + a.slice(-4);
-const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+export const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 // ---- API health: Buy stays disabled ("buying coming soon") until the Worker answers ----
 export async function checkApi() {
@@ -41,7 +41,7 @@ function providers(): P6963[] {
 }
 const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-function overlay(html: string) {
+export function overlay(html: string) {
   document.querySelector('.wov')?.remove();
   const m = document.createElement('div'); m.className = 'modal wov';
   m.innerHTML = `<div class="wbox"><button class="x mx">✕</button>${html}</div>`;
@@ -76,11 +76,11 @@ export const walletLabel = () => (wallet.address ? short(wallet.address) : 'Conn
 
 // ---- chains ----
 const byOs: Record<string, string> = {}; Object.entries(chains).forEach(([k, c]) => { if (c.openseaSlug) byOs[c.openseaSlug] = k; });
-function vchain(k: string): VChain {
+export function vchain(k: string): VChain {
   const c = chains[k];
   return defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: c.native, symbol: c.native, decimals: 18 }, rpcUrls: { default: { http: [c.rpc] } }, blockExplorers: { default: { name: 'Explorer', url: c.explorer } } });
 }
-async function ensureChain(k: string) {
+export async function ensureChain(k: string) {
   const c = chains[k]; const hex = '0x' + c.chainId.toString(16);
   const cur = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16);
   if (cur === c.chainId) return;
@@ -97,7 +97,7 @@ async function ensureChain(k: string) {
 // ---- buy ----
 export type BuyItem = { id: number; name: string; img: string; chain: string; contract: string; listing: { orderHash: string; protocolAddress: string; osChain?: string } };
 const toArr = (v: any): any => (Array.isArray(v) ? v.map(toArr) : v && typeof v === 'object' ? Object.values(v).map(toArr) : v);
-function friendly(e: any): string {
+export function friendly(e: any): string {
   const m = String(e?.shortMessage || e?.details || e?.message || e);
   if (e?.code === 4001 || /user rejected|denied|rejected the request/i.test(m)) return 'You rejected the request in your wallet.';
   if (/insufficient funds|exceeds balance/i.test(m)) return 'Insufficient funds for price + gas on this chain.';
