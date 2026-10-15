@@ -7,7 +7,7 @@ import { openEdit, linksHtml } from './edit';
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number; color?: string };
-type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null; orderHash: string; protocolAddress: string; seller?: string };
+type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null; orderHash: string; protocolAddress: string; seller?: string; source?: 'opensea' | 'multisea' };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
 const chains = CFG.chains as Record<string, Chain>;
 const params = new URLSearchParams(location.search);
@@ -56,9 +56,13 @@ fillMap(listings);
 // Live listings from the Worker (OpenSea, ~2 min cache) replace the static snapshot so new listings/cancels show after a refresh.
 async function loadLiveListings() {
   try {
-    const r = await fetch(`${API}/os/${COL.slug}/listings`); if (!r.ok) return; const live: Listing[] = (await r.json()).listings || []; if (!live.length) return;
+    // OpenSea (live, else static snapshot) + MultiSea native listings; cheapest per item wins.
+    const [osr, nr] = await Promise.all([fetch(`${API}/os/${COL.slug}/listings`).catch(() => null), fetch(`${API}/native/${COL.slug}/listings`).catch(() => null)]);
+    const os: Listing[] = osr?.ok ? (await osr.json()).listings || [] : []; const nat: Listing[] = nr?.ok ? (await nr.json()).listings || [] : [];
     const rate: Record<string, number> = {}; listings.forEach(l => { if (l.priceEth && l.price) rate[l.currency] = l.priceEth / l.price; });
-    fillMap(live.map(l => ({ ...l, priceEth: /^W?ETH$/.test(l.currency) ? l.price : rate[l.currency] ? l.price * rate[l.currency] : null })));
+    if (rates?.ETH) for (const [c, v] of Object.entries(rates)) if (v && c !== 'ETH') rate[c] ??= v / rates.ETH;
+    const eth = (l: Listing) => ({ ...l, priceEth: /^W?ETH$/.test(l.currency) ? l.price : rate[l.currency] ? l.price * rate[l.currency] : null });
+    fillMap([...(os.length ? os : listings).map(l => eth({ ...l, source: 'opensea' as const })), ...nat.map(l => eth({ ...l, source: 'multisea' as const }))]);
   } catch {}
 }
 const deployedChains = COL.deployments.map(d => d.chain);
@@ -72,6 +76,7 @@ let rates: UsdRates | null = null; usdRates().then(r => { if (r.ETH || r.APE) { 
 // "≈ $9.32" from the listing's own currency (APE converts from APE); falls back to the ETH equivalent.
 const usdOf = (l: Listing) => { if (!rates) return null; const c = l.currency.replace(/^W/, ''); const r = (rates as any)[c]; const v = r ? l.price * r : l.priceEth != null && rates.ETH ? l.priceEth * rates.ETH : null; return v == null ? null : v; };
 const usdTxt = (v: number) => '$' + v.toLocaleString(undefined, { minimumFractionDigits: v < 1000 ? 2 : 0, maximumFractionDigits: v < 1000 ? 2 : 0 });
+const srcBadge = (l: Listing) => l.source === 'multisea' ? ' <span class="src ms" title="Listed on MultiSea">MultiSea</span>' : ' <span class="src os" title="Listed on OpenSea">OpenSea</span>';
 const usd = (l: Listing) => { const v = usdOf(l); return v == null ? '' : ` <span class="usd">≈ ${usdTxt(v)}</span>`; };
 let liveUsd: number | null = null; ethUsdRate().then(r => { if (r && !findEthUsd(summary)) { liveUsd = r; document.querySelectorAll('.mcap b').forEach(e => e.textContent = mcapUsd(summary?.floor?.priceEth ?? null, COL.supply, r)); } });
 function findEthUsd(o: any): number | null { if (!o || typeof o !== 'object') return null; if (typeof o.ethUsd === 'number') return o.ethUsd; for (const v of Object.values(o)) { const r = findEthUsd(v); if (r) return r; } return null; }
@@ -144,29 +149,29 @@ const sold = new Set<number>();
 const myCount = () => { const me = wallet.address?.toLowerCase(); return me ? Object.values(owners).filter(l => l.owner.toLowerCase() === me || l.also?.some(a => a.owner.toLowerCase() === me)).length : 0; };
 // Which chain (if any) the connected wallet holds this id on.
 const myChain = (id: number) => { const me = wallet.address?.toLowerCase(); const loc = owners[id]; if (!me || !loc) return null; if (loc.owner.toLowerCase() === me) return loc.chain; return loc.also?.find(a => a.owner.toLowerCase() === me)?.chain || null; };
-const sellOn = () => apiReady && apiFeatures.includes('sell');
+const sellOn = () => apiReady && (apiFeatures.includes('native') || apiFeatures.includes('sell'));
 const sellBtn = (id: number, cls = '') => {
   const ch = myChain(id); if (!ch) return null; const l = listMap.get(id); const me = wallet.address!.toLowerCase();
   if (l && l.seller?.toLowerCase() === me) return sellOn() ? `<button class="buy ghost ${cls}" data-cancel="${id}">Cancel listing</button>` : '';
-  if (!chains[ch]?.openseaSlug || !(chains[ch] as any).conduit) return `<span class="mut small nosell" title="OpenSea doesn't support ${esc(chains[ch]?.name)}">${esc(chains[ch]?.name)}: not on OpenSea</span>`;
   return sellOn() ? `<button class="buy ${cls}" data-sell="${id}">List for sale</button>` : `<button class="buy ${cls}" disabled title="Selling coming soon">List <small>soon</small></button>`;
 };
-const buyBtn = (id: number, cls = '') => { const sb = sellBtn(id, cls); if (sb !== null) return sb; const l = listMap.get(id); if (!l || !chains[l.chain]?.openseaSlug) return ''; return apiReady ? `<button class="buy ${cls}" data-buy="${id}">Buy</button>` : `<button class="buy ${cls}" disabled title="Buying coming soon">Buy <small>soon</small></button>`; };
+const buyBtn = (id: number, cls = '') => { const sb = sellBtn(id, cls); if (sb !== null) return sb; const l = listMap.get(id); if (!l || (l.source !== 'multisea' && !chains[l.chain]?.openseaSlug)) return ''; return apiReady ? `<button class="buy ${cls}" data-buy="${id}">Buy</button>` : `<button class="buy ${cls}" disabled title="Buying coming soon">Buy <small>soon</small></button>`; };
 function doBuy(id: number) {
   const l = listMap.get(id); const it = items.find(i => i.id === id); if (!l || !it) return;
+  if (l.source === 'multisea') { import('./sell').then(s => s.buyNative(sellItem(id, l.chain), l.orderHash, sid => { listMap.delete(sid); sold.add(sid); owners[sid] = { chain: l.chain, owner: wallet.address! }; render(); }, gid => { listMap.delete(gid); render(); })); return; }
   const dep = COL.deployments.find(d => d.chain === l.chain)!;
   startBuy({ id, name: it.name, img: thumbUrl(it.id), chain: l.chain, contract: dep.address, listing: l },
     sid => { listMap.delete(sid); sold.add(sid); const me = wallet.address!; owners[sid] = { chain: l.chain, owner: me }; render(); },
     gid => { listMap.delete(gid); render(); });
 }
-const sellItem = (id: number, chain: string) => { const it = items.find(i => i.id === id)!; return { id, name: it.name, img: thumbUrl(id), chain, contract: COL.deployments.find(d => d.chain === chain)!.address }; };
+const sellItem = (id: number, chain: string) => { const it = items.find(i => i.id === id)!; return { id, name: it.name, img: thumbUrl(id), chain, contract: COL.deployments.find(d => d.chain === chain)!.address, slug: COL.slug }; };
 function doSell(id: number) { const ch = myChain(id); if (!ch) return; import('./sell').then(s => s.openSell(sellItem(id, ch), () => {})); }
-function doCancel(id: number) { const l = listMap.get(id); if (!l) return; import('./sell').then(s => s.cancelListing(sellItem(id, l.chain), l.orderHash, () => { listMap.delete(id); render(); })); }
+function doCancel(id: number) { const l = listMap.get(id); if (!l) return; import('./sell').then(s => s.cancelListing(sellItem(id, l.chain), l.orderHash, () => { listMap.delete(id); render(); }, l.source === 'multisea' ? 'multisea' : 'opensea')); }
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
 function card(it: Item, idx = 99) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function itemsView() {
@@ -207,7 +212,7 @@ function modal(id: number) {
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
     <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });

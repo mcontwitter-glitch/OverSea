@@ -8,6 +8,6 @@ const order = [...assets.filter(a => a !== 'site.webmanifest'), 'site.webmanifes
 for (const a of order) { if (!fs.existsSync('dist/' + a)) continue; const v = hv(a); const re = new RegExp('(/' + a.replace(/[.]/g, '\\.') + ')(\\?v=[0-9a-f]+)?(?=[\\s"\'`),])', 'g');
   for (const f of files) { const t = fs.readFileSync(f, 'utf8'); const n = t.replace(re, `$1?v=${v}`); if (n !== t) fs.writeFileSync(f, n); } }
 fs.copyFileSync('dist/index.html', 'dist/404.html');
-for (const p of ['submit', 'admin']) { fs.mkdirSync(`dist/${p}`, { recursive: true }); fs.copyFileSync('dist/index.html', `dist/${p}/index.html`); }
+for (const p of ['submit', 'admin', 'list-collection']) { fs.mkdirSync(`dist/${p}`, { recursive: true }); fs.copyFileSync('dist/index.html', `dist/${p}/index.html`); }
 fs.mkdirSync('dist/c/lil-foots', { recursive: true }); fs.copyFileSync('dist/index.html', 'dist/c/lil-foots/index.html');
 fs.writeFileSync('dist/.nojekyll', ''); console.log('postbuild: 404.html + route copies');

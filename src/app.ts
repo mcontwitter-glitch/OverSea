@@ -8,6 +8,7 @@ if (path === '/' && (q.get('item') || q.get('tab') || q.get('c'))) { const s = q
 const m = path.match(/^\/c\/([a-z0-9-]+)$/);
 if (path === '/') import('./home');
 else if (path === '/submit') import('./submit');
+else if (path === '/list-collection') import('./listpage');
 else if (path === '/bridge') import('./bridgepage');
 else if (path === '/admin') import('./admin');
 else if (m && CFG.collections.some(c => c.slug === m[1])) import('./collection');

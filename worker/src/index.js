@@ -6,6 +6,7 @@
 import CFG from '../../config/collections.json';
 import { verifyMessage, createPublicClient, http } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
+import { makeNative, NATIVE_FEE_BPS } from './native.js';
 
 const OS = 'https://api.opensea.io/api/v2';
 const SEAPORT = new Set([CFG.seaport.toLowerCase()]);
@@ -191,12 +192,14 @@ async function rpcBalance(chainKey, addr) {
   const j = r ? await r.json().catch(() => ({})) : {}; return j.result ? BigInt(j.result).toString() : null;
 }
 
+let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached }));
+
 // ---------- router ----------
 async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', ...(env.MEDIA ? ['media'] : [])] };
 
   // --- SIWE ---
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'nonce') { const n = rand(12); await env.NONCES.put('n:' + n, '1', { expirationTtl: 600 }); return { nonce: n }; }
@@ -282,7 +285,8 @@ async function handle(req, env, url) {
         Promise.all(Object.entries(chains).map(async ([k, c]) => ({ chain: k, native: c.native, balance: await rpcBalance(k, fee) }))),
         env.COLLECTIONS.list({ prefix: 'feeclaim:' }).then(l => Promise.all(l.keys.slice(-50).map(k => env.COLLECTIONS.get(k.name, 'json')))).catch(() => []),
       ]);
-      return { feeWallet: fee, you: s.address, canClaim: isFee, relayKey: !!env.RELAY_API_KEY, relay, natives, claims: claims.filter(Boolean).reverse() };
+      const nativeFills = await native().fills(env).catch(() => []);
+      return { nativeFills, feeWallet: fee, you: s.address, canClaim: isFee, relayKey: !!env.RELAY_API_KEY, relay, natives, claims: claims.filter(Boolean).reverse() };
     }
     if (M === 'POST' && p[1] === 'claim' && p.length === 2) {
       if (!isFee) bad('connect and sign in with the fee wallet to claim', 403);
@@ -304,6 +308,17 @@ async function handle(req, env, url) {
     bad('not found', 404);
   }
 
+
+
+  // --- MultiSea native marketplace (Seaport 1.6, orders in KV) ---
+  if (p[0] === 'native') {
+    const N = native();
+    if (M === 'GET' && p[1] === 'config' && p.length === 3) { const col = await getCollection(env, p[2]); if (!col) bad('not found', 404); return { seaport: CFG.seaport, feeRecipient: feeWallet(env), feeBps: NATIVE_FEE_BPS, royalty: await N.royaltyFor(env, p[2]), chains: Object.fromEntries(Object.entries(chains).map(([k, c]) => [k, { chainId: c.chainId, native: c.native }])) }; }
+    if (M === 'GET' && p.length === 3 && p[2] === 'listings') return { listings: await N.listings(env, p[1]) };
+    if (M === 'GET' && p[1] === 'order' && p.length === 4) { if (!chains[p[2]] || !HASH.test(p[3])) bad('invalid input'); return await N.getOrder(env, p[2], p[3]); }
+    if (M === 'POST' && p[1] === 'list' && p.length === 2) return await N.list(env, await body());
+    if (M === 'POST' && p[1] === 'remove' && p.length === 2) { const s = await requireSession(req, env); const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '')) bad('invalid input'); return await N.remove(env, b.chain, b.orderHash, s.address); }
+  }
 
   // --- Relay proxy (quote / status / chains / token price). Key stays server-side. ---
   if (p[0] === 'relay') {
@@ -353,6 +368,7 @@ async function handle(req, env, url) {
     const b = await body();
     const patch = { ...(b.description != null ? { description: str(b.description, 1000) } : {}), ...cleanLinks(b), ...(b.logo != null ? { logo: str(b.logo, 120, MEDIA) } : {}), ...(b.banner != null ? { banner: str(b.banner, 120, MEDIA) } : {}), updatedBy: s.address, updatedAt: new Date().toISOString() };
     for (const k of ['website', 'x', 'discord']) if (b[k] == null) delete patch[k];
+    if (b.royalty !== undefined) { const r = b.royalty; if (r === null || !r.bps) patch.royalty = null; else { if (!ADDR.test(r.recipient || '') || !Number.isFinite(+r.bps) || +r.bps < 0 || +r.bps > 1000) bad('royalty: recipient address and 0-10% required'); patch.royalty = { recipient: lc(r.recipient), bps: Math.floor(+r.bps) }; } }
     if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...patch }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return { ok: true, collection: v, via: perm.why }; }
     const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
     const v = { ...cur, ...patch }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return { ok: true, collection: { ...v, submitter: undefined }, via: perm.why };
@@ -448,6 +464,7 @@ async function handle(req, env, url) {
 }
 
 export default {
+  async scheduled(event, env, ctx) { ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r)))); },
   async fetch(req, env) {
     const url = new URL(req.url); const ch = corsHeaders(req, env);
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });

@@ -1,7 +1,8 @@
 // Pure Seaport 1.6 listing builder (no DOM, no wallet) — shared by sell.ts and the fork test.
+import { encodeFunctionData, parseAbi } from 'viem';
 export const ZERO = '0x0000000000000000000000000000000000000000' as const;
 export const ZERO32 = ('0x' + '0'.repeat(64)) as `0x${string}`;
-export type Fee = { recipient: string; bps: number; required: boolean; kind: 'opensea' | 'creator' };
+export type Fee = { recipient: string; bps: number; required: boolean; kind: 'opensea' | 'creator' | 'multisea'; ceil?: boolean };
 export type Item = { itemType: number; token: string; identifierOrCriteria: string; startAmount: string; endAmount: string };
 export type Cons = Item & { recipient: string };
 export type OrderParams = { offerer: string; zone: string; offer: Item[]; consideration: Cons[]; orderType: number; startTime: string; endTime: string; zoneHash: string; salt: string; conduitKey: string; totalOriginalConsiderationItems: number; counter: string };
@@ -10,7 +11,8 @@ export const EXPIRY = { '1d': 86400, '7d': 7 * 86400, '30d': 30 * 86400 } as con
 
 /** Split a total price (wei) into seller + fee consideration items. */
 export function splitPrice(priceWei: bigint, fees: Fee[]) {
-  const parts = fees.map(f => ({ ...f, amount: (priceWei * BigInt(f.bps)) / 10000n }));
+  // ceil: round the fee up so the on-chain amount is always >= bps (MultiSea's server check is strict).
+  const parts = fees.map(f => ({ ...f, amount: f.ceil ? (priceWei * BigInt(f.bps) + 9999n) / 10000n : (priceWei * BigInt(f.bps)) / 10000n }));
   const seller = priceWei - parts.reduce((a, p) => a + p.amount, 0n);
   return { seller, parts };
 }
@@ -59,4 +61,14 @@ export function orderTypedData(chainId: number, seaport: string, o: OrderParams)
 /** EIP-712 payload for OpenSea's offchain cancel. */
 export function cancelTypedData(chainId: number, seaport: string, orderHash: string) {
   return { domain: domain(chainId, seaport), types: { OrderHash: [{ name: 'orderHash', type: 'bytes32' }] } as const, primaryType: 'OrderHash' as const, message: { orderHash: orderHash as `0x${string}` } };
+}
+
+const FULFILL = parseAbi(['function fulfillOrder(((address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 totalOriginalConsiderationItems) parameters,bytes signature),bytes32) payable returns (bool)']);
+/** Seaport fulfillOrder calldata (buyer = msg.sender, no fulfiller conduit). */
+export function fulfillCalldata(p: any, signature: string) {
+  const n = (x: any) => BigInt(x);
+  const parameters = { offerer: p.offerer, zone: p.zone, orderType: Number(p.orderType), startTime: n(p.startTime), endTime: n(p.endTime), zoneHash: p.zoneHash, salt: n(p.salt), conduitKey: p.conduitKey, totalOriginalConsiderationItems: n(p.totalOriginalConsiderationItems ?? p.consideration.length),
+    offer: p.offer.map((o: any) => ({ itemType: Number(o.itemType), token: o.token, identifierOrCriteria: n(o.identifierOrCriteria), startAmount: n(o.startAmount), endAmount: n(o.endAmount) })),
+    consideration: p.consideration.map((c: any) => ({ itemType: Number(c.itemType), token: c.token, identifierOrCriteria: n(c.identifierOrCriteria), startAmount: n(c.startAmount), endAmount: n(c.endAmount), recipient: c.recipient })) };
+  return encodeFunctionData({ abi: FULFILL, functionName: 'fulfillOrder', args: [{ parameters, signature: signature as `0x${string}` }, ZERO32] });
 }

@@ -36,6 +36,14 @@ export function feesHtml() {
      <div class="fbig">${usd(natTotal)}<span class="mut small"> across ${nat.length} chains</span></div>
      ${nat.map((n: any) => `<div class="frow"><img class="cl" src="/logos/${n.chain}.svg" alt=""><span><b>${esc(chains[n.chain]?.name)}</b><em>${n.amt == null ? 'RPC unavailable' : (+n.amt.toFixed(6)).toString() + ' ' + esc(n.native)}</em></span><b class="fusd">${usd(n.usd)}</b></div>`).join('')}
    </div>
+   <div class="fcard"><div class="gh">MultiSea marketplace fees <span class="mut small">(0.5%, native listings)</span></div>
+     ${(() => { const f = (data.nativeFills || []) as any[]; const per: Record<string, number> = {}; f.forEach(x => { per[x.chain] = (per[x.chain] || 0) + +formatUnits(BigInt(x.feeWei || 0), 18); });
+       const tot = Object.entries(per).reduce((a, [k, v]) => a + v * (data.rates?.[chains[k]?.native] || 0), 0);
+       return `<div class="fbig">${usd(tot)}<span class="mut small"> from ${f.length} sale${f.length === 1 ? '' : 's'}</span></div>
+       ${Object.entries(per).map(([k, v]) => `<div class="frow"><img class="cl" src="/logos/${k}.svg" alt=""><span><b>${esc(chains[k]?.name)}</b><em>${(+v.toFixed(6))} ${esc(chains[k]?.native)}</em></span><b class="fusd">${usd(v * (data.rates?.[chains[k]?.native] || 0))}</b></div>`).join('')}
+       ${f.slice(0, 8).map(x => `<div class="frow"><span><b>#${esc(String(x.id))} sold</b><em>${new Date(x.at).toLocaleString()} · ${esc(chains[x.chain]?.name || '')} · fee ${(+(+formatUnits(BigInt(x.feeWei || 0), 18)).toFixed(6))} ${esc(chains[x.chain]?.native || '')}</em></span></div>`).join('')}
+       ${f.length ? '' : '<p class="mut small">No MultiSea sales yet. Fees are paid straight to the fee wallet on each sale (included in the balances above).</p>'}`; })()}
+   </div>
    <div class="fcard"><div class="gh">Claim history</div>
      ${(data.claims || []).length ? data.claims.map((c: any) => `<div class="frow"><span><b>${c.amountUsd ? usd(c.amountUsd) : 'Claim'}</b><em>${new Date(c.at).toLocaleString()} · ${esc(chains[byId(c.chainId) || '']?.name || '')}</em></span></div>`).join('') : '<p class="mut small">No claims made from MultiSea yet.</p>'}
      <p class="mut small"><a href="https://relay.link/claim-app-fees" target="_blank" rel="noopener">Relay app balance page ↗</a></p>

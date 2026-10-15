@@ -23,3 +23,7 @@ SIWE_DOMAINS = "multisea.io,www.multisea.io,mcontwitter-glitch.github.io"
 # LIL FOOTS deployer / owner() on Abstract
 ADMIN_ADDRESSES = "0xca89ae48a5c61d13e78236daa4ac29ee588ea475"
 STATIC_EDITORS = '{"lil-foots":["0xca89ae48a5c61d13e78236daa4ac29ee588ea475"]}'
+
+# Re-validate MultiSea native listings (fills, cancels, transfers, expiry).
+[triggers]
+crons = ["*/15 * * * *"]
