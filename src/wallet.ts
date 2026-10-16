@@ -16,12 +16,37 @@ const emit = () => listeners.forEach(f => f());
 const short = (a: string) => a.slice(0, 6) + '…' + a.slice(-4);
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
-// ---- API health: Buy stays disabled ("buying coming soon") until the Worker answers ----
-export async function checkApi() {
-  if (!API) return false;
-  try { const ac = new AbortController(); setTimeout(() => ac.abort(), 4000); const r = await fetch(API + '/health', { signal: ac.signal }); apiReady = r.ok; if (r.ok) apiFeatures = (await r.json()).features || []; } catch { apiReady = false; }
-  emit(); return apiReady;
+// ---- API health. Optimistic: features that are live render enabled; a real error only shows if the action itself fails.
+// /health is retried with backoff (3 tries over ~15s), then re-checked on window focus / back online.
+export let apiReachable: boolean | null = null;
+const LIVE_FEATURES = ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'media'];
+apiReady = !!API; apiFeatures = API ? [...LIVE_FEATURES] : [];
+const upListeners: (() => void)[] = [];
+export const onApiUp = (f: () => void) => { upListeners.push(f); };
+let inflight: Promise<boolean> | null = null; let rechecking = false;
+async function probe(timeout: number) {
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), timeout);
+  try { const r = await fetch(API + '/health', { signal: ac.signal, cache: 'no-store' }); if (!r.ok) return false; const j = await r.json().catch(() => ({})); if (Array.isArray(j.features) && j.features.length) apiFeatures = j.features; return true; }
+  catch { return false; } finally { clearTimeout(t); }
 }
+export function checkApi(): Promise<boolean> {
+  if (!API) return Promise.resolve(false);
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const was = apiReachable;
+    for (const [i, t] of [5000, 5000, 6000].entries()) { if (i) await new Promise(r => setTimeout(r, i * 1500)); if (await probe(t)) { apiReachable = true; break; } apiReachable = false; }
+    if (!apiReachable) { console.warn('[MultiSea] API /health unreachable (ad-blocker or network?). Actions stay enabled; will re-check on focus.'); armRecheck(); }
+    emit(); if (apiReachable && was === false) upListeners.forEach(f => { try { f(); } catch {} });
+    inflight = null; return !!apiReachable;
+  })();
+  return inflight;
+}
+function armRecheck() {
+  if (rechecking) return; rechecking = true;
+  const go = () => { if (apiReachable) return; checkApi(); };
+  window.addEventListener('focus', go); window.addEventListener('online', go); document.addEventListener('visibilitychange', () => { if (!document.hidden) go(); });
+}
+export const API_DOWN_MSG = "Couldn't reach MultiSea. Check ad-blockers or privacy extensions (allow api.multisea.io) and your connection, then try again.";
 
 // ---- EIP-6963 discovery ----
 const found = new Map<string, P6963>();
@@ -118,6 +143,8 @@ function chainOfErr(e: any, m: string): string | undefined {
 }
 export function friendly(e: any, chainKey?: string): string {
   try { console.error('[MultiSea]', e); } catch {}
+  if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed|fetch/i.test(e.message)) return API_DOWN_MSG;
+  if (e?.name === 'AbortError') return API_DOWN_MSG;
   const m = String(e?.shortMessage || e?.details || e?.message || e);
   const full = m + ' ' + String(e?.message || '') + ' ' + String(e?.details || '');
   if (!(e?.code === 4001) && !/user rejected|denied/i.test(full) && (RPC_FAIL.test(full) || e?.name === 'HttpRequestError' || e?.name === 'TimeoutError' || /ContractFunctionExecutionError/.test(String(e?.name)) && RPC_FAIL.test(String(e?.cause?.message || e?.cause?.shortMessage || '')))) {
@@ -131,7 +158,6 @@ export function friendly(e: any, chainKey?: string): string {
 }
 
 export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone: (id: number) => void) {
-  if (!apiReady) return;
   if (!wallet.address) { openConnect(); return; }
   const c = chains[it.chain]; const os = c.openseaSlug!;
   const m = overlay(`<div class="bhead"><img src="${esc(it.img)}" alt=""><div><div class="mut">${esc(c.name)}</div><h3>${esc(it.name)}</h3></div></div><div class="bbody"><div class="spin"></div> Checking listing on OpenSea…</div>`);

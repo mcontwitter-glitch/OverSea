@@ -19,7 +19,7 @@ export function bindNav(onDisconnect?: () => void) {
     if (wallet.address) { if (confirm('Disconnect ' + wallet.address + '?')) { disconnect(); onDisconnect?.(); } } else openConnect();
   }, true);
 }
-export const soon = (what = 'This') => `<div class="soon">🚧 ${esc(what)} is coming online soon. The MultiSea API isn't live yet.</div>`;
+export const soon = (what = 'This') => `<div class="soon">${esc(what)} couldn't reach the MultiSea API. Check ad-blockers or privacy extensions (allow api.multisea.io) and your connection. <a href="" onclick="location.reload();return false">Retry</a></div>`;
 export { apiReady };
 
 // Live USD rates (CoinGecko), shared by market cap and listing prices; cached 10 min in sessionStorage.

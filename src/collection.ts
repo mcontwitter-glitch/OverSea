@@ -1,7 +1,7 @@
 import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
-import { wallet, onWallet, checkApi, startBuy, apiReady, apiFeatures, API } from './wallet';
+import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
 import { openEdit, linksHtml } from './edit';
 
@@ -159,9 +159,9 @@ const sellOn = () => apiReady && (apiFeatures.includes('native') || apiFeatures.
 const sellBtn = (id: number, cls = '') => {
   const ch = myChain(id); if (!ch) return null; const l = listMap.get(id); const me = wallet.address!.toLowerCase();
   if (l && l.seller?.toLowerCase() === me) return sellOn() ? `<button class="buy ghost ${cls}" data-cancel="${id}">Cancel listing</button>` : '';
-  return sellOn() ? `<button class="buy ${cls}" data-sell="${id}">List for sale</button>` : `<button class="buy ${cls}" disabled title="Selling coming soon">List <small>soon</small></button>`;
+  return sellOn() ? `<button class="buy ${cls}" data-sell="${id}">List for sale</button>` : '';
 };
-const buyBtn = (id: number, cls = '') => { const sb = sellBtn(id, cls); if (sb !== null) return sb; const l = listMap.get(id); if (!l || (l.source !== 'multisea' && !chains[l.chain]?.openseaSlug)) return ''; return apiReady ? `<button class="buy ${cls}" data-buy="${id}">Buy</button>` : `<button class="buy ${cls}" disabled title="Buying coming soon">Buy <small>soon</small></button>`; };
+const buyBtn = (id: number, cls = '') => { const sb = sellBtn(id, cls); if (sb !== null) return sb; const l = listMap.get(id); if (!l || (l.source !== 'multisea' && !chains[l.chain]?.openseaSlug)) return ''; return `<button class="buy ${cls}" data-buy="${id}">Buy</button>`; };
 function doBuy(id: number) {
   const l = listMap.get(id); const it = items.find(i => i.id === id); if (!l || !it) return;
   if (l.source === 'multisea') { import('./sell').then(s => s.buyNative(sellItem(id, l.chain), l.orderHash, sid => { listMap.delete(sid); sold.add(sid); owners[sid] = { chain: l.chain, owner: wallet.address! }; render(); }, gid => { listMap.delete(gid); render(); })); return; }
@@ -267,7 +267,9 @@ async function refreshEditable() {
   render();
 }
 onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all'; refreshEditable(); });
-checkApi().then(async ok => { if (!ok) return; loadLiveListings().then(render); try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; } catch {} refreshEditable(); });
+// Load API data even if /health was blocked (other routes often still work); retry when the API comes back.
+const apiLoad = async () => { loadLiveListings().then(render); try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; render(); } catch {} refreshEditable(); };
+checkApi().then(apiLoad); onApiUp(apiLoad);
 render();
 if (params.get('item')) modal(+params.get('item')!);
 if (params.get('tab')) { st.tab = params.get('tab')!; if (st.tab === 'activity') loadActivity(); render(); }

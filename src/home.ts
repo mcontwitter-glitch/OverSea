@@ -1,6 +1,6 @@
 import AV from './assetv.json';
 import CFG from '../config/collections.json';
-import { checkApi, onWallet, API, apiReady } from './wallet';
+import { checkApi, onApiUp, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
@@ -64,8 +64,9 @@ function bindHome() {
 bindNav();
 cards = await staticCards(); render();
 onWallet(render);
-checkApi().then(async ok => {
-  if (!ok) return;
+let homeLoaded = false;
+const homeLoad = async () => {
+  if (homeLoaded) return;
   try {
     const j = await (await fetch(API + '/collections')).json();
     for (const [slug, o] of Object.entries(j.overrides || {})) { const c = cards.find(x => x.slug === slug); if (c && o) Object.assign(c, { logo: (o as any).logo || c.logo, banner: (o as any).banner || c.banner }); }
@@ -74,6 +75,7 @@ checkApi().then(async ok => {
     await Promise.all(dyn.map(async c => { try { const s = (await (await fetch(`${API}/os/${c.slug}/stats`)).json()).stats || {}; const v = Object.values(s) as any[];
       c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : '-'; const vol = v.reduce((a, x) => a + (x.volume || 0), 0); c.volume = v.length ? fmt(vol) + ' ETH' : '-';
       const fl = v.filter(x => x.floor_price && x.floor_price_symbol === 'ETH').map(x => x.floor_price); c.floor = fl.length ? fmt(Math.min(...fl)) + ' ETH' : '-'; } catch {} }));
-    render();
+    render(); homeLoaded = true;
   } catch {}
-});
+};
+checkApi().then(homeLoad); onApiUp(homeLoad);

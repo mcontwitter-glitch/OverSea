@@ -21,7 +21,7 @@ function render() {
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${listings.length}</b><span>Listings</span></div>${(() => { const sup = v.reduce((a, x) => a + (x.total_supply || 0), 0) || col.supply || 0; return mcapStatHtml(mcapUsd(fl?.price, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="chips">${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>
-  <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${it.image ? `<img src="${esc(it.image)}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? (apiReady ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : '<button class="buy" disabled title="Buying coming soon">Buy <small>soon</small></button>') : ''}</div></div>`; }).join('')}</div>
+  <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${it.image ? `<img src="${esc(it.image)}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
   ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</div>`;
 }
 async function loadItems(reset = false) { if (reset) { items = []; next = null; } const j = await (await fetch(`${API}/os/${slug}/items?chain=${chain}${next ? '&next=' + encodeURIComponent(next) : ''}`)).json(); items.push(...(j.nfts || [])); next = j.next; render(); }
@@ -37,10 +37,10 @@ app.addEventListener('click', e => {
     if (l && d) startBuy({ id: +id, name: it?.name || '#' + id, img: it?.image || '', chain: ch, contract: d.address, listing: l }, () => { listings = listings.filter(x => !(x.chain === ch && x.id === +id)); render(); }, () => { listings = listings.filter(x => !(x.chain === ch && x.id === +id)); render(); }); }
 });
 bindNav(); render(); onWallet(refreshEditable);
-const ok = await checkApi();
-if (!ok) { state = 'offline'; render(); }
+await checkApi(); // retried with backoff; even if /health is blocked, try the real route
+const r = await fetch(`${API}/collections/${slug}`).catch(() => null);
+if (!r) { state = 'offline'; render(); }
 else {
-  const r = await fetch(`${API}/collections/${slug}`);
   if (!r.ok) { state = 'missing'; render(); }
   else { col = (await r.json()).collection; document.title = `${col.name} · MultiSea`; chain = col.deployments[0].chain; state = 'ok'; render();
     await Promise.all([loadItems(true), fetch(`${API}/os/${slug}/stats`).then(r => r.json()).then(j => { stats = j.stats || {}; }).catch(() => {}), fetch(`${API}/os/${slug}/listings`).then(r => r.json()).then(j => { listings = j.listings || []; }).catch(() => {})]);
