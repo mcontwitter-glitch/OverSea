@@ -119,13 +119,15 @@ function header() {
   <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}</div>`;
 }
 
+const mobMq = matchMedia('(max-width:640px)'); const isMob = () => mobMq.matches;
+mobMq.addEventListener('change', () => render());
 function filtered() {
   let arr = items.filter(it => {
     const loc = owners[it.id];
     if (st.chains.size && !(loc && st.chains.has(loc.chain))) return false;
     if (st.status === 'listed' && !listMap.has(it.id)) return false;
     if (st.status === 'mine') { const me = wallet.address?.toLowerCase(); if (!me || !(loc && (loc.owner.toLowerCase() === me || loc.also?.some(a => a.owner.toLowerCase() === me)))) return false; }
-    if (st.q && !(it.name.toLowerCase().includes(st.q) || String(it.id) === st.q)) return false;
+    if (st.q && !(it.name.toLowerCase().includes(st.q) || String(it.id) === st.q || it.attrs.some(a => String(a[1]).toLowerCase().includes(st.q)))) return false;
     for (const [t, vs] of st.traits) { if (!vs.size) continue; const v = it.attrs.find(a => a[0] === t)?.[1]; if (!v || !vs.has(v)) return false; }
     return true;
   });
@@ -190,8 +192,9 @@ function card(it: Item, idx = 99) {
 function itemsView() {
   const arr = filtered();
   const activeTraits = [...st.traits].flatMap(([t, vs]) => [...vs].map(v => `<button class="pill" data-rm-trait="${esc(t)}" data-v="${esc(v)}">${esc(t)}: ${esc(v)} ✕</button>`)).join('');
-  return `<div class="bar"><button class="fbtn" data-act="toggle-side">☰ Filters</button><input class="search" placeholder="Search by name or ID" value="${esc(st.q)}"><select class="sort">
-    ${[['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low'], ['rarity', 'Rarity: rarest first'], ['rarity-desc', 'Rarity: common first']].map(([v, n]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">⚡ Sweep</button></div>
+  const mob = isMob();
+  return `<div class="bar"><button class="fbtn" data-act="toggle-side"><span class="fi" aria-hidden="true">☰</span> <span>Filters</span></button><input class="search" enterkeyhint="search" placeholder="${mob ? 'Search by ID or trait' : 'Search by name or ID'}" value="${esc(st.q)}"><select class="sort" aria-label="Sort">
+    ${[['price-asc', 'Price: low to high', 'Price ↑'], ['price-desc', 'Price: high to low', 'Price ↓'], ['rarity', 'Rarity: rarest first', 'Rarest'], ['rarity-desc', 'Rarity: common first', 'Common']].map(([v, n, sh]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${mob ? sh : n}</option>`).join('')}</select><button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">⚡ Sweep</button></div>
    <div class="layout">${sidebar()}<section class="main"><div class="count">${arr.length.toLocaleString()} items ${activeTraits ? `<span class="pills">${activeTraits}<button class="pill clr" data-act="clear">Clear all</button></span>` : ''}</div>
    ${cancelAllBar()}
    <div class="grid">${arr.slice(0, st.limit).map((it, k) => card(it, k)).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
