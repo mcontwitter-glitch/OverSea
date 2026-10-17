@@ -40,13 +40,13 @@ export async function openSweep(all: CartItem[], colName: string) {
     const t = e.target as HTMLElement; const c = t.closest('[data-swc]') as HTMLElement;
     if (c) { const k = c.dataset.swc!; st.on.has(k) ? st.on.delete(k) : st.on.add(k); c.classList.toggle('on', st.on.has(k)); draw(); return; }
     if (t.closest('.addc')) { const n = pick().length; addToCart(pick()); out.innerHTML = `<p class="ok">✓ Added ${n} items to your cart.</p><a class="bbtn" href="/cart">Open cart</a>`; return; }
-    if (t.closest('.go')) { const sel = pick(); m.remove(); checkout(sel); }
+    if (t.closest('.go')) { const sel = pick(); m.remove(); import('./xcart').then(x => x.openUnifiedCheckout(sel)); }
   });
   draw();
 }
 
-type Prep = { chain: string; native: { item: CartItem; order: any }[]; os: { item: CartItem; tx: any; value: bigint; data: Hex }[]; gone: CartItem[]; value: bigint; msFeeWei: bigint };
-async function prepare(items: CartItem[], status: (s: string) => void): Promise<Prep[]> {
+export type Prep = { chain: string; native: { item: CartItem; order: any }[]; os: { item: CartItem; tx: any; value: bigint; data: Hex }[]; gone: CartItem[]; value: bigint; msFeeWei: bigint };
+export async function prepare(items: CartItem[], status: (s: string) => void): Promise<Prep[]> {
   const groups: Record<string, CartItem[]> = {}; items.forEach(i => (groups[i.chain] ??= []).push(i));
   const out: Prep[] = [];
   for (const [k, list] of Object.entries(groups)) {
@@ -140,12 +140,12 @@ export function cartPage(el: HTMLElement) {
     const per: Record<string, CartItem[]> = {}; c.forEach(i => (per[i.chain] ??= []).push(i));
     const usd = c.reduce((s, i) => s + i.price * rateOf(rates, i.chain), 0);
     const fee = c.filter(i => i.source === 'multisea').reduce((s, i) => s + i.price * 0.005 * rateOf(rates, i.chain), 0);
-    el.innerHTML = `<h2>Cart</h2><p class="mut">Buy across collections and chains in one go. Use <b>🧹 Sweep</b> on any collection page to add the cheapest N.</p>
+    el.innerHTML = `<h2>Cart</h2><p class="mut">One cart across chains: add NFTs from any chain, then pay with any token you hold on any chain. Use <b>🧹 Sweep</b> on any collection page to add the cheapest N.</p>
       ${c.length ? Object.entries(per).map(([k, l]) => `<div class="fcard"><div class="gh">${logo(k)} ${esc(chains[k].name)} <span class="mut small">${l.length} item(s) · ${l.filter(x => x.source === 'multisea').length ? '1 batched Seaport tx' : ''}${l.filter(x => x.source === 'opensea').length ? ` + ${l.filter(x => x.source === 'opensea').length} OpenSea tx` : ''}</span></div>
         ${l.map(i => `<div class="swi">${i.img ? `<img src="${esc(i.img)}" alt="">` : '<span class="ph"></span>'}<span>${esc(i.name)}</span><b>${+i.price.toFixed(5)} ${esc(i.currency)}</b><i class="src ${i.source === 'multisea' ? 'ms' : 'os'}">${i.source === 'multisea' ? 'MultiSea' : 'OpenSea'}</i><button class="x sm" data-rm="${esc(i.key)}">✕</button></div>`).join('')}</div>`).join('') : '<div class="empty">Your cart is empty. <a href="/c/lil-foots">Sweep a collection →</a></div>'}
-      ${c.length ? `<div class="kv bkv"><span>Items</span><b>${c.length}</b><span>MultiSea fee</span><b>${usdTxt(fee) || '$0.00'} <i class="usd">included · +$0.30 per cross-chain top-up if needed</i></b><span>Total</span><b class="xtot">${usdTxt(usd)}</b></div>
+      ${c.length ? `<div class="kv bkv"><span>Items</span><b>${c.length}</b><span>MultiSea fee</span><b>${usdTxt(fee) || '$0.00'} <i class="usd">included · +$0.30 per Relay route if you pay from another chain or token</i></b><span>Total</span><b class="xtot">${usdTxt(usd)}</b></div>
         <div class="two"><button class="bbtn ghost" data-act="clear-cart">Clear</button><button class="bbtn" data-act="checkout">Checkout</button></div>` : ''}`;
   };
-  el.addEventListener('click', e => { const t = e.target as HTMLElement; const r = t.closest('[data-rm]') as HTMLElement; if (r) { removeFromCart(r.dataset.rm!); draw(); } if (t.dataset.act === 'clear-cart') { clearCart(); draw(); } if (t.dataset.act === 'checkout') checkout(cart()); });
+  el.addEventListener('click', e => { const t = e.target as HTMLElement; const r = t.closest('[data-rm]') as HTMLElement; if (r) { removeFromCart(r.dataset.rm!); draw(); } if (t.dataset.act === 'clear-cart') { clearCart(); draw(); } if (t.dataset.act === 'checkout') import('./xcart').then(x => x.openUnifiedCheckout(cart())); });
   draw(); return draw;
 }

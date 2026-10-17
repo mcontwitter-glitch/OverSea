@@ -25,10 +25,11 @@ export function advancedFulfillCalldata(order: { parameters: any; signature: str
   return { data, value };
 }
 
-export type QuoteReq = { user: string; originChainId: number; destinationChainId: number; amount: bigint; destinationCurrency?: string; txs?: { to: string; value: string; data: string }[]; feeBps?: string };
+export type QuoteReq = { user: string; originChainId: number; destinationChainId: number; amount: bigint; originCurrency?: string; destinationCurrency?: string; txs?: { to: string; value: string; data: string }[]; feeBps?: string; usePermit?: boolean };
 export async function relayQuote(q: QuoteReq, f: typeof fetch = fetch) {
-  const body: any = { user: q.user, recipient: q.user, refundTo: q.user, originChainId: q.originChainId, destinationChainId: q.destinationChainId, originCurrency: ZERO, destinationCurrency: q.destinationCurrency || ZERO, amount: q.amount.toString(), tradeType: 'EXACT_OUTPUT' };
+  const body: any = { user: q.user, recipient: q.user, refundTo: q.user, originChainId: q.originChainId, destinationChainId: q.destinationChainId, originCurrency: q.originCurrency || ZERO, destinationCurrency: q.destinationCurrency || ZERO, amount: q.amount.toString(), tradeType: 'EXACT_OUTPUT' };
   if (q.txs) body.txs = q.txs;
+  if (q.usePermit) body.usePermit = true;
   if (q.feeBps && +q.feeBps > 0) body.appFees = [{ recipient: FEE_WALLET, fee: q.feeBps }];
   const r = await f(`${RELAY()}/quote/v2`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));

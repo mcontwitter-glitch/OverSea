@@ -358,9 +358,10 @@ async function handle(req, env, url) {
     if (!['GET', 'POST'].includes(M)) bad('method not allowed', 405);
     if (!corsHeaders(req, env)) bad('origin not allowed', 403); // browser calls from MultiSea origins only
     const rest = '/' + p.slice(1).join('/');
-    // Allowlist: quotes, status polling, chain/price metadata. App-fee claim stays on /fees/*.
+    // Allowlist: quotes, status polling, chain/price metadata, permit submission (gasless ERC20 deposits). App-fee claim stays on /fees/*.
     const ok = (
       (M === 'POST' && /^\/quote(\/v2)?$/.test(rest)) ||
+      (M === 'POST' && rest === '/execute/permits' && /^0x[0-9a-fA-F]{130,}$/.test(url.searchParams.get('signature') || '')) ||
       (M === 'GET' && /^\/intents\/status(\/v\d+)?$/.test(rest) && url.searchParams.has('requestId') && /^0x[0-9a-fA-F]{64}$/.test(url.searchParams.get('requestId') || '')) ||
       (M === 'GET' && /^\/(?:chains|currencies\/token\/price)$/.test(rest))
     );
