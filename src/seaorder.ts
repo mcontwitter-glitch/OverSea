@@ -72,3 +72,25 @@ export function fulfillCalldata(p: any, signature: string) {
     consideration: p.consideration.map((c: any) => ({ itemType: Number(c.itemType), token: c.token, identifierOrCriteria: n(c.identifierOrCriteria), startAmount: n(c.startAmount), endAmount: n(c.endAmount), recipient: c.recipient })) };
   return encodeFunctionData({ abi: FULFILL, functionName: 'fulfillOrder', args: [{ parameters, signature: signature as `0x${string}` }, ZERO32] });
 }
+
+/** Same-chain bundle: one Seaport order whose offer is several ERC-721s (all-or-nothing). Fees on the total price. */
+export function buildBundleOrder(a: { offerer: string; items: { token: string; id: string | number }[]; priceWei: bigint; fees: Fee[]; counter: bigint | string; now?: number; duration: number; salt?: bigint }): OrderParams {
+  if (!a.items.length || a.items.length > 30) throw new Error('1-30 items per chain');
+  const one = buildListing({ offerer: a.offerer, token: a.items[0].token, id: a.items[0].id, priceWei: a.priceWei, fees: a.fees, conduitKey: ZERO32, counter: a.counter, now: a.now, duration: a.duration, salt: a.salt });
+  return { ...one, offer: a.items.map(i => ({ itemType: 2, token: i.token.toLowerCase(), identifierOrCriteria: String(i.id), startAmount: '1', endAmount: '1' })) };
+}
+
+const ORDER_T = '(address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 totalOriginalConsiderationItems)';
+const FAO = parseAbi([`function fulfillAvailableOrders((${ORDER_T} parameters,bytes signature)[] orders,(uint256 orderIndex,uint256 itemIndex)[][] offerFulfillments,(uint256 orderIndex,uint256 itemIndex)[][] considerationFulfillments,bytes32 fulfillerConduitKey,uint256 maximumFulfilled) payable returns (bool[],((uint8,address,uint256,uint256,address),address,bytes32)[])`]);
+const toParams = (p: any) => { const n = (x: any) => BigInt(x); return { offerer: p.offerer, zone: p.zone, orderType: Number(p.orderType), startTime: n(p.startTime), endTime: n(p.endTime), zoneHash: p.zoneHash, salt: n(p.salt), conduitKey: p.conduitKey, totalOriginalConsiderationItems: n(p.totalOriginalConsiderationItems ?? p.consideration.length),
+  offer: p.offer.map((o: any) => ({ itemType: Number(o.itemType), token: o.token, identifierOrCriteria: n(o.identifierOrCriteria), startAmount: n(o.startAmount), endAmount: n(o.endAmount) })),
+  consideration: p.consideration.map((c: any) => ({ itemType: Number(c.itemType), token: c.token, identifierOrCriteria: n(c.identifierOrCriteria), startAmount: n(c.startAmount), endAmount: n(c.endAmount), recipient: c.recipient })) }; };
+/** Sweep: Seaport fulfillAvailableOrders for many MultiSea native orders in one tx. Orders that were sold meanwhile are skipped
+ *  by Seaport (not reverted) and the unused native value is refunded to the buyer. Each item gets its own fulfillment (no aggregation). */
+export function fulfillAvailableCalldata(orders: { parameters: any; signature: string }[]) {
+  const offerF: { orderIndex: bigint; itemIndex: bigint }[][] = []; const consF: { orderIndex: bigint; itemIndex: bigint }[][] = [];
+  orders.forEach((o, i) => { o.parameters.offer.forEach((_: any, j: number) => offerF.push([{ orderIndex: BigInt(i), itemIndex: BigInt(j) }])); o.parameters.consideration.forEach((_: any, j: number) => consF.push([{ orderIndex: BigInt(i), itemIndex: BigInt(j) }])); });
+  const value = orders.reduce((s, o) => s + o.parameters.consideration.reduce((a: bigint, c: any) => a + BigInt(c.startAmount), 0n), 0n);
+  const data = encodeFunctionData({ abi: FAO, functionName: 'fulfillAvailableOrders', args: [orders.map(o => ({ parameters: toParams(o.parameters), signature: o.signature as `0x${string}` })), offerF, consF, ZERO32, BigInt(orders.length)] });
+  return { data, value };
+}

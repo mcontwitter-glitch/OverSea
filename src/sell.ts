@@ -195,7 +195,7 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const h = await wc.sendTransaction({ account: me, to: o.protocolAddress, value, data: fulfillCalldata(prm, o.signature) });
     const link = `${c.explorer}/tx/${h}`; body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Transaction reverted. The listing may have been filled or cancelled.');
-    onSold(it.id); body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;
+    onSold(it.id); fetch(`${API}/native/filled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: it.chain, txHash: h }) }).catch(() => {}); body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;
   } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e, it?.chain)); }
 }
 
