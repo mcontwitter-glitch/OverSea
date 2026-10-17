@@ -16,7 +16,7 @@ export async function openSweep(all: CartItem[], colName: string) {
   const rates = await usdRates();
   const byChain = [...new Set(all.map(l => l.chain))];
   const st = { n: Math.min(10, all.length), on: new Set(byChain) };
-  const m = overlay(`<div class="bhead"><div><div class="mut">${esc(colName)}</div><h3>Sweep the floor</h3></div></div><div class="bbody sweep"></div>`);
+  const m = overlay(`<div class="bhead"><div><div class="mut">${esc(colName)}</div><h3>🧹 Sweep the floor</h3></div></div><div class="bbody sweep"></div>`);
   m.querySelector('.wbox')!.classList.add('wide');
   const body = m.querySelector('.bbody') as HTMLElement;
   const pick = () => all.filter(l => st.on.has(l.chain)).sort((a, b) => usdOf(a) - usdOf(b)).slice(0, st.n);
@@ -33,7 +33,7 @@ export async function openSweep(all: CartItem[], colName: string) {
         <span>MultiSea fee</span><b>${usdTxt(msFee) || '$0.00'} <i class="usd">included in MultiSea listings</i></b>
         <span>Total</span><b class="xtot">${usdTxt(usd)}</b></div>
       <p class="mut small">Batched per chain: MultiSea listings fill in one Seaport transaction per chain; OpenSea listings fill one by one. Items sold meanwhile are skipped and not charged. Missing funds on a chain can be moved from another chain via Relay.</p>
-      <div class="two"><button class="bbtn ghost addc" ${sel.length ? '' : 'disabled'}>Add ${sel.length} to cart</button><button class="bbtn go" ${sel.length ? '' : 'disabled'}>Sweep ${sel.length} now</button></div>`;
+      <div class="two"><button class="bbtn ghost addc" ${sel.length ? '' : 'disabled'}>Add ${sel.length} to cart</button><button class="bbtn go" ${sel.length ? '' : 'disabled'}>🧹 Sweep ${sel.length} now</button></div>`;
   };
   body.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (t.classList.contains('swn') || t.classList.contains('swr')) { st.n = Math.max(1, Math.min(all.length, +t.value || 1)); (body.querySelector(t.classList.contains('swn') ? '.swr' : '.swn') as HTMLInputElement).value = String(st.n); draw(); } });
   body.addEventListener('click', e => {
@@ -140,7 +140,7 @@ export function cartPage(el: HTMLElement) {
     const per: Record<string, CartItem[]> = {}; c.forEach(i => (per[i.chain] ??= []).push(i));
     const usd = c.reduce((s, i) => s + i.price * rateOf(rates, i.chain), 0);
     const fee = c.filter(i => i.source === 'multisea').reduce((s, i) => s + i.price * 0.005 * rateOf(rates, i.chain), 0);
-    el.innerHTML = `<h2>Cart</h2><p class="mut">Buy across collections and chains in one go. Use <b>Sweep</b> on any collection page to add the cheapest N.</p>
+    el.innerHTML = `<h2>Cart</h2><p class="mut">Buy across collections and chains in one go. Use <b>🧹 Sweep</b> on any collection page to add the cheapest N.</p>
       ${c.length ? Object.entries(per).map(([k, l]) => `<div class="fcard"><div class="gh">${logo(k)} ${esc(chains[k].name)} <span class="mut small">${l.length} item(s) · ${l.filter(x => x.source === 'multisea').length ? '1 batched Seaport tx' : ''}${l.filter(x => x.source === 'opensea').length ? ` + ${l.filter(x => x.source === 'opensea').length} OpenSea tx` : ''}</span></div>
         ${l.map(i => `<div class="swi">${i.img ? `<img src="${esc(i.img)}" alt="">` : '<span class="ph"></span>'}<span>${esc(i.name)}</span><b>${+i.price.toFixed(5)} ${esc(i.currency)}</b><i class="src ${i.source === 'multisea' ? 'ms' : 'os'}">${i.source === 'multisea' ? 'MultiSea' : 'OpenSea'}</i><button class="x sm" data-rm="${esc(i.key)}">✕</button></div>`).join('')}</div>`).join('') : '<div class="empty">Your cart is empty. <a href="/c/lil-foots">Sweep a collection →</a></div>'}
       ${c.length ? `<div class="kv bkv"><span>Items</span><b>${c.length}</b><span>MultiSea fee</span><b>${usdTxt(fee) || '$0.00'} <i class="usd">included · +$0.30 per cross-chain top-up if needed</i></b><span>Total</span><b class="xtot">${usdTxt(usd)}</b></div>
