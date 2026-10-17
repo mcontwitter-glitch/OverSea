@@ -1,4 +1,4 @@
-import{r as e}from"./wallet-Dycab2QC.js";import{n as t,o as n}from"./shell-BBRETII2.js";import{i as r,t as i}from"./auth-Ddwwxsla.js";import{n as a,r as o,t as s}from"./filepick-BzCZWVYR.js";var c=()=>e.includes(`media`);function l(e,l){o();let u=document.createElement(`div`);u.className=`modal wov`,u.innerHTML=`<div class="wbox form"><button class="x mx">✕</button><h3>Edit ${t(e.name)}</h3>
+import{r as e}from"./wallet-DCaIGUD_.js";import{n as t,o as n}from"./shell-CXysE7ky.js";import{i as r,t as i}from"./auth-DHN6k0Kv.js";import{n as a,r as o,t as s}from"./filepick-CiXiRStG.js";var c=()=>e.includes(`media`);function l(e,l){o();let u=document.createElement(`div`);u.className=`modal wov`,u.innerHTML=`<div class="wbox form"><button class="x mx">✕</button><h3>Edit ${t(e.name)}</h3>
    <label>Logo <span class="mut small">(square, re-encoded to WebP ≤512px)</span>${s(`logo`,n(e.logo),c())}</label>
    <label>Banner <span class="mut small">(wide, ≤1500px)</span>${s(`banner`,n(e.banner),c())}</label>
    <label>Description<textarea name="description" maxlength="1000" rows="4">${t(e.description||``)}</textarea></label>
