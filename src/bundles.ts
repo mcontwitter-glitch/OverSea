@@ -26,11 +26,12 @@ async function load() {
   if (st.view === 'create') await loadMine(); draw();
 }
 async function loadMine() {
-  st.mine = []; if (!wallet.address) return; const me = wallet.address.toLowerCase();
+  const mine: Sel[] = []; if (!wallet.address) { st.mine = mine; return; } const me = wallet.address.toLowerCase();
   for (const c of CFG.collections) {
     const m = await fetch(`/data/${c.slug}/owners.min.json`).then(r => r.json()).catch(() => null); if (!m) continue;
-    for (const [id, a] of Object.entries(m.d as Record<string, number[]>)) for (let k = 0; k < a.length; k += 2) if ((m.addrs[a[k + 1]] || '').toLowerCase() === me) { const ch = m.chains[a[k]]; const dep = c.deployments.find(d => d.chain === ch); if (dep) st.mine.push({ chain: ch, token: dep.address.toLowerCase(), id, slug: c.slug }); }
+    for (const [id, a] of Object.entries(m.d as Record<string, number[]>)) for (let k = 0; k < a.length; k += 2) if ((m.addrs[a[k + 1]] || '').toLowerCase() === me) { const ch = m.chains[a[k]]; const dep = c.deployments.find(d => d.chain === ch); if (dep) mine.push({ chain: ch, token: dep.address.toLowerCase(), id, slug: c.slug }); }
   }
+  st.mine = mine;
 }
 const card = (b: any) => `<a class="bcard" href="/bundles?id=${esc(b.id)}"><div class="bthumbs">${itemsOf(b).slice(0, 4).map((i: any) => `<span>${thumbFor(i.chain, i.token, i.id) ? `<img src="${esc(thumbFor(i.chain, i.token, i.id))}" alt="" loading="lazy">` : `<em>#${esc(i.id)}</em>`}${logo(i.chain)}</span>`).join('')}</div>
   <div class="cb"><div class="cn">${esc(b.title)}</div><div class="mut small">${itemsOf(b).length} items · ${b.legs.map((l: any) => logo(l.chain)).join('')} ${b.kind === 'cross-chain' ? '<i class="tag exp">Cross-chain · Experimental</i>' : '<i class="tag">Same chain</i>'}</div>

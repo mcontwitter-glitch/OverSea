@@ -322,3 +322,10 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .addrow{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.addrow input{flex:1;min-width:110px}.legrow{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #1a1a1a;flex-wrap:wrap}.legrow .mut{flex:1}.legrow .pin{margin:0;flex-direction:row}.legrow .pin input{border:0!important;width:100px}
 .addcart{margin-top:8px;width:100%}
 @media(max-width:700px){.badges{grid-template-columns:repeat(5,1fr);gap:5px}.cbadge{padding:10px 2px}.cbadge span{font-size:9.5px}.bdet{grid-template-columns:1fr}.socials{grid-template-columns:1fr}.ghero h1{font-size:28px}.navmenu{position:fixed;left:10px;right:10px;top:58px;min-width:0}.cartbtn{width:32px;height:32px}.navmore summary{font-size:12.5px}.tr{grid-template-columns:1.6fr 1fr .6fr}}
+.swi .cl,.bthumbs .cl{width:20px!important;height:20px!important;border-radius:50%;object-fit:contain}.bthumbs.big .cl{width:24px!important;height:24px!important}
+.page label.chk{white-space:normal;line-height:1.4;gap:8px}.page label.chk input{margin-top:2px;flex:none}
+.bkv b{flex-wrap:wrap}.bkv .usd{white-space:normal;text-align:right}
+@media(max-width:700px){.bkv{grid-template-columns:1fr auto}.page .kv{font-size:13px}.page .fcard{padding:12px}.swi{gap:7px;font-size:12px}}
+.navmenu a.navm{display:none!important}.legrow .pin input{background:transparent!important;padding:8px 4px!important}
+@media(max-width:640px){.navl a.navlc{display:none}.navmenu a.navm{display:flex!important}}
+.reftoast{width:min(600px,calc(100% - 24px))}.reftoast>span{flex:1}.ghero.prof>div{min-width:0}.ghero.prof p{word-break:break-all}
