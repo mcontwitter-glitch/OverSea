@@ -2,6 +2,7 @@
 import { createWalletClient, createPublicClient, custom, http, fallback, defineChain, parseAbiItem, encodeFunctionData, concat, formatUnits, type Hex, type Chain as VChain } from 'viem';
 import CFG from '../config/collections.json';
 import APP from '../config/app.json';
+import { embeddedConfigured } from './embedded';
 
 type P6963 = { info: { uuid: string; name: string; icon: string; rdns: string }; provider: any };
 type ChainCfg = { rpcs?: string[]; name: string; chainId: number; rpc: string; native: string; openseaSlug: string | null; explorer: string };
@@ -57,6 +58,12 @@ async function tryRestore(p: P6963) {
   try { const a: string[] = await p.provider.request({ method: 'eth_accounts' }); if (a?.[0]) { wallet.address = a[0]; wallet.provider = p.provider; wallet.name = p.info.name; p.provider.on?.('accountsChanged', (x: string[]) => { wallet.address = x[0] || null; emit(); }); emit(); } } catch {}
 }
 window.addEventListener('eip6963:announceProvider', (e: any) => { found.set(e.detail.info.uuid, e.detail); tryRestore(e.detail); });
+// Embedded (social) wallet: restore silently if that's what the user signed in with last time.
+export function setWallet(address: string, provider: any, name: string, rdns: string) {
+  wallet.address = address; wallet.provider = provider; wallet.name = name; localStorage.setItem(LAST, rdns);
+  provider.on?.('accountsChanged', (a: string[]) => { wallet.address = a[0] || null; emit(); }); emit();
+}
+if (embeddedConfigured && localStorage.getItem(LAST) === 'embedded') import('./embedded').then(m => m.restoreSocial()).then(r => { if (r && !wallet.address) setWallet(r.address, r.provider, r.name, 'embedded'); }).catch(() => {});
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 function providers(): P6963[] {
   const list = [...found.values()];
@@ -83,8 +90,19 @@ export function openConnect() {
       <a class="wopt" href="https://metamask.app.link/dapp/${here}"><img src="/logos/metamask.svg" alt="">MetaMask app</a>
       <a class="wopt" href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(location.href)}"><img src="/logos/coinbase.svg" alt="">Coinbase Wallet app</a>`;
     const m = overlay(`<h3>Connect wallet</h3>
+      <div class="gh">New to crypto? Sign in</div>
+      <div class="socials"><button class="wopt soc" data-social="x"><span class="sico">𝕏</span>Sign in with X</button><button class="wopt soc" data-social="google"><span class="sico g">G</span>Sign in with Google</button></div>
+      ${embeddedConfigured ? '<p class="mut small">Creates a free embedded wallet for you. No seed phrase, works on every MultiSea chain.</p>' : '<p class="setup small"><b>Setup needed (admin):</b> add a thirdweb Client ID as <code>VITE_THIRDWEB_CLIENT_ID</code> to enable social sign-in.</p>'}
+      <div class="gh">Or connect a wallet</div>
       ${list.length ? list.map(p => `<button class="wopt" data-uuid="${esc(p.info.uuid)}">${p.info.icon ? `<img src="${esc(p.info.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(p.info.name)}</button>`).join('') : `<p class="mut">No browser wallet detected${isMobile() ? '. Open this page in your wallet app:' : '. Install MetaMask, Rabby, Coinbase Wallet or OKX.'}</p>`}
       ${isMobile() || !list.length ? deep : ''}`);
+    m.querySelectorAll('[data-social]').forEach(b => b.addEventListener('click', async () => {
+      const s = (b as HTMLElement).dataset.social as 'x' | 'google'; m.querySelector('.err')?.remove();
+      if (!embeddedConfigured) { (m.querySelector('.socials') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">Social sign-in isn't enabled yet. Admin: create a thirdweb project, enable X + Google auth and set VITE_THIRDWEB_CLIENT_ID.</p>`); return; }
+      (b as HTMLElement).innerHTML = '<span class="spin"></span> Opening ' + (s === 'x' ? 'X' : 'Google') + '…';
+      try { const r = await (await import('./embedded')).connectSocial(s); m.remove(); setWallet(r.address, r.provider, r.name, 'embedded'); }
+      catch (e: any) { (m.querySelector('.socials') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">${esc(e?.message || e)}</p>`); (b as HTMLElement).textContent = s === 'x' ? 'Sign in with X' : 'Sign in with Google'; }
+    }));
     m.querySelectorAll('[data-uuid]').forEach(b => b.addEventListener('click', async () => {
       const p = list.find(x => x.info.uuid === (b as HTMLElement).dataset.uuid)!;
       try {
@@ -96,7 +114,7 @@ export function openConnect() {
     }));
   }, 150);
 }
-export function disconnect() { localStorage.removeItem(LAST); wallet.address = null; wallet.provider = null; emit(); }
+export function disconnect() { if (localStorage.getItem(LAST) === 'embedded') import('./embedded').then(m => m.logoutSocial()); localStorage.removeItem(LAST); wallet.address = null; wallet.provider = null; emit(); }
 export const walletLabel = () => (wallet.address ? short(wallet.address) : 'Connect wallet');
 
 // ---- chains ----
@@ -211,7 +229,10 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
     body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
     if (rc.status !== 'success') throw new Error('Transaction reverted. The listing may have been filled by someone else.');
-    onSold(it.id);
+    onSold(it.id); reportFill(it.chain, hash);
     body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;
   } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
 }
+
+// Buyer-reported fill so the Worker can credit referrals, revenue share and quests (verified from the receipt).
+export function reportFill(chain: string, txHash: string) { fetch(`${API}/native/filled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain, txHash }) }).catch(() => {}); }
