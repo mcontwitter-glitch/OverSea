@@ -27,3 +27,11 @@ STATIC_EDITORS = '{"lil-foots":["0xca89ae48a5c61d13e78236daa4ac29ee588ea475"]}'
 # Re-validate MultiSea native listings (fills, cancels, transfers, expiry).
 [triggers]
 crons = ["*/15 * * * *"]
+
+# ---- Growth features (referrals, revenue share, quests, bundles) ----
+# Revenue-share payouts stay DISABLED until the payout wallet is funded. To enable later:
+#   REVSHARE_PAYOUTS = "on"; REVSHARE_MAINNET = "on"; PAYOUT_WALLET = "0x…" (public address, for quotes)
+#   npx wrangler secret put PAYOUT_KEY        # payout wallet private key (hot wallet; fund only what you intend to pay)
+# Chain Voyager free mint (all 5 chain badges):
+#   BADGE_CONTRACT = "0x…"; BADGE_CHAIN_ID = "8453"
+#   npx wrangler secret put BADGE_SIGNER_KEY  # signs MintPass(to, deadline); must equal signer() on the contract

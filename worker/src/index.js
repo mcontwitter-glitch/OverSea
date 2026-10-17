@@ -7,6 +7,7 @@ import CFG from '../../config/collections.json';
 import { verifyMessage, createPublicClient, http } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
+import { makeGrowth } from './growth.js';
 
 const OS = 'https://api.opensea.io/api/v2';
 const SEAPORT = new Set([CFG.seaport.toLowerCase()]);
@@ -207,14 +208,16 @@ async function rpcBalance(chainKey, addr) {
   const j = r ? await r.json().catch(() => ({})) : {}; return j.result ? BigInt(j.result).toString() : null;
 }
 
-let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached }));
+let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks: { onSale: (env, s) => growth().recordSale(env, s), onList: (env, a, k) => growth().questEvent(env, a, k, 'list') } }));
+let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
 // ---------- router ----------
 async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', ...(env.MEDIA ? ['media'] : [])] };
+  { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
 
   // --- SIWE ---
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'nonce') { const n = rand(12); await env.NONCES.put('n:' + n, '1', { expirationTtl: 600 }); return { nonce: n }; }
@@ -469,6 +472,7 @@ async function handle(req, env, url) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new HttpError(422, 'opensea refused', { message: [].concat(j.errors || j.detail || j.message || []).map(String).join('; ').slice(0, 300) });
       await bustListings(nft.token, osToKey[chain]);
+      await growth().questEvent(env, prm.offerer, osToKey[chain], 'list').catch(() => {});
       return { ok: true, orderHash: j.order?.order_hash || null };
     }
     if (M === 'POST' && p[1] === 'cancel' && p.length === 2) {

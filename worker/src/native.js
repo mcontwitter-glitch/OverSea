@@ -19,7 +19,7 @@ const EV = parseAbi(['event OrderCancelled(bytes32 orderHash, address indexed of
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)']);
 
-export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached }) {
+export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks = {} }) {
   const SEAPORT = CFG.seaport;
   const client = k => createPublicClient({ transport: fallback((chains[k].rpcs?.length ? chains[k].rpcs : [chains[k].rpc]).map(u => http(u, { timeout: 8000, retryCount: 1 }))) });
   const message = p => ({ ...p, offer: p.offer.map(o => ({ ...o, identifierOrCriteria: BigInt(o.identifierOrCriteria), startAmount: BigInt(o.startAmount), endAmount: BigInt(o.endAmount) })), consideration: p.consideration.map(c => ({ ...c, identifierOrCriteria: BigInt(c.identifierOrCriteria), startAmount: BigInt(c.startAmount), endAmount: BigInt(c.endAmount) })), startTime: BigInt(p.startTime), endTime: BigInt(p.endTime), salt: BigInt(p.salt), counter: BigInt(p.counter) });
@@ -78,13 +78,23 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   const liveOrFail = (k, p, hash) => live(k, p, hash).catch(e => { console.log('native rpc', k, e?.shortMessage || e?.message); bad(`Couldn't reach the ${chains[k].name} network. Please try again in a moment.`, 503); });
   const key = (k, p, hash) => `ord:${k}:${lc(p.offer[0].token)}:${p.offer[0].identifierOrCriteria}:${hash}`;
   const bust = async slug => { if (slug) await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {}); };
-  async function drop(env, k, rec, why) {
+  async function drop(env, k, rec, why, opt = {}) {
     await env.COLLECTIONS.delete(key(k, rec.parameters, rec.hash)); await bust(rec.slug);
     if (why === 'filled') {
-      const feeWei = rec.parameters.consideration.filter(c => c.recipient === feeWallet(env)).reduce((s, c) => s + BigInt(c.startAmount), 0n);
+      const fw = lc(feeWallet(env)); const cons = rec.parameters.consideration;
+      const feeWei = cons.filter(c => c.recipient === fw).reduce((s, c) => s + BigInt(c.startAmount), 0n);
+      const royaltyWei = cons.slice(1).filter(c => c.recipient !== fw && c.recipient !== lc(rec.parameters.offerer)).reduce((s, c) => s + BigInt(c.startAmount), 0n);
       await env.COLLECTIONS.put(`nfill:${Date.now()}:${rec.hash.slice(2, 10)}`, JSON.stringify({ at: new Date().toISOString(), chain: k, hash: rec.hash, id: rec.parameters.offer[0].identifierOrCriteria, priceWei: rec.priceWei, feeWei: feeWei.toString(), seller: rec.parameters.offerer }));
+      // Growth ledger (revenue share now; referral + quests once the buyer is known from a reported tx).
+      if (!opt.skipHook && hooks.onSale) await hooks.onSale(env, { chain: k, orderHash: rec.hash, buyer: opt.buyer || null, seller: rec.parameters.offerer, priceWei: rec.priceWei, feeWei: feeWei.toString(), royaltyWei: royaltyWei.toString(), items: [{ token: rec.parameters.offer[0].token, id: rec.parameters.offer[0].identifierOrCriteria, slug: rec.slug }], source: 'multisea' }).catch(e => console.log('onSale', String(e)));
     }
   }
+  // Buyer-reported fill (growth.reportTx parses the receipt and records the sale itself).
+  async function dropByHash(env, k, hash) {
+    const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` }); const name = l.keys.find(x => x.name.endsWith(':' + lc(hash)))?.name; if (!name) return false;
+    const rec = await env.COLLECTIONS.get(name, 'json'); if (!rec) return false; await drop(env, k, rec, 'filled', { skipHook: true }); return true;
+  }
+  const typedData = (k, p) => ({ domain: domain(k), types: TYPES, primaryType: 'OrderComponents', message: message(p) });
 
   async function list(env, b) {
     const k = Object.keys(chains).find(x => x === b.chain); if (!k) bad('unknown chain');
@@ -102,6 +112,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     const rec = { chain: k, hash, parameters: p, signature: b.signature, priceWei: total.toString(), slug: slugs[0], createdAt: new Date().toISOString() };
     await env.COLLECTIONS.put(key(k, p, hash), JSON.stringify(rec), { metadata: { p: total.toString(), s: p.offerer, e: Number(p.endTime) }, expiration: Math.max(Number(p.endTime), Math.floor(Date.now() / 1000) + 120) });
     for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/n:' + s)).catch(() => {});
+    if (hooks.onList) await hooks.onList(env, p.offerer, k).catch(() => {});
     return { ok: true, orderHash: hash };
   }
 
@@ -186,5 +197,5 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   async function fills(env) {
     const l = await env.COLLECTIONS.list({ prefix: 'nfill:' }); return (await Promise.all(l.keys.slice(-100).map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).reverse();
   }
-  return { cancelled, counterBumped, list, listings, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean };
+  return { cancelled, counterBumped, list, listings, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean, dropByHash, typedData };
 }
