@@ -1,1 +1,0 @@
-import{U as e}from"./localBatchGatewayRequest-tEoMsDU-.js";function t(t,n=`wei`){return e(t,n)}export{t};
