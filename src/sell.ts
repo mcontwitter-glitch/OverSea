@@ -179,10 +179,15 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const value: bigint = prm.consideration.reduce((s: bigint, x: any) => s + BigInt(x.startAmount), 0n);
     const fees: bigint = prm.consideration.slice(1).reduce((s: bigint, x: any) => s + BigInt(x.startAmount), 0n);
     const pub = readClient(it.chain);
-    const bal = await pub.getBalance({ address: me }); const enough = bal >= value;
+    const bal = await pub.getBalance({ address: me });
+    const { fulfillCalldata } = await import('./seaorder'); const { preflight, assertSendable } = await import('./txgas');
+    const data = fulfillCalldata(prm, o.signature);
+    const pre = await preflight(it.chain, { to: o.protocolAddress, data, value }, bal); // price + real gas, simulated before the wallet opens
+    if (pre.reverted) assertSendable(it.chain, pre, value);
+    const enough = pre.enough;
     body.innerHTML = `<div class="kv bkv"><span>Price</span><b>${fmt(value)} ${esc(c.native)}</b><span>Includes fees</span><b>${fmt(fees)} ${esc(c.native)}</b><span>Seller receives</span><b>${fmt(value - fees)} ${esc(c.native)}</b>
-      <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b><span>Your balance</span><b class="${enough ? '' : 'errc'}">${fmt(bal)} ${esc(c.native)}</b></div>
-      ${enough ? '' : `<p class="err">Insufficient funds for this purchase on ${esc(c.name)}.</p><button class="bbtn ghost xpay">Pay with ETH from another chain</button>`}
+      <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b><span>Network gas (est.)</span><b>~${fmt(pre.costWei)} ${esc(c.native)}</b><span>Your balance</span><b class="${enough ? '' : 'errc'}">${fmt(bal)} ${esc(c.native)}</b></div>
+      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fmt(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fmt(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>`}
       <p class="mut small">MultiSea listing, filled directly through Seaport 1.6 (fulfillOrder). You'll confirm in ${esc(wallet.name || 'your wallet')}.</p>
       <button class="bbtn go" ${enough ? '' : 'disabled'}>Confirm purchase</button>`;
     await Promise.race([new Promise<void>((res, rej) => {
@@ -191,8 +196,8 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     }), closed(m)]);
     body.innerHTML = '<div class="spin"></div> Confirm in your wallet…'; await ensureChain(it.chain);
     const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) });
-    const { fulfillCalldata } = await import('./seaorder');
-    const h = await wc.sendTransaction({ account: me, to: o.protocolAddress, value, data: fulfillCalldata(prm, o.signature) });
+    const gas = assertSendable(it.chain, await preflight(it.chain, { to: o.protocolAddress, data, value }), value);
+    const h = await wc.sendTransaction({ account: me, to: o.protocolAddress, value, data, ...(gas ? { gas } : {}) });
     const link = `${c.explorer}/tx/${h}`; body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Transaction reverted. The listing may have been filled or cancelled.');
     onSold(it.id); fetch(`${API}/native/filled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: it.chain, txHash: h }) }).catch(() => {}); body.innerHTML = `<p class="ok">✓ Purchased! ${esc(it.name)} is yours.</p><a class="bbtn" href="${link}" target="_blank" rel="noopener">View transaction ↗</a>`;

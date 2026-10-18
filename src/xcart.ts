@@ -14,6 +14,7 @@ import { chains, esc, logo, usdTxt, clearCart, reportFill, closed, sleep, type C
 import { prepare, checkout as classicCheckout, type Prep } from './cart';
 import { fulfillAvailableCalldata, fulfillCalldata } from './seaorder';
 import { RELAY, ZERO, FLAT_FEE_USD, relayQuote, advancedFulfillCalldata, oneStepOk } from './xpaycore';
+import { gasUnits, gasFor } from './txgas';
 
 type Tok = { symbol: string; address: string; decimals: number; permit?: boolean };
 // Tokens Relay can route from (addresses from Relay /chains). Native coins are always included.
@@ -57,7 +58,7 @@ export function rankSources(srcs: Src[], legs: { chain: string; usd: number; one
   }).sort((a, b) => (a.ok === b.ok ? a.est - b.est : a.ok ? -1 : 1));
 }
 
-type Call = { to: Hex; data: Hex; value: bigint };
+type Call = { to: Hex; data: Hex; value: bigint; gas?: bigint };
 type Leg = {
   chain: string; prep: Prep; items: CartItem[];
   one: { item: CartItem; order: any }[]; oneVal: bigint;            // Relay call execution
@@ -122,7 +123,7 @@ export async function buildPlan(items: CartItem[], src: Src, status: (s: string)
     const oneCalls = one.map(x => advancedFulfillCalldata({ parameters: x.order.parameters, signature: x.order.signature }, me));
     const oneVal = oneCalls.reduce((s, c) => s + c.value, 0n); const restVal = restCalls.reduce((s, c) => s + c.call.value, 0n);
     const pub = readClient(k); const gp = await pub.getGasPrice().catch(() => 0n);
-    const gasW = gp * 260_000n * BigInt(restCalls.length);
+    const gasW = gp * gasUnits(k, restCalls.length); // per-chain gas units (Abstract's zkVM needs ~10x a normal EVM chain)
     const destGasUsd = +formatUnits(gasW, 18) * rateOf(r, k);
     const leg: Leg = { chain: k, prep: p, items: [...p.native.map(x => x.item), ...p.os.map(x => x.item)], one, oneVal, restCalls, restVal, direct, bridgeNeed: 0n, destGasUsd, itemsUsd: 0 };
     leg.itemsUsd = leg.items.reduce((s, i) => s + i.price * rateOf(r, k), 0);
@@ -217,7 +218,7 @@ export async function openUnifiedCheckout(items: CartItem[]) {
   } catch (e: any) { if (e?.kind !== 'closed') fail(friendly(e)); }
 }
 
-async function sendCalls(k: string, calls: Call[], batch: boolean, prog: (h: string) => void): Promise<boolean[]> {
+async function sendCalls(k: string, calls: Call[], batch: boolean, prog: (h: string) => void, afterBridge = false): Promise<boolean[]> {
   const me = wallet.address as Hex; const c = chains[k]; await ensureChain(k); const pub = readClient(k);
   if (batch && calls.length > 1) {
     try {
@@ -229,8 +230,10 @@ async function sendCalls(k: string, calls: Call[], batch: boolean, prog: (h: str
   }
   const wc = createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) }); const ok: boolean[] = [];
   for (const [i, x] of calls.entries()) {
+    // Explicit gas limit: Relay's when it gave one, otherwise our own simulation (also catches a revert or a real shortfall here, with exact numbers).
+    const gas = x.gas ?? (await gasFor(k, x, afterBridge));
     prog(`Confirm ${i + 1}/${calls.length} on ${esc(c.name)} in your wallet…`);
-    const h = await wc.sendTransaction({ account: me, to: x.to, data: x.data, value: x.value });
+    const h = await wc.sendTransaction({ account: me, to: x.to, data: x.data, value: x.value, ...(gas ? { gas } : {}) });
     prog(`Pending on ${esc(c.name)}… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`);
     const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 240_000 }); ok.push(rc.status === 'success'); if (rc.status === 'success') reportFill(k, h);
   }
@@ -265,7 +268,7 @@ async function execute(old: Plan, items: CartItem[], body: HTMLElement, m: HTMLE
   const qs = plan.legs.flatMap(l => [l.callQ, l.bridgeQ]).filter(Boolean);
   // 1) origin chain: every Relay deposit (+approvals) and direct purchases, batched when the wallet supports it
   const originCalls: Call[] = [];
-  for (const q of qs) for (const s of q.steps || []) if (s.kind === 'transaction') for (const it of s.items) { if (Number(it.data.chainId) !== chains[src.chain].chainId) throw new Error('Unexpected chain in Relay step'); originCalls.push({ to: it.data.to, data: it.data.data, value: BigInt(it.data.value || 0) }); }
+  for (const q of qs) for (const s of q.steps || []) if (s.kind === 'transaction') for (const it of s.items) { if (Number(it.data.chainId) !== chains[src.chain].chainId) throw new Error('Unexpected chain in Relay step'); originCalls.push({ to: it.data.to, data: it.data.data, value: BigInt(it.data.value || 0), ...(it.data.gas ? { gas: BigInt(it.data.gas) } : {}) }); }
   const directLegs = plan.legs.filter(l => l.direct);
   directLegs.forEach(l => l.restCalls.forEach(c => originCalls.push(c.call)));
   plan.legs.forEach(l => prog(l.chain, 'Waiting for your confirmation…'));
@@ -288,7 +291,7 @@ async function execute(old: Plan, items: CartItem[], body: HTMLElement, m: HTMLE
   }));
   // 3) 2-step chains: buyer confirms on each chain (one batch per chain when supported)
   for (const l of plan.legs.filter(l => !l.direct && l.restCalls.length)) {
-    try { const ok = await sendCalls(l.chain, l.restCalls.map(x => x.call), await canBatch(l.chain), h => prog(l.chain, h)); l.restCalls.forEach((x, i) => (ok[i] ? done : failed).push(...x.keys)); prog(l.chain, `✓ ${ok.filter(Boolean).length}/${ok.length} purchase(s) confirmed`); }
+    try { const ok = await sendCalls(l.chain, l.restCalls.map(x => x.call), await canBatch(l.chain), h => prog(l.chain, h), !!l.bridgeQ); l.restCalls.forEach((x, i) => (ok[i] ? done : failed).push(...x.keys)); prog(l.chain, `✓ ${ok.filter(Boolean).length}/${ok.length} purchase(s) confirmed`); }
     catch (e: any) { failed.push(...l.restCalls.flatMap(x => x.keys)); prog(l.chain, `✗ ${esc(friendly(e, l.chain))}${l.bridgeQ ? ' · bridged funds stay in your wallet' : ''}`); }
   }
   clearCart([...done, ...plan.gone.map(g => g.key)]);

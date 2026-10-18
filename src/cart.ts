@@ -7,6 +7,7 @@ import { API, wallet, openConnect, overlay, ensureChain, readClient, vchain, fri
 import { usdRates } from './shell';
 import { chains, esc, logo, fmtWei, usdTxt, cart, addToCart, removeFromCart, clearCart, reportFill, topUpQuote, runRelay, balances, closed, type CartItem } from './gx';
 import { fulfillAvailableCalldata, fulfillCalldata } from './seaorder';
+import { gasUnits, gasPrice, gasFor } from './txgas';
 
 const toArr = (v: any): any => (Array.isArray(v) ? v.map(toArr) : v && typeof v === 'object' ? Object.values(v).map(toArr) : v);
 const rateOf = (r: any, k: string) => (r as any)?.[chains[k]?.native] || 0;
@@ -83,10 +84,11 @@ export async function checkout(items: CartItem[]) {
   const fail = (msg: string) => { body.innerHTML = `<p class="err">${esc(msg)}</p><button class="bbtn ghost mx2">Close</button>`; body.querySelector('.mx2')!.addEventListener('click', () => m.remove()); };
   try {
     const [preps, bal, rates] = await Promise.all([prepare(items, status), balances(), usdRates()]);
+    const gps: Record<string, bigint> = Object.fromEntries(await Promise.all([...new Set(preps.map(p => p.chain))].map(async k => [k, await gasPrice(k)] as const)));
     const live = preps.filter(p => p.native.length || p.os.length);
     if (!live.length) throw Object.assign(new Error('None of these listings are still available.'), { kind: 'stale' });
     const gone = preps.flatMap(p => p.gone);
-    const short = (p: Prep) => { const b = bal[p.chain] ?? 0n; const need = p.value + 10n ** 15n / 2n; return b >= need ? 0n : need - b; };
+    const short = (p: Prep) => { const b = bal[p.chain] ?? 0n; const need = p.value + 2n * (gps[p.chain] || 0n) * gasUnits(p.chain, (p.native.length ? 1 : 0) + p.os.length); return b >= need ? 0n : need - b; };
     const totalUsd = live.reduce((s, p) => s + +fmtWei(p.value).replace(/,/g, '') * rateOf(rates, p.chain), 0);
     const feeUsd = live.reduce((s, p) => s + +fmtWei(p.msFeeWei).replace(/,/g, '') * rateOf(rates, p.chain), 0);
     const needTop = live.filter(p => short(p) > 0n);
@@ -115,15 +117,16 @@ export async function checkout(items: CartItem[]) {
         if (p.native.length) {
           const orders = p.native.map(x => ({ parameters: x.order.parameters, signature: x.order.signature }));
           const call = orders.length === 1 ? { data: fulfillCalldata(orders[0].parameters, orders[0].signature), value: p.native[0].order.parameters.consideration.reduce((s: bigint, x: any) => s + BigInt(x.startAmount), 0n) } : fulfillAvailableCalldata(orders);
+          const gas = await gasFor(p.chain, { to: p.native[0].order.protocolAddress, data: call.data, value: call.value }, need > 0n);
           status(`Confirm ${orders.length} MultiSea item(s) on ${esc(c.name)} in your wallet…`);
-          const h = await wc.sendTransaction({ account: me, to: p.native[0].order.protocolAddress, value: call.value, data: call.data });
+          const h = await wc.sendTransaction({ account: me, to: p.native[0].order.protocolAddress, value: call.value, data: call.data, ...(gas ? { gas } : {}) });
           status(`Pending on ${esc(c.name)}… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`);
           const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 });
           if (rc.status === 'success') { reportFill(p.chain, h); done.push(...p.native.map(x => x.item.key)); log.push(`<a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">${esc(c.name)}: ${orders.length} MultiSea ↗</a>`); } else failed.push(...p.native.map(x => x.item.key));
         }
         for (const o of p.os) {
           status(`Confirm ${esc(o.item.name)} (OpenSea) in your wallet…`);
-          try { const h = await wc.sendTransaction({ account: me, to: o.tx.to, value: o.value, data: o.data }); const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status === 'success') { reportFill(p.chain, h); done.push(o.item.key); log.push(`<a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">${esc(o.item.name)} ↗</a>`); } else failed.push(o.item.key); }
+          try { const gas = await gasFor(p.chain, { to: o.tx.to, data: o.data, value: o.value }, need > 0n); const h = await wc.sendTransaction({ account: me, to: o.tx.to, value: o.value, data: o.data, ...(gas ? { gas } : {}) }); const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status === 'success') { reportFill(p.chain, h); done.push(o.item.key); log.push(`<a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">${esc(o.item.name)} ↗</a>`); } else failed.push(o.item.key); }
           catch (e: any) { if (e?.code === 4001 || /rejected/i.test(e?.message || '')) throw e; failed.push(o.item.key); }
         }
       } catch (e: any) { failed.push(...p.native.map(x => x.item.key), ...p.os.map(x => x.item.key)); log.push(`<span class="errc">${esc(c.name)}: ${esc(friendly(e, p.chain))}</span>`); }

@@ -205,14 +205,20 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
     const price = BigInt(L.price?.value || value);
     const fees = (L.fees || []).reduce((s: bigint, f: any) => s + BigInt(f.amount), 0n);
     const f = (x: bigint) => (+formatUnits(x, dec)).toLocaleString(undefined, { maximumFractionDigits: 6 });
-    const enough = bal >= value;
+    const fn = (x: bigint) => (+formatUnits(x, 18)).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    // Simulate the exact purchase on this chain (price + real gas) before the wallet ever sees it.
+    const { preflight, assertSendable } = await import('./txgas');
+    const pre = await preflight(it.chain, { to: tx.to, data, value }, bal);
+    if (pre.reverted) { assertSendable(it.chain, pre, value); }
+    const enough = pre.enough;
     // 4) confirm screen
     body.innerHTML = `<div class="kv bkv"><span>Price</span><b>${f(price)} ${esc(cur)}</b>
       <span>Includes fees</span><b>${f(fees)} ${esc(cur)}</b><span>Seller receives</span><b>${f(price - fees)} ${esc(cur)}</b>
       <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b>
-      <span>You pay now</span><b>${f(value)} ${esc(c.native)} + gas</b>
-      <span>Your balance</span><b class="${enough ? '' : 'errc'}">${f(bal)} ${esc(c.native)}</b></div>
-      ${enough ? '' : '<p class="err">Insufficient funds for this purchase on ' + esc(c.name) + '.</p><button class="bbtn ghost xpay">Pay with ETH from another chain</button>'}
+      <span>You pay now</span><b>${fn(value)} ${esc(c.native)} + gas</b>
+      <span>Network gas (est.)</span><b>~${fn(pre.costWei)} ${esc(c.native)}</b>
+      <span>Your balance</span><b class="${enough ? '' : 'errc'}">${fn(bal)} ${esc(c.native)}</b></div>
+      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fn(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fn(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>`}
       <p class="mut small">Fulfilled through OpenSea's Seaport 1.6 contract. You'll confirm in ${esc(wallet.name || 'your wallet')}.</p>
       <button class="bbtn go" ${enough ? '' : 'disabled'}>Confirm purchase</button>`;
     await new Promise<void>((res, rej) => {
@@ -224,7 +230,8 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
     body.innerHTML = `<div class="spin"></div> Confirm in your wallet…`;
     await ensureChain(it.chain);
     const wc = createWalletClient({ chain: vchain(it.chain), transport: custom(wallet.provider) });
-    const hash = await wc.sendTransaction({ account: wallet.address as Hex, to: tx.to as Hex, value, data });
+    const gas = assertSendable(it.chain, await preflight(it.chain, { to: tx.to, data, value }), value);
+    const hash = await wc.sendTransaction({ account: wallet.address as Hex, to: tx.to as Hex, value, data, ...(gas ? { gas } : {}) });
     const link = `${c.explorer}/tx/${hash}`;
     body.innerHTML = `<div class="spin"></div> Pending… <a href="${link}" target="_blank" rel="noopener">View on explorer ↗</a>`;
     const rc = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });

@@ -118,7 +118,8 @@ async function buy() {
       status(`Switching to ${esc(c.name)}…`); await ensureChain(l.chain);
       const wc = createWalletClient({ chain: vchain(l.chain), transport: custom(wallet.provider) });
       status(`Confirm the ${esc(c.name)} leg in your wallet…`);
-      const h = await wc.sendTransaction({ account: me, to: l.protocolAddress, value, data: fulfillCalldata(l.parameters, l.signature) });
+      const data = fulfillCalldata(l.parameters, l.signature); const gas = await (await import('./txgas')).gasFor(l.chain, { to: l.protocolAddress, data, value }, have < need);
+      const h = await wc.sendTransaction({ account: me, to: l.protocolAddress, value, data, ...(gas ? { gas } : {}) });
       status(`Pending on ${esc(c.name)}… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`);
       const rc = await readClient(l.chain).waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error(`${c.name} leg reverted`);
       await fetch(`${API}/native/filled`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: l.chain, txHash: h }) }).catch(() => reportFill(l.chain, h));

@@ -4,6 +4,7 @@ import CFG from '../config/collections.json';
 import { wallet, readClient, overlay, vchain, ensureChain, friendly, esc } from './wallet';
 import { usdRates } from './shell';
 import { RELAY, advancedFulfillCalldata, oneStepOk, quoteWithFlatFee, summarize } from './xpaycore';
+import { gasUnits } from './txgas';
 
 const chains = CFG.chains as Record<string, any>;
 const SEAPORT = CFG.seaport;
@@ -28,7 +29,7 @@ export async function openXPay(ctx: XPayCtx) {
     if (oneStep) { call = advancedFulfillCalldata(order, me); need = call.value; }
     else {
       const [bal, gp] = await Promise.all([destPub.getBalance({ address: me }), destPub.getGasPrice().catch(() => 0n)]);
-      const gasBuf = gp * 400_000n * 2n; const want = BigInt(ctx.tx.value || 0) + gasBuf;
+      const gasBuf = gp * gasUnits(it.chain) * 2n; /* Abstract zkVM meters ~2.2M gas for a fulfill */ const want = BigInt(ctx.tx.value || 0) + gasBuf;
       need = want > bal ? want - bal : 0n; if (need < 10n ** 13n) need = 10n ** 13n;
     }
     // Balances on every other chain (native), valued in USD.
