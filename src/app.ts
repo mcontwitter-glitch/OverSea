@@ -16,6 +16,7 @@ else if (path === '/referrals') import('./referrals');
 else if (path === '/revenue-share') import('./revshare');
 else if (path === '/cart') import('./cartpage');
 else if (path === '/bundles') import('./bundles');
+else if (/^\/w\/\d{1,5}$/.test(path)) import('./footwallet');
 else if (path === '/quests' || /^\/u\/0x[0-9a-fA-F]{40}$/.test(path)) import('./quests');
 else if (m && CFG.collections.some(c => c.slug === m[1])) import('./collection');
 else if (m) import('./dyn');

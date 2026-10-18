@@ -183,9 +183,22 @@ function cartItems() {
 function doSell(id: number) { const ch = myChain(id); if (!ch) return; import('./sell').then(s => s.openSell(sellItem(id, ch), () => {})); }
 function doCancel(id: number) { const l = listMap.get(id); if (!l) return; import('./sell').then(s => s.cancelListing(sellItem(id, l.chain), l.orderHash, () => { listMap.delete(id); render(); }, l.source === 'multisea' ? 'multisea' : 'opensea')); }
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
+// LIL FOOTS foot wallets: "Wallet: $X" badge for feet whose wallet holds tokens (live, all 5 chains; see /w/<id>).
+const FW_ON = COL.slug === 'lil-foots'; const fwv = new Map<number, number | null>(); const fwPending = new Set<number>();
+let fwkit: typeof import('./footkit') | null = null;
+const fwBadgeFor = (id: number) => (FW_ON && fwkit && fwv.get(id) ? `<span class="fwslot">${fwkit.walletBadge(id, fwv.get(id))}</span>` : '');
+async function fwFill() {
+  if (!FW_ON) return; fwkit ??= await import('./footkit');
+  const ids = [...document.querySelectorAll<HTMLElement>('.grid .card[data-id]')].map(e => +e.dataset.id!).filter(i => !fwv.has(i) && !fwPending.has(i));
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200); part.forEach(x => fwPending.add(x));
+    const r = await fwkit.walletUsd(part).catch(() => new Map<number, number | null>()); part.forEach(x => { fwPending.delete(x); fwv.set(x, r.get(x) ?? null); });
+    part.forEach(x => { const v = fwv.get(x); if (!v) return; const ci = document.querySelector(`.grid .card[data-id="${x}"] .ci`); if (ci && !ci.querySelector('.fwslot')) ci.insertAdjacentHTML('beforeend', fwBadgeFor(x)); });
+  }
+}
 function card(it: Item, idx = 99) {
   const loc = owners[it.id]; const l = listMap.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span></div>
+  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}</div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
@@ -228,12 +241,14 @@ function modal(id: number) {
   m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg" style="background:${it.color}"><img src="${thumbUrl(id)}" width="768" height="768" alt="" class="lo"><img src="${thumbUrl(id, 'm')}" width="768" height="768" alt="${esc(it.name)}" class="hi" onload="this.classList.add('in')" onerror="this.onerror=null;this.src='${gw[0]}${it.image}'"></div><div class="minfo">
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
     <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>
+    ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
     ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
   document.body.appendChild(m);
+  if (FW_ON) import('./footkit').then(async k => { fwkit = k; const r = await k.walletUsd([id]).catch(() => null); const v = r ? r.get(id) ?? null : null; fwv.set(id, v); const el = m.querySelector(`[data-fwm="${id}"]`); if (el) el.innerHTML = k.walletBadge(id, v, true).replace('Wallet: -', 'Wallet: unavailable'); });
 }
 
 function render() {
@@ -241,7 +256,7 @@ function render() {
   app.innerHTML = `${navHtml()}
   ${header()}<div class="content">${st.tab === 'items' ? itemsView() : st.tab === 'activity' ? activityView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
   window.scrollTo(0, y);
-  applyBridgeFlag();
+  applyBridgeFlag(); if (st.tab === 'items') fwFill();
   if (st.tab === 'bridge') bridgeEnabled().then(on => { if (!on) { st.tab = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(document.getElementById('bridgebox')!, { slug: COL.slug })); });
 }
 
@@ -259,6 +274,7 @@ app.addEventListener('click', e => {
   if (act?.dataset.act === 'sweep') { import('./cart').then(c => c.openSweep(cartItems(), COL.name)); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }
+  if (t.closest('.fwbadge')) return;
   const c = t.closest('.card,.ai') as HTMLElement; if (c) modal(+c.dataset.id!);
 });
 app.addEventListener('change', e => {

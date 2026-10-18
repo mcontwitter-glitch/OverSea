@@ -4,7 +4,7 @@
 // - Media uploads to R2 (images only, <=2MB; re-encoded to WebP client-side, validated here)
 // Secrets: OPENSEA_API_KEY (wrangler secret put). Never in code.
 import CFG from '../../config/collections.json';
-import { verifyMessage, createPublicClient, http } from 'viem';
+import { verifyMessage, createPublicClient, http, getContractAddress, concat, encodeAbiParameters } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeGrowth } from './growth.js';
@@ -33,6 +33,10 @@ function corsHeaders(req, env) {
 }
 class HttpError extends Error { constructor(status, msg, extra) { super(msg); this.status = status; this.extra = extra; } }
 const bad = (m, s = 400) => { throw new HttpError(s, m); };
+// LIL FOOTS foot wallets (ERC-6551 v0.3.1 registry; account bound to the Base FOOT contract and Base chain id; salt 0).
+const FOOT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb', 'robinhood'];
+const FOOT_REG = '0x000000006551c19487814612e58FE06813775758', FOOT_IMPL = '0x02e9fE944e1604160dac0fF5f35b8cE581D1e9b3', FOOT_BASE = '0x1Ec054906b4A45DeBa936Aa88492D725cb06508e';
+const footTba = id => getContractAddress({ opcode: 'CREATE2', from: FOOT_REG, salt: '0x' + '0'.repeat(64), bytecode: concat(['0x3d60ad80600a3d3981f3363d3d373d3d3d363d73', FOOT_IMPL, '0x5af43d82803e903d91602b57fd5bf3', encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], ['0x' + '0'.repeat(64), 8453n, FOOT_BASE, BigInt(id)])]) });
 const osFetch = (env, path, init = {}) => fetch(OS + path, { ...init, headers: { 'x-api-key': env.OPENSEA_API_KEY, accept: 'application/json', 'content-type': 'application/json', ...(init.headers || {}) } });
 async function cached(key, ttl, fn) {
   const cache = caches.default; const req = new Request('https://cache.multisea/' + key);
@@ -406,6 +410,23 @@ async function handle(req, env, url) {
     if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...patch }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return { ok: true, collection: v, via: perm.why }; }
     const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
     const v = { ...cur, ...patch }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return { ok: true, collection: { ...v, submitter: undefined }, via: perm.why };
+  }
+
+  // --- LIL FOOTS foot wallets: NFTs held by a foot's token-bound account (ERC-6551), all OpenSea chains in scope ---
+  // Only foot TBAs (computed here from the id), so this is not a generic address lookup on our OpenSea key.
+  if (M === 'GET' && p[0] === 'foot' && p[2] === 'nfts' && p.length === 3) {
+    if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
+    const id = +p[1]; if (!ID.test(p[1]) || id < 1 || id > 4404) bad('invalid id');
+    const tba = footTba(id);
+    return await cached(`fw:${id}`, 120, async () => {
+      const out = [];
+      await Promise.all(FOOT_CHAINS.map(async k => { const os = chains[k]?.openseaSlug; if (!os) return;
+        const r = await osFetch(env, `/chain/${os}/account/${tba}/nfts?limit=50`); const j = await r.json().catch(() => ({}));
+        if (!r.ok) { out.push({ chain: k, error: 'opensea ' + r.status }); return; }
+        for (const n of j.nfts || []) out.push({ chain: k, contract: lc(n.contract), id: String(n.identifier), name: n.name || null, collection: n.collection || null, image: n.display_image_url || n.image_url || null, standard: n.token_standard || null });
+      }));
+      return { id, account: tba, nfts: out, unsupported: FOOT_CHAINS.filter(k => !chains[k]?.openseaSlug) };
+    });
   }
 
   // --- per-collection live data (OpenSea, cached) ---
