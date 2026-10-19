@@ -452,3 +452,7 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .fwid h1{font-size:24px;white-space:nowrap}.fwsell>div:first-child{text-align:left;min-width:0}
 .fwsend .fld input{border:0!important;padding:0!important;box-shadow:none!important;background:none!important;border-radius:0!important;width:auto}
 .fwsell .big,.fwsell p{text-align:left!important}
+
+/* Admin nav link (admin / fee wallet only). [hidden] must win over .navmenu a{display:flex} rules. */
+.navl [data-admin-nav][hidden],.navmenu a[data-admin-nav][hidden]{display:none!important}
+@media(max-width:640px){.navl a.navadm{display:none}}

@@ -1,8 +1,9 @@
 // Pure helpers for cross-chain checkout via Relay (no DOM / wallet). Used by xpay.ts and the fork/quote tests.
 import { encodeFunctionData, parseAbi, type Hex } from 'viem';
 import { API } from './wallet';
+import APP from '../config/app.json';
 export const RELAY = () => `${API}/relay`;
-export const FEE_WALLET = '0x25411039F77529A543344603bD8acdd65fABA4d0';
+export const FEE_WALLET = APP.feeWallet; // mirrors worker FEE_WALLET (wrangler.toml)
 export const FLAT_FEE_USD = 0.3;
 export const ZERO = '0x0000000000000000000000000000000000000000';
 const SEAPORT_ABI = parseAbi(['function fulfillAdvancedOrder(((address offerer,address zone,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)[] offer,(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 totalOriginalConsiderationItems) parameters,uint120 numerator,uint120 denominator,bytes signature,bytes extraData),(uint256 orderIndex,uint8 side,uint256 index,uint256 identifier,bytes32[] criteriaProof)[],bytes32,address) payable returns (bool)']);

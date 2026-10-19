@@ -8,7 +8,7 @@ const chains = CFG.chains as Record<string, { name: string; explorer: string }>;
 let pending: any[] | null = null; let err = '';
 function render() {
   const s = getSession();
-  app.innerHTML = `${navHtml()}<section class="page"><h2>${getSession()?.isFee && !getSession()?.isAdmin ? 'Admin' : 'Admin: review queue'}</h2>
+  app.innerHTML = `${navHtml('admin')}<section class="page"><h2>${getSession()?.isFee && !getSession()?.isAdmin ? 'Admin' : 'Admin: review queue'}</h2>
   ${!apiReady ? soon('Admin review') : !wallet.address ? '<p>Connect the admin wallet.</p><button class="bbtn sm" data-act="connect">Connect wallet</button>' : !s ? '<p>Sign in to prove you control the admin wallet.</p><button class="bbtn sm" data-act="signin">Sign in</button>' : !s.isAdmin && !s.isFee ? '<p class="err">This wallet is not an admin.</p>' : ''}
   ${err ? `<p class="err">${esc(err)}</p>` : ''}
   ${pending ? (pending.length ? pending.map(p => `<div class="qcard"><div class="qh">${p.logo ? `<img src="${esc(media(p.logo))}" alt="">` : ''}<div><b>${esc(p.name)}</b> <span class="mut">/c/${esc(p.slug)}</span><div class="mut small">by ${esc(p.submitter)} · ${esc(p.submittedAt)}</div></div></div>

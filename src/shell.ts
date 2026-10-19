@@ -1,20 +1,28 @@
 import { applyBridgeFlag } from './bridgeflag';
 import AV from './assetv.json';
+import APP from '../config/app.json';
 // Shared MultiSea chrome: top bar, wallet button, helpers.
 import { wallet, openConnect, disconnect, walletLabel, API, apiReady, onWallet } from './wallet';
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const media = (u?: string | null) => (!u ? '' : u.startsWith('/media/') ? API + u : u);
+// Admin nav: shown only to the admin wallets / fee wallet (mirrors worker ADMIN_ADDRESSES + FEE_WALLET). UI hint only:
+// /admin itself still requires a SIWE session checked by the Worker.
+const ADMIN_NAV = new Set([...APP.adminAddresses, APP.feeWallet].map(a => a.toLowerCase()));
+export const isAdminWallet = (a?: string | null) => !!a && ADMIN_NAV.has(a.toLowerCase());
+const syncAdminNav = () => { const on = isAdminWallet(wallet.address); document.querySelectorAll<HTMLElement>('[data-admin-nav]').forEach(e => { e.hidden = !on; }); };
+onWallet(syncAdminNav); // re-render-free: toggles every nav copy on connect / disconnect / account switch
 const cartCount = () => { try { return JSON.parse(localStorage.getItem('multisea-cart') || '[]').length; } catch { return 0; } };
 export function navHtml(active = '') {
   return `<nav class="top"><a class="brand" href="/"><img src="${AV['brand/icon-64.webp']}" srcset="${AV['brand/icon-64.webp']} 1x, ${AV['brand/icon-128.webp']} 2x" width="34" height="34" alt="MultiSea"><span>Multi<b>Sea</b></span></a>
-  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/bridge" data-bridge-flag hidden class="${active === 'bridge' ? 'on' : ''}">Bridge</a><a href="/list-collection" class="navlc ${active === 'list' ? 'on' : ''}">List your collection</a><a href="/submit" class="navsub ${active === 'submit' ? 'on' : ''}">Submit</a>
-  <details class="navmore ${['quests', 'bundles', 'referrals', 'revshare', 'cart'].includes(active) ? 'on' : ''}"><summary>More</summary><div class="navmenu">
+  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/bridge" data-bridge-flag hidden class="${active === 'bridge' ? 'on' : ''}">Bridge</a><a href="/list-collection" class="navlc ${active === 'list' ? 'on' : ''}">List your collection</a><a href="/submit" class="navsub ${active === 'submit' ? 'on' : ''}">Submit</a><a href="/admin" class="navadm ${active === 'admin' ? 'on' : ''}" data-admin-nav ${isAdminWallet(wallet.address) ? '' : 'hidden'}>Admin</a>
+  <details class="navmore ${['quests', 'bundles', 'referrals', 'revshare', 'cart', 'admin'].includes(active) ? 'on' : ''}"><summary>More</summary><div class="navmenu">
    <a href="/list-collection" class="navm"><b>List your collection</b><span>For creators</span></a>
    <a href="/quests" class="${active === 'quests' ? 'on' : ''}"><b>Quests</b><span>Chain badges + rare free mint</span></a>
    <a href="/bundles" class="${active === 'bundles' ? 'on' : ''}"><b>Bundles</b><span>Sell many NFTs as one</span></a>
    <a href="/cart" class="${active === 'cart' ? 'on' : ''}"><b>Cart</b><span>Multi-chain checkout</span></a>
    <a href="/referrals" class="${active === 'referrals' ? 'on' : ''}"><b>Referrals</b><span>Earn from friends' buys</span></a>
    <a href="/revenue-share" class="${active === 'revshare' ? 'on' : ''}"><b>Revenue share</b><span>Holder rewards</span></a>
+   <a href="/admin" class="${active === 'admin' ? 'on' : ''}" data-admin-nav ${isAdminWallet(wallet.address) ? '' : 'hidden'}><b>Admin</b><span>Review submissions &amp; fees</span></a>
    ${wallet.address ? `<a href="/u/${wallet.address.toLowerCase()}"><b>My profile</b><span>Badges &amp; stats</span></a>` : ''}</div></details></div>
   <div class="navr"><a class="cartbtn" href="/cart" title="Cart" aria-label="Cart"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg><span data-cartn ${cartCount() ? '' : 'hidden'}>${cartCount()}</span></a><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button></div></nav>`;
 }
@@ -35,7 +43,7 @@ async function refPrompt() {
   });
 }
 export function bindNav(onDisconnect?: () => void) {
-  applyBridgeFlag();
+  applyBridgeFlag(); syncAdminNav();
   if (bound) return; bound = true;
   onWallet(() => { refPrompt(); }); setTimeout(refPrompt, 800);
   document.addEventListener('click', e => { const d = document.querySelector('details.navmore[open]'); if (d && !d.contains(e.target as Node)) d.removeAttribute('open'); });
