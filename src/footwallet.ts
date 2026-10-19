@@ -71,7 +71,11 @@ async function load() {
   // NFT list (Worker -> OpenSea). One retry; per-chain gaps are named instead of hiding the whole list.
   const getNfts = async () => { const r = await fetch(`${API}/foot/${id}/nfts`); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { http: r.status }); return j; };
   const nfts = getNfts().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return getNfts(); })
-    .then(j => { S.nfts = (j.nfts || []).filter((n: any) => !n.error); const name = (k: string) => chains[k]?.name; const un = (j.unsupported || []).map(name).filter(Boolean);
+    .then(async j => { S.nfts = (j.nfts || []).filter((n: any) => !n.error); const name = (k: string) => chains[k]?.name;
+      // OpenSea does not index some chains (BNB): read LIL FOOTS held by this account there from chain instead.
+      const onchain = await Promise.all((j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).map((k: string) => footsHeldOnchain(k, S.tba as Hex).catch(() => null)));
+      const readOk = new Set<string>(); (j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).forEach((k: string, i: number) => { const r = onchain[i]; if (r) { readOk.add(k); S.nfts!.push(...r); } });
+      const un = (j.unsupported || []).filter((k: string) => !readOk.has(k)).map(name).filter(Boolean);
       const failed = [...new Set<string>([...(j.failed || []), ...(j.nfts || []).filter((n: any) => n.error).map((n: any) => n.chain)])].map(name).filter(Boolean);
       S.nftNote = [un.length ? `NFTs on ${un.join(', ')} are not indexed by OpenSea.` : '', failed.length ? `Couldn't load NFTs on ${failed.join(', ')} right now; refresh to retry.` : ''].filter(Boolean).join(' '); })
     .catch((e: any) => { S.nfts = null; S.nftNote = e instanceof TypeError ? "NFT list unavailable: couldn't reach api.multisea.io (check ad-blockers / privacy settings or your connection)." : `NFT list unavailable right now (MultiSea API${e?.http ? ' ' + e.http : ''}); refresh to retry.`; });
@@ -86,6 +90,17 @@ async function load() {
 }
 
 // ---------------------------------------------------------------- view
+// LIL FOOTS held by `who` on `k`, via balanceOf + an ownerOf sweep (only when the balance is non-zero).
+async function footsHeldOnchain(k: string, who: Hex): Promise<Nft[]> {
+  const pc = readClient(k); const token = FOOT_ADDR[k];
+  const bal = await pc.readContract({ address: token, abi: ERC721B, functionName: 'balanceOf', args: [who] }) as bigint; if (!bal) return [];
+  const out: Nft[] = []; const ids = Array.from({ length: FOOT_SUPPLY }, (_, i) => i + 1);
+  for (let i = 0; i < ids.length && out.length < Number(bal); i += 1100) { const part = ids.slice(i, i + 1100);
+    const r: any[] = await pc.multicall({ multicallAddress: MC3, allowFailure: true, batchSize: 0, contracts: part.map(id => ({ address: token, abi: ERC721B, functionName: 'ownerOf', args: [BigInt(id)] })) });
+    r.forEach((x, n) => { if (x.status === 'success' && String(x.result).toLowerCase() === who.toLowerCase()) out.push({ chain: k, contract: token.toLowerCase(), id: String(part[n]), name: footName(part[n]), collection: 'lil-foots', image: null, standard: 'erc721' } as any); }); }
+  return out;
+}
+const ERC721B = parseAbi(['function ownerOf(uint256) view returns (address)', 'function balanceOf(address) view returns (uint256)']);
 const nftImg = (n: Nft) => n.contract.toLowerCase() === FOOT_ADDR[n.chain]?.toLowerCase() ? `/img/lil-foots/s/${n.id}.webp` : n.image || '';
 function assetCount() { let a = 0; S.cs.forEach(c => { if (c.bal.native) a++; c.bal.tokens.forEach(t => { if (t) a++; }); }); return a; }
 function total() { if (!S.cs.length) return null; let t = 0; for (const c of S.cs) { if (c.usd == null) return null; t += c.usd; } return t; }

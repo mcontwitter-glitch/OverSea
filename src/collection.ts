@@ -48,6 +48,22 @@ const [summary, itemsMin, traits, ownersMin, listings] = await Promise.all([
 ]);
 const items = itemsMin ? decodeItems(itemsMin) : await j<Item[]>('items.json', []);
 const owners = ownersMin ? decodeOwners(ownersMin) : await j<Record<string, Loc>>('owners.json', {});
+// The snapshot above is from build time; overlay live ownerOf reads so bridged / transferred items show on their current chain.
+let ownersLiveAt: number | null = null;
+async function loadLiveOwners() {
+  try {
+    const r = await (await import('./liveowners')).liveOwners(COL as any, owners);
+    if (r) {
+      for (const k of Object.keys(owners)) delete owners[k]; Object.assign(owners, r.owners); ownersLiveAt = r.at;
+      if (summary?.perChain) for (const c of deployedChains) { if (r.failed.includes(c) || !summary.perChain[c]) continue;
+        const held = Object.values(owners).flatMap(l => [l, ...(l.also || [])]).filter(l => l.chain === c);
+        summary.perChain[c].live = held.length; summary.perChain[c].holders = new Set(held.map(l => l.owner.toLowerCase())).size; }
+      render(); // an open item modal is rebuilt so owner, chain and the buy/list button follow the live data
+      const mr = document.querySelector<HTMLElement>('.modal [data-mrow]'); if (mr) { const id = +mr.dataset.mrow!; mr.closest('.modal')!.remove(); modal(id); }
+    }
+  } catch {}
+  document.documentElement.dataset.ownersLive = ownersLiveAt ? '1' : '0';
+}
 let activity: any[] = []; let activityLoaded = false;
 async function loadActivity() { if (activityLoaded) return; activityLoaded = true; activity = await j<any[]>('activity.json', []); render(); }
 const listMap = new Map<number, Listing>();
@@ -229,9 +245,13 @@ function chainsView() {
     <a class="mono" href="${c.explorer}/address/${d.address}" target="_blank" rel="noopener">${d.address}</a>
     ${p?.ok ? `<div class="kv"><span>Held (ownerOf)</span><b>${p.minted}</b><span>In vault/escrow</span><b>${p.inEscrow}</b><span>Live on chain</span><b>${p.live}</b><span>Holders</span><b>${p.holders}</b><span>Transfers indexed</span><b>${p.transfers ?? '-'}${p.historyComplete ? '' : ' (partial)'}</b><span>Seaport sales</span><b>${p.sales}</b></div>` : `<div class="mut">${esc(p?.error || 'no data')}</div>`}
     ${c.openseaSlug ? `<a class="os" target="_blank" rel="noopener" href="https://opensea.io/assets/${c.openseaSlug}/${d.address}">View on OpenSea ↗</a>` : ''}</div></div>`; }).join('')}
-    <p class="mut small">Data generated ${summary ? new Date(summary.generatedAt).toLocaleString() : '-'}. Vault/escrow addresses excluded: ${COL.escrow.map(e => `${esc(e.label)} ${short(e.address)}`).join(', ')}.</p></div>`;
+    <p class="mut small">Data generated ${summary ? new Date(summary.generatedAt).toLocaleString() : '-'}${ownersLiveAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(ownersLiveAt).toLocaleTimeString()}` : ''}. Vault/escrow addresses excluded: ${COL.escrow.map(e => `${esc(e.label)} ${short(e.address)}`).join(', ')}.</p></div>`;
 }
 
+function mrowHtml(id: number) {
+  const it = items.find(i => i.id === id)!; const loc = owners[id];
+  return `<div class="mrow" data-mrow="${id}"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}`;
+}
 function modal(id: number) {
   const it = items.find(i => i.id === id); if (!it) return;
   const loc = owners[id]; const l = listMap.get(id);
@@ -240,9 +260,8 @@ function modal(id: number) {
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg" style="background:${it.color}"><img src="${thumbUrl(id)}" width="768" height="768" alt="" class="lo"><img src="${thumbUrl(id, 'm')}" width="768" height="768" alt="${esc(it.name)}" class="hi" onload="this.classList.add('in')" onerror="this.onerror=null;this.src='${gw[0]}${it.image}'"></div><div class="minfo">
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
-    <div class="mrow"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>
+    ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
-    ${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
@@ -298,5 +317,6 @@ onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all';
 const apiLoad = async () => { loadLiveListings().then(render); try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; render(); } catch {} refreshEditable(); };
 checkApi().then(apiLoad); onApiUp(apiLoad);
 render();
+loadLiveOwners();
 if (params.get('item')) modal(+params.get('item')!);
 if (params.get('tab')) { st.tab = params.get('tab')!; if (st.tab === 'activity') loadActivity(); render(); }
