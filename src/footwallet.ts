@@ -1,6 +1,6 @@
 // /w/<id>: the LIL FOOTS foot wallet. One ERC-6551 account per foot, same address on Base, Ethereum, ApeChain, BNB and
 // Robinhood. Reads are live (hub + RPC multicalls, NFTs via the Worker/OpenSea). The owner can send from the account:
-// directly on the chain where the foot is free (account.execute), or as a LayerZero command through the hubs.
+// directly on the chain where the foot is active (account.execute), or as a LayerZero command through the hubs.
 import { createWalletClient, custom, encodeAbiParameters, encodeFunctionData, encodePacked, formatUnits, getAddress, isAddress, keccak256, parseAbi, parseUnits, type Hex } from 'viem';
 import { renderSVG } from 'uqr';
 import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, overlay, API } from './wallet';
@@ -54,8 +54,8 @@ const I = {
 const CC: Record<string, string> = { base: '#2c6bff', ethereum: '#627eea', apechain: '#0054fa', bnb: '#f0b90b', robinhood: '#c3f53c' };
 
 // ---------------------------------------------------------------- reads
-const freeOn = () => S.cs.find(c => c.live && c.live !== ZERO) || null;
-const owner = () => (freeOn()?.live as Hex) || null;
+const activeOn = () => S.cs.find(c => c.live && c.live !== ZERO) || null;
+const owner = () => (activeOn()?.live as Hex) || null;
 const isOwner = () => !!(wallet.address && owner() && wallet.address.toLowerCase() === owner()!.toLowerCase());
 
 async function readChain(k: FwChain): Promise<CS> {
@@ -68,9 +68,13 @@ async function readChain(k: FwChain): Promise<CS> {
 }
 async function load() {
   const big = BigInt(id);
-  const nfts = fetch(`${API}/foot/${id}/nfts`).then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; })
-    .then(j => { S.nfts = (j.nfts || []).filter((n: any) => !n.error); const un = (j.unsupported || []).map((k: string) => chains[k]?.name).filter(Boolean); S.nftNote = un.length ? `NFTs on ${un.join(', ')} are not indexed by OpenSea.` : ''; })
-    .catch(() => { S.nfts = null; S.nftNote = 'NFT list unavailable right now (MultiSea API).'; });
+  // NFT list (Worker -> OpenSea). One retry; per-chain gaps are named instead of hiding the whole list.
+  const getNfts = async () => { const r = await fetch(`${API}/foot/${id}/nfts`); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { http: r.status }); return j; };
+  const nfts = getNfts().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return getNfts(); })
+    .then(j => { S.nfts = (j.nfts || []).filter((n: any) => !n.error); const name = (k: string) => chains[k]?.name; const un = (j.unsupported || []).map(name).filter(Boolean);
+      const failed = [...new Set<string>([...(j.failed || []), ...(j.nfts || []).filter((n: any) => n.error).map((n: any) => n.chain)])].map(name).filter(Boolean);
+      S.nftNote = [un.length ? `NFTs on ${un.join(', ')} are not indexed by OpenSea.` : '', failed.length ? `Couldn't load NFTs on ${failed.join(', ')} right now; refresh to retry.` : ''].filter(Boolean).join(' '); })
+    .catch((e: any) => { S.nfts = null; S.nftNote = e instanceof TypeError ? "NFT list unavailable: couldn't reach api.multisea.io (check ad-blockers / privacy settings or your connection)." : `NFT list unavailable right now (MultiSea API${e?.http ? ' ' + e.http : ''}); refresh to retry.`; });
   const reg = readClient('base').readContract({ address: FW.registry, abi: REG, functionName: 'account', args: [FW.impl, ('0x' + '0'.repeat(64)) as Hex, FW.baseChainId, FW.baseFoot, big] }).then((a: Hex) => { S.regOk = getAddress(a) === getAddress(S.tba); if (!S.regOk) S.tba = getAddress(a); }).catch(() => { S.regOk = null; });
   const base = readClient('base').multicall({ multicallAddress: MC3, allowFailure: true, contracts: [{ address: FW.hub, abi: HUB, functionName: 'activeChain', args: [big] }, { address: FW.hub, abi: HUB, functionName: 'trueOwner', args: [big] }, { address: FW.hub, abi: HUB, functionName: 'isBaseLocked', args: [big] }] })
     .then((r: any[]) => { S.base = { active: Number(r[0].result ?? 0), trueOwner: r[1].result || null, baseLocked: !!r[2].result }; }).catch(() => {});
@@ -94,19 +98,19 @@ function tokLines(c: CS) {
   return rows.join('') || `<div class="mut small">${c.ok || c.bal.ok ? 'Empty' : 'Couldn’t read this chain'}</div>`;
 }
 function statusText() {
-  const f = freeOn();
+  const f = activeOn();
   if (!S.loaded) return 'Reading 5 chains…';
-  if (f) return `Free on ${chains[f.k].name}`;
+  if (f) return `Active on ${chains[f.k].name}`;
   if (S.abs?.owner && !S.abs.inVault) return 'On Abstract (outside the wallet network)';
-  return 'Not free on any of the 5 chains';
+  return 'Not active on any of the 5 chains';
 }
 function render() {
-  const f = freeOn(); const own = owner(); const me = isOwner(); const tot = total(); const lk = f?.lock?.locked ? f.lock : null;
+  const f = activeOn(); const own = owner(); const me = isOwner(); const tot = total(); const lk = f?.lock?.locked ? f.lock : null;
   const dep = S.cs.filter(c => c.deployed).map(c => chains[c.k].name);
   const qr = renderSVG(S.tba, { border: 1, ecc: 'M' });
   const stack = FW_CHAINS.map(k => logo(k, 'cl')).join('');
   const canAct = me && !!f && !f.paused;
-  const why = !wallet.address ? 'Connect the wallet that owns this foot' : !f ? 'The foot is not free on any of the 5 chains' : !me ? 'Only the owner of this foot can do this' : f.paused ? 'Paused by the guardian' : '';
+  const why = !wallet.address ? 'Connect the wallet that owns this foot' : !f ? 'The foot is not active on any of the 5 chains' : !me ? 'Only the owner of this foot can do this' : f.paused ? 'Paused by the guardian' : '';
   const nfts = S.nfts || [];
   pg.innerHTML = `<div class="fw">
   <section class="fwcard fwid glow">
@@ -123,7 +127,7 @@ function render() {
     <div class="fwrecv" id="fwrecv"><div class="fwqr">${qr}<img class="c" src="/img/lil-foots/s/${id}.webp" alt=""></div><div><h4>Receive on any of 5 chains</h4><div class="hint">Send to <b>${esc(footName(id))}</b> or <b>${esc(footEns(id))}</b> instead of a 0x address. MultiSea resolves it to this foot's wallet.</div><span class="fwpill mono">${short(S.tba)}</span></div></div>
     <div class="fwown">
       <div class="orow"><span class="mut">Controlled by</span><b class="mono">${own ? `${short(own)}${me ? ' (you)' : ''}` : S.loaded ? '-' : '…'}</b></div>
-      <div class="orow"><span class="mut">Foot is</span><b>${f ? logo(f.k) + ' ' : ''}${esc(statusText())}</b></div>
+      <div class="orow"><span class="mut">Status</span><b>${f ? logo(f.k) + ' ' : ''}${esc(statusText())}</b></div>
       <div class="orow"><span class="mut">Account</span><b>${!S.loaded ? '…' : dep.length ? `Deployed on ${esc(dep.join(', '))}` : 'Counterfactual (created on first use)'}</b></div>
       <div class="orow"><span class="mut">Listing lock</span><b>${!S.loaded ? '…' : lk ? `<span class="warn">Locked #${lk.lockId}${lk.ackedByBase ? '' : ' (Base ack pending)'}</span>` : S.base?.baseLocked ? '<span class="warn">Locked on Base</span>' : '<span class="ok">Unlocked</span>'}</b></div>
       <div class="orow"><span class="mut">Collection</span><b>LIL FOOTS</b></div>
@@ -138,14 +142,14 @@ function render() {
       <section class="fwsell"><div><div class="big">Sell this foot = <em>everything inside</em> goes to the new owner</div><p>The wallet belongs to the NFT. Transfer or sell ${esc(footName(id))} and its tokens and NFTs on all 5 chains move with it.</p><a class="cta" href="/c/lil-foots?item=${id}">View on MultiSea →</a></div><div class="box"><img src="/img/lil-foots/s/${id}.webp" alt=""><span>${assetCount() + nfts.length} items</span></div></section>
     </div>
     <section class="fwcard fwsec"><div class="sechd"><h3>Balances by chain</h3><span class="mut small mono">Same TBA · ${short(S.tba)}</span></div>
-      <div class="fwgrid">${S.cs.length ? S.cs.map(c => `<div class="fwch ${f?.k === c.k ? 'here' : ''}"><div class="chh"><span class="chn">${logo(c.k)}${esc(chains[c.k].name)}</span><span class="chv">${c.usd == null ? '-' : fmtUsd(c.usd)}</span></div>${tokLines(c)}<div class="fwchs">${f?.k === c.k ? '<i class="g">Foot is here</i>' : ''}<i>${c.deployed == null ? '?' : c.deployed ? 'Account deployed' : 'Counterfactual'}</i></div></div>`).join('') : FW_CHAINS.map(k => `<div class="fwch sk"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">…</span></div></div>`).join('')}</div></section>
+      <div class="fwgrid">${S.cs.length ? S.cs.map(c => `<div class="fwch ${f?.k === c.k ? 'here' : ''}"><div class="chh"><span class="chn">${logo(c.k)}${esc(chains[c.k].name)}</span><span class="chv">${c.usd == null ? '-' : fmtUsd(c.usd)}</span></div>${tokLines(c)}<div class="fwchs">${f?.k === c.k ? '<i class="g">Active here</i>' : ''}<i>${c.deployed == null ? '?' : c.deployed ? 'Account deployed' : 'Counterfactual'}</i></div></div>`).join('') : FW_CHAINS.map(k => `<div class="fwch sk"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">…</span></div></div>`).join('')}</div></section>
     <div class="fwbot">
       <section class="fwcard fwsec"><div class="sechd"><h3>NFTs inside the foot</h3><span class="mut small">${nfts.length || ''}</span></div>
         ${S.nfts == null && !S.nftNote ? '<div class="mut small">Loading…</div>' : nfts.length ? `<div class="fwnftg">${nfts.slice(0, 12).map(n => `<div class="nftc"><img src="${esc(nftImg(n))}" alt="" loading="lazy"><div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div></div>`).join('')}</div>` : `<div class="mut small">${S.nfts ? 'No NFTs inside yet.' : ''}</div>`}
         ${S.nftNote ? `<div class="mut small" style="margin-top:8px">${esc(S.nftNote)}</div>` : ''}</section>
       <section class="fwcard fwsec"><div class="sechd"><h3>Status on each chain</h3><span class="mut small">live from the hubs</span></div>
-        <div class="fwst"><div class="h"><span>Chain</span><span>Foot</span><span>Account</span><span>Lock</span></div>${S.cs.map(c => `<div><span>${logo(c.k)} ${esc(chains[c.k].name)}</span><span>${!c.ok ? '<i class="mut">unreadable</i>' : c.live && c.live !== ZERO ? '<b class="ok">Free here</b>' : '<i class="mut">Not here</i>'}</span><span>${c.deployed == null ? '?' : c.deployed ? 'Deployed' : '<i class="mut">Counterfactual</i>'}</span><span>${c.paused ? '<b class="warn">Paused</b>' : c.lock?.locked ? `<b class="warn">Locked #${c.lock.lockId}</b>` : '<i class="mut">-</i>'}</span></div>`).join('')}</div>
-        <div class="mut small" style="margin-top:10px">Base controller: ${S.base ? (S.base.active ? `active chain <b>${esc(chains[chainOfEid(S.base.active) || '']?.name || 'EID ' + S.base.active)}</b>` : 'active chain not reported yet') + (S.base.trueOwner && S.base.trueOwner !== ZERO ? ` · owner ${short(S.base.trueOwner)}` : '') : '…'}${S.abs?.owner && !freeOn() ? ` · Abstract: ${S.abs.inVault ? 'in the bridge vault' : 'held by ' + short(S.abs.owner)}` : ''}${S.regOk ? ' · address verified with registry.account()' : ''}</div></section>
+        <div class="fwst"><div class="h"><span>Chain</span><span>Foot</span><span>Account</span><span>Lock</span></div>${S.cs.map(c => `<div><span>${logo(c.k)} ${esc(chains[c.k].name)}</span><span>${!c.ok ? '<i class="mut">unreadable</i>' : c.live && c.live !== ZERO ? '<b class="ok">Active here</b>' : '<i class="mut">Not here</i>'}</span><span>${c.deployed == null ? '?' : c.deployed ? 'Deployed' : '<i class="mut">Counterfactual</i>'}</span><span>${c.paused ? '<b class="warn">Paused</b>' : c.lock?.locked ? `<b class="warn">Locked #${c.lock.lockId}</b>` : '<i class="mut">-</i>'}</span></div>`).join('')}</div>
+        <div class="mut small" style="margin-top:10px">Base controller: ${S.base ? (S.base.active ? `active chain <b>${esc(chains[chainOfEid(S.base.active) || '']?.name || 'EID ' + S.base.active)}</b>` : 'active chain not reported yet') + (S.base.trueOwner && S.base.trueOwner !== ZERO ? ` · owner ${short(S.base.trueOwner)}` : '') : '…'}${S.abs?.owner && !activeOn() ? ` · Abstract: ${S.abs.inVault ? 'in the bridge vault' : 'held by ' + short(S.abs.owner)}` : ''}${S.regOk ? ' · address verified with registry.account()' : ''}</div></section>
     </div>
   </div>
 </div>`;
@@ -178,9 +182,9 @@ function callFor(a: Asset, to: Hex, amt: bigint): Call {
     : { to: n.contract as Hex, value: 0n, data: encodeFunctionData({ abi: ERC721, functionName: 'safeTransferFrom', args: [S.tba, to, big] }) };
 }
 async function plan(a: Asset, call: Call): Promise<Plan> {
-  const f = freeOn()!; const C = f.k, T = a.k; const me = wallet.address as Hex; const big = BigInt(id); const hubC = readClient(C);
+  const f = activeOn()!; const C = f.k, T = a.k; const me = wallet.address as Hex; const big = BigInt(id); const hubC = readClient(C);
   const tgt = S.cs.find(c => c.k === T)!;
-  if (C === T) { // local: the owner calls the account directly on the chain where the foot is free
+  if (C === T) { // local: the owner calls the account directly on the chain where the foot is active
     const steps: Plan['steps'] = []; const notes = [`Runs directly on ${chains[C].name}: your wallet calls the foot's account (execute). No LayerZero message.`];
     if (!tgt.deployed) { steps.push({ label: `Create the foot's account on ${chains[C].name} (one time)`, k: C, fee: await gasCost(C, () => hubC.estimateContractGas({ address: FW.hub, abi: HUB, functionName: 'ensureAccount', args: [big], account: me })), run: () => wc(C).writeContract({ account: me, address: FW.hub, abi: HUB, functionName: 'ensureAccount', args: [big], chain: vchain(C) }) }); notes.push('First use: the account is created on this chain (anyone can create it; you pay the gas once).'); }
     steps.push({ label: `Send from the foot's account on ${chains[C].name}`, k: C, fee: tgt.deployed ? await gasCost(C, () => hubC.estimateContractGas({ address: S.tba, abi: ACC, functionName: 'execute', args: [call.to, call.value, call.data, 0], account: me })) : null, run: () => wc(C).writeContract({ account: me, address: S.tba, abi: ACC, functionName: 'execute', args: [call.to, call.value, call.data, 0], chain: vchain(C) }) });
@@ -220,10 +224,10 @@ async function runSteps(p: Plan, el: HTMLElement) {
 }
 
 function openSend(pre?: string) {
-  const list = assets(); const f = freeOn()!;
+  const list = assets(); const f = activeOn()!;
   const m = overlay(`<div class="fwsend"><h2>Send from ${esc(footName(id))}</h2>
     <div class="lbl">From <span>Foot wallet · controlled by you</span></div>
-    <div class="fld"><img src="/img/lil-foots/s/${id}.webp" class="av" alt=""><span class="mono">${short(S.tba)}</span><span class="grow"></span><span class="mut small">Foot is on ${logo(f.k)} ${esc(chains[f.k].name)}</span></div>
+    <div class="fld"><img src="/img/lil-foots/s/${id}.webp" class="av" alt=""><span class="mono">${short(S.tba)}</span><span class="grow"></span><span class="mut small">Active on ${logo(f.k)} ${esc(chains[f.k].name)}</span></div>
     <div class="lbl">Asset</div>
     <select class="fld sel" data-k="asset">${list.length ? list.map(a => `<option value="${esc(a.key)}" ${a.key === pre ? 'selected' : ''}>${esc(chains[a.k].name)} · ${esc(a.label)}${a.kind === 'nft' ? ' (NFT)' : ` · ${fmtAmt(a.bal, a.decimals, 6)}`}</option>`).join('') : '<option value="">This wallet is empty</option>'}</select>
     <div class="lbl" data-amtl>Amount <span data-k="bal"></span></div>
@@ -274,7 +278,7 @@ function snapshot(): Hex {
   return keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'tuple[]', components: [{ name: 'eid', type: 'uint32' }, { name: 'token', type: 'address' }, { name: 'kind', type: 'uint8' }, { name: 'identifier', type: 'uint256' }, { name: 'amount', type: 'uint256' }] }], [BigInt(id), items]));
 }
 async function openLock(unlock: boolean) {
-  const f = freeOn()!; const C = f.k; const big = BigInt(id); const me = wallet.address as Hex;
+  const f = activeOn()!; const C = f.k; const big = BigInt(id); const me = wallet.address as Hex;
   const m = overlay(`<div class="fwsend"><h2>${unlock ? 'Unlock' : 'Lock'} ${esc(footName(id))}'s wallet</h2><p class="mut">${unlock ? 'Sends become possible again. The listing cooldown starts over on the next lock.' : 'Freezes the wallet on every chain: no sends (local or remote) until you unlock. This is the same lock a LIL FOOTS listing uses, so a buyer gets exactly what is inside. Incoming transfers still arrive.'}</p><div class="fwsum" data-k="sum"><div class="mut small">Quoting…</div></div><button class="bbtn" data-k="go" disabled>${unlock ? 'Unlock' : 'Lock'} wallet</button><div class="fwmsg" data-k="msg"></div></div>`);
   const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLElement;
   try {

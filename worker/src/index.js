@@ -418,15 +418,27 @@ async function handle(req, env, url) {
     if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
     const id = +p[1]; if (!ID.test(p[1]) || id < 1 || id > 4404) bad('invalid id');
     const tba = footTba(id);
-    return await cached(`fw:${id}`, 120, async () => {
-      const out = [];
-      await Promise.all(FOOT_CHAINS.map(async k => { const os = chains[k]?.openseaSlug; if (!os) return;
-        const r = await osFetch(env, `/chain/${os}/account/${tba}/nfts?limit=50`); const j = await r.json().catch(() => ({}));
-        if (!r.ok) { out.push({ chain: k, error: 'opensea ' + r.status }); return; }
-        for (const n of j.nfts || []) out.push({ chain: k, contract: lc(n.contract), id: String(n.identifier), name: n.name || null, collection: n.collection || null, image: n.display_image_url || n.image_url || null, standard: n.token_standard || null });
-      }));
-      return { id, account: tba, nfts: out, unsupported: FOOT_CHAINS.filter(k => !chains[k]?.openseaSlug) };
-    });
+    // Per-chain isolation: one chain's OpenSea timeout/throw/429 must not fail the whole list (it used to reject the
+    // Promise.all -> 500 -> "NFT list unavailable"). Each chain gets 8s + one retry; partial results are cached briefly.
+    const one = async (k, os) => {
+      for (let i = 0; i < 2; i++) {
+        try {
+          const r = await osFetch(env, `/chain/${os}/account/${tba}/nfts?limit=50`, { signal: AbortSignal.timeout(8000) });
+          if (r.ok) { const j = await r.json(); return (j.nfts || []).map(n => ({ chain: k, contract: lc(n.contract), id: String(n.identifier), name: n.name || null, collection: n.collection || null, image: n.display_image_url || n.image_url || null, standard: n.token_standard || null })); }
+          if (r.status !== 429 && r.status < 500) return [{ chain: k, error: 'opensea ' + r.status }];
+          if (i) return [{ chain: k, error: 'opensea ' + r.status }];
+        } catch (e) { if (i) return [{ chain: k, error: String(e?.name === 'TimeoutError' ? 'timeout' : e?.message || e).slice(0, 60) }]; }
+        await new Promise(r => setTimeout(r, 600));
+      }
+      return [];
+    };
+    const key = `fw:${id}`; const cache = caches.default; const creq = new Request('https://cache.multisea/' + key);
+    const hit = await cache.match(creq); if (hit) return hit.json();
+    const parts = await Promise.all(FOOT_CHAINS.map(k => (chains[k]?.openseaSlug ? one(k, chains[k].openseaSlug) : [])));
+    const nfts = parts.flat(); const failed = nfts.filter(n => n.error).map(n => n.chain);
+    const val = { id, account: tba, nfts: nfts.filter(n => !n.error), failed, unsupported: FOOT_CHAINS.filter(k => !chains[k]?.openseaSlug) };
+    await cache.put(creq, new Response(JSON.stringify(val), { headers: { 'cache-control': `public, max-age=${failed.length ? 15 : 120}` } }));
+    return val;
   }
 
   // --- per-collection live data (OpenSea, cached) ---
