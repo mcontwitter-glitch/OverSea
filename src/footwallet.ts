@@ -3,7 +3,7 @@
 // directly on the chain where the foot is active (account.execute), or as a LayerZero command through the hubs.
 import { createWalletClient, custom, encodeAbiParameters, encodeFunctionData, encodePacked, formatUnits, getAddress, isAddress, keccak256, parseAbi, parseUnits, type Hex } from 'viem';
 import { renderSVG } from 'uqr';
-import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, overlay, API } from './wallet';
+import { wallet, onWallet, readClient, bulkClient, ensureChain, vchain, friendly, openConnect, overlay, API } from './wallet';
 import { usdRates, type UsdRates } from './shell';
 import { frame, chains, esc, short, logo } from './gx';
 import { FW, FW_CHAINS, EID, chainOfEid, FOOT_ADDR, FOOT_SUPPLY, ABSTRACT_VAULT, footTba, footName, footEns, parseFootName, NATIVE, TOKENS, chainBalances, chainUsd, rateOf, fmtUsd, MC3, type FwChain, type ChainBal } from './footkit';
@@ -92,7 +92,7 @@ async function load() {
 // ---------------------------------------------------------------- view
 // LIL FOOTS held by `who` on `k`, via balanceOf + an ownerOf sweep (only when the balance is non-zero).
 async function footsHeldOnchain(k: string, who: Hex): Promise<Nft[]> {
-  const pc = readClient(k); const token = FOOT_ADDR[k];
+  const pc = bulkClient(k); const token = FOOT_ADDR[k];
   const bal = await pc.readContract({ address: token, abi: ERC721B, functionName: 'balanceOf', args: [who] }) as bigint; if (!bal) return [];
   const out: Nft[] = []; const ids = Array.from({ length: FOOT_SUPPLY }, (_, i) => i + 1);
   for (let i = 0; i < ids.length && out.length < Number(bal); i += 1100) { const part = ids.slice(i, i + 1100);

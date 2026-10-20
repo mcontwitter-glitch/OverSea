@@ -136,6 +136,14 @@ export function readClient(k: string) {
   } }, { retryCount: 0 });
   return (readCache[k] = createPublicClient({ chain: vchain(k), transport: fallback([http(`${API}/rpc/${k}`, { timeout: 15_000, retryCount: 2, retryDelay: 400 }), ...direct.slice(0, 3).map(u => http(u, { timeout: 10_000, retryCount: 1 })), viaWallet]) }));
 }
+// Bulk reads (big multicalls, e.g. ownerOf sweeps): public RPCs only. They exceed the Worker proxy's 64 KB body cap and
+// would count toward the visitor's per-IP Worker rate limit, which listings / buy checks share.
+const bulkCache: Record<string, any> = {};
+export function bulkClient(k: string) {
+  if (bulkCache[k]) return bulkCache[k];
+  const c = chains[k]; const direct: string[] = c.rpcs?.length ? c.rpcs : [c.rpc];
+  return (bulkCache[k] = createPublicClient({ chain: vchain(k), transport: fallback(direct.slice(0, 3).map(u => http(u, { timeout: 15_000, retryCount: 1 }))) }));
+}
 export async function ensureChain(k: string) {
   const c = chains[k]; const hex = '0x' + c.chainId.toString(16);
   const cur = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16);
@@ -183,7 +191,9 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
   const fail = (msg: string) => { body.innerHTML = `<p class="err">${esc(msg)}</p><button class="bbtn ghost mx2">Close</button>`; body.querySelector('.mx2')!.addEventListener('click', () => m.remove()); };
   try {
     // 1) refresh live listing
-    const lr = await (await fetch(`${API}/listings/${os}/${it.contract}/${it.id}`)).json();
+    const lres = await fetch(`${API}/listings/${os}/${it.contract}/${it.id}`);
+    if (!lres.ok) throw Object.assign(new Error(lres.status === 429 ? 'MultiSea is busy right now (rate limited). Wait a few seconds and try again.' : `Could not check the listing (MultiSea API ${lres.status}). Try again.`), { kind: 'api' });
+    const lr = await lres.json();
     const L = lr.listing;
     if (!L) { onGone(it.id); throw Object.assign(new Error('This listing is no longer valid (sold, cancelled or expired).'), { kind: 'stale' }); }
     // 2) chain

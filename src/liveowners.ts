@@ -4,7 +4,7 @@
 // Satellite deployments hold few tokens, so a full ownerOf sweep there is ~4 eth_calls per chain. The origin chain
 // (biggest supply) is only re-read for the ids whose location changed. Escrow/vault holders are excluded.
 import { parseAbi, type Hex } from 'viem';
-import { readClient } from './wallet';
+import { bulkClient } from './wallet';
 import { MC3 } from './footkit';
 
 export type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
@@ -15,7 +15,7 @@ const ABI = parseAbi(['function ownerOf(uint256) view returns (address)']);
 const TTL = 120_000;
 
 async function ownersOn(chain: string, token: string, ids: number[], batch: number): Promise<Map<number, string>> {
-  const out = new Map<number, string>(); const pc = readClient(chain);
+  const out = new Map<number, string>(); const pc = bulkClient(chain);
   const parts: number[][] = []; for (let i = 0; i < ids.length; i += batch) parts.push(ids.slice(i, i + batch));
   await Promise.all(parts.map(async part => {
     const r: any[] = await pc.multicall({ multicallAddress: MC3, allowFailure: true, batchSize: 0, contracts: part.map(id => ({ address: token as Hex, abi: ABI, functionName: 'ownerOf', args: [BigInt(id)] })) });
