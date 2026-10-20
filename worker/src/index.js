@@ -539,7 +539,9 @@ export default {
     const H = ch || {};
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
     const ip = req.headers.get('cf-connecting-ip') || 'local';
-    if (limited(ip, url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
+    // Separate buckets: RPC/media traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
+    const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/');
+    if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
     try {
       const out = await handle(req, env, url);
       if (out instanceof Response) { for (const [k, v] of Object.entries(H)) out.headers.set(k, v); return out; }
