@@ -20,6 +20,7 @@ remappings = [
   "@layerzerolabs/lz-evm-oapp-v2/=node_modules/@layerzerolabs/lz-evm-oapp-v2/",
   "@layerzerolabs/test-devtools-evm-foundry/=node_modules/@layerzerolabs/test-devtools-evm-foundry/",
   "@layerzerolabs/lz-evm-v1-0.7/=node_modules/@layerzerolabs/lz-evm-v1-0.7/",
+  "erc721a-upgradeable/=node_modules/erc721a-upgradeable/contracts/",
   "solidity-bytes-utils/=node_modules/solidity-bytes-utils/",
   "@chainlink/contracts/=node_modules/@chainlink/contracts/",
 ]

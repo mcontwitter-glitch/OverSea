@@ -14,9 +14,10 @@ onWallet(syncAdminNav); // re-render-free: toggles every nav copy on connect / d
 const cartCount = () => { try { return JSON.parse(localStorage.getItem('multisea-cart') || '[]').length; } catch { return 0; } };
 export function navHtml(active = '') {
   return `<nav class="top"><a class="brand" href="/"><img src="${AV['brand/icon-64.webp']}" srcset="${AV['brand/icon-64.webp']} 1x, ${AV['brand/icon-128.webp']} 2x" width="34" height="34" alt="MultiSea"><span>Multi<b>Sea</b></span></a>
-  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/bridge" data-bridge-flag hidden class="${active === 'bridge' ? 'on' : ''}">Bridge</a><a href="/list-collection" class="navlc ${active === 'list' ? 'on' : ''}">List your collection</a><a href="/submit" class="navsub ${active === 'submit' ? 'on' : ''}">Submit</a><a href="/admin" class="navadm ${active === 'admin' ? 'on' : ''}" data-admin-nav ${isAdminWallet(wallet.address) ? '' : 'hidden'}>Admin</a>
+  <div class="navl"><a href="/" class="${active === 'home' ? 'on' : ''}">Collections</a><a href="/launchpad" class="navlp ${active === 'launchpad' ? 'on' : ''}">Launchpad</a><a href="/bridge" data-bridge-flag hidden class="${active === 'bridge' ? 'on' : ''}">Bridge</a><a href="/list-collection" class="navlc ${active === 'list' ? 'on' : ''}">List your collection</a><a href="/submit" class="navsub ${active === 'submit' ? 'on' : ''}">Submit</a><a href="/admin" class="navadm ${active === 'admin' ? 'on' : ''}" data-admin-nav ${isAdminWallet(wallet.address) ? '' : 'hidden'}>Admin</a>
   <details class="navmore ${['quests', 'bundles', 'referrals', 'revshare', 'cart', 'admin'].includes(active) ? 'on' : ''}"><summary>More</summary><div class="navmenu">
    <a href="/list-collection" class="navm"><b>List your collection</b><span>For creators</span></a>
+   <a href="/launchpad" class="${active === 'launchpad' ? 'on' : ''}"><b>🚀 Launchpad</b><span>Mint new drops · create your own</span></a>
    <a href="/quests" class="${active === 'quests' ? 'on' : ''}"><b>Quests</b><span>Chain badges + rare free mint</span></a>
    <a href="/bundles" class="${active === 'bundles' ? 'on' : ''}"><b>Bundles</b><span>Sell many NFTs as one</span></a>
    <a href="/cart" class="${active === 'cart' ? 'on' : ''}"><b>Cart</b><span>Multi-chain checkout</span></a>

@@ -11,6 +11,7 @@ else if (path === '/submit') import('./submit');
 else if (path === '/list-collection') import('./listpage');
 else if (path === '/bridge') import('./bridgepage');
 else if (path === '/admin') import('./admin');
+else if (path === '/launchpad' || /^\/launchpad\/[a-z0-9-]{3,40}$/.test(path)) import('./launchpad');
 else if (/^\/r\/[0-9a-fA-F]{8}$/.test(path)) { const code = path.slice(3).toLowerCase(); if (!localStorage.getItem('multisea-ref')) localStorage.setItem('multisea-ref', JSON.stringify({ code, at: Date.now() })); location.replace('/?ref=' + code); }
 else if (path === '/referrals') import('./referrals');
 else if (path === '/revenue-share') import('./revshare');

@@ -1,0 +1,12 @@
+{
+  "_note": "Launchpad config (PREVIEW). Factories are NOT deployed on any chain; addresses stay null until an audited deploy. Abstract is excluded (shutting down).",
+  "chains": ["base", "ethereum", "apechain", "bnb", "robinhood"],
+  "factories": { "base": null, "ethereum": null, "apechain": null, "bnb": null, "robinhood": null },
+  "platformFeeBps": 50,
+  "maxPlatformFeeBps": 1500,
+  "maxRoyaltyBps": 1000,
+  "maxPhases": 8,
+  "maxAllowlist": 2000,
+  "approvalTtlSec": 604800,
+  "mintGasUnits": { "first": 90000, "perExtra": 9000 }
+}

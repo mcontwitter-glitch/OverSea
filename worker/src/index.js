@@ -8,12 +8,14 @@ import { verifyMessage, createPublicClient, http, getContractAddress, concat, en
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeGrowth } from './growth.js';
+import { makeLaunchpad } from './launchpad.js';
+import LP from '../../config/launchpad.json';
 
 const OS = 'https://api.opensea.io/api/v2';
 const SEAPORT = new Set([CFG.seaport.toLowerCase()]);
 const ERC721_IFACE = '0x80ac58cd';
 const ADDR = /^0x[0-9a-fA-F]{40}$/, HASH = /^0x[0-9a-fA-F]{64}$/, ID = /^\d{1,9}$/, SLUG = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
-const RESERVED = new Set(['admin', 'submit', 'api', 'c', 'new', 'edit', 'static']);
+const RESERVED = new Set(['admin', 'submit', 'api', 'c', 'new', 'edit', 'static', 'launchpad']);
 const chains = CFG.chains; // key -> {chainId, rpc, openseaSlug, ...}
 const osToKey = Object.fromEntries(Object.entries(chains).filter(([, c]) => c.openseaSlug).map(([k, c]) => [c.openseaSlug, k]));
 const STATIC = Object.fromEntries(CFG.collections.map(c => [c.slug, c]));
@@ -213,6 +215,10 @@ async function rpcBalance(chainKey, addr) {
 }
 
 let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks: { onSale: (env, s) => growth().recordSale(env, s), onList: (env, a, k) => growth().questEvent(env, a, k, 'list') } }));
+// Launchpad (PREVIEW): factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
+const isDropOnChain = async (k, factory, drop) => { const c = chains[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
+  return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
+let _launchpad; const launchpad = () => (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
 // ---------- router ----------
@@ -220,8 +226,9 @@ async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', ...(env.MEDIA ? ['media'] : [])] };
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
+  { const l = await launchpad().handle(req, env, url, p, M, body); if (l !== undefined) return l; }
 
   // --- SIWE ---
   if (M === 'GET' && p[0] === 'auth' && p[1] === 'nonce') { const n = rand(12); await env.NONCES.put('n:' + n, '1', { expirationTtl: 600 }); return { nonce: n }; }
