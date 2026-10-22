@@ -24,13 +24,25 @@ for (const vp of ['mobile', 'desktop']) {
   await p.locator('.ldmintbox').scrollIntoViewIfNeeded(); await shot(p, `drop-qty3-relay-${vp}`);
   await p.click('[data-act=mint]'); await p.waitForTimeout(300); await p.locator('.ldmintbox').scrollIntoViewIfNeeded(); await shot(p, `drop-mint-demo-${vp}`);
   await p.fill('[data-al]', '0xca89ae48a5c61d13e78236daa4ac29ee588ea475'); await p.click('[data-act=alcheck]'); await p.waitForTimeout(200);
+  // multichain (escrow): shared supply bar, chain picker, Active explainer, Your NFTs + Move to chain
+  await go(p, '/launchpad/lil-foots'); await p.evaluate(() => sessionStorage.removeItem('multisea-lp-held')); await go(p, '/launchpad/lil-foots'); await p.waitForTimeout(3000);
+  await p.locator('.ldprog.big').scrollIntoViewIfNeeded(); await shot(p, `mc-shared-supply-${vp}`);
+  await p.click('[data-ch="apechain"]'); await p.waitForTimeout(300); await p.locator('.ldmintbox').scrollIntoViewIfNeeded(); await shot(p, `mc-mint-apechain-${vp}`);
+  await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-your-nfts-${vp}`);
+  await p.click('[data-move="2396"]'); await p.waitForTimeout(2500); await shot(p, `mc-move-modal-${vp}`);
+  await p.click('.ldmodal [data-dst="ethereum"]'); await p.waitForTimeout(300); await shot(p, `mc-move-modal-eth-${vp}`);
+  await p.click('.ldmodal [data-dst="bnb"]'); await p.click('[data-act=domove]'); await p.waitForTimeout(300); await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-moving-${vp}`);
+  await p.waitForTimeout(3000); await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-moved-${vp}`);
   await go(p, '/launchpad/lil-foots-robinhood'); await shot(p, `drop-upcoming-${vp}`);
   // create flow
   await p.evaluate(() => { sessionStorage.clear(); localStorage.removeItem('multisea-lp-preview'); });
   await go(p, '/launchpad/create'); await shot(p, `create-step1-empty-${vp}`);
   await p.click('[data-act=next]'); await p.waitForTimeout(200); await shot(p, `create-validation-${vp}`);
   await p.click('[data-act=demo]'); await p.waitForTimeout(200); await shot(p, `create-step1-${vp}`, true);
-  for (let i = 2; i <= 6; i++) { await p.click('[data-act=next]'); await p.waitForTimeout(250); await shot(p, `create-step${i}-${vp}`, true); }
+  for (let i = 2; i <= 6; i++) {
+    await p.click('[data-act=next]'); await p.waitForTimeout(250); await shot(p, `create-step${i}-${vp}`, true);
+    if (i === 3) { await shot(p, `create-mode-multichain-${vp}`); await p.click('label:has(input[name=mode][value=single])'); await p.waitForTimeout(200); await shot(p, `create-mode-single-${vp}`); await p.click('label:has(input[name=mode][value=multichain])'); await p.waitForTimeout(200); }
+  }
   await p.check('[data-agree]'); await p.click('[data-act=submit]'); await p.waitForTimeout(400); await shot(p, `create-submitted-${vp}`);
   await go(p, '/admin'); await shot(p, `admin-queue-drop-${vp}`, true);
   await go(p, '/launchpad'); await shot(p, `list-with-submission-${vp}`, true);

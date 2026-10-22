@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { verifyTypedData, keccak256, concat } from 'viem';
-import { makeLaunchpad, configHash, merkle, proofFor, leafOf, APPROVAL_TYPES } from '../src/launchpad.js';
+import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES } from '../src/launchpad.js';
 const CFG = JSON.parse(fs.readFileSync(new URL('../../config/collections.json', import.meta.url)));
 const LP0 = JSON.parse(fs.readFileSync(new URL('../../config/launchpad.json', import.meta.url)));
 const lc = s => String(s || '').toLowerCase();
@@ -14,9 +14,9 @@ const ADDR = /^0x[0-9a-fA-F]{40}$/;
 const ADMIN = '0xca89ae48a5c61d13e78236daa4ac29ee588ea475';
 function kv() { const m = new Map(); return { m, async get(k, t) { const v = m.get(k); return v == null ? null : t === 'json' ? JSON.parse(v) : v; }, async put(k, v) { m.set(k, String(v)); }, async delete(k) { m.delete(k); }, async list({ prefix = '' }) { return { keys: [...m.keys()].filter(k => k.startsWith(prefix)).sort().map(name => ({ name })) }; } }; }
 const creator = privateKeyToAccount(generatePrivateKey());
-const FACTORY = '0x' + '11'.repeat(20);
+const FACTORY = '0x' + '11'.repeat(20); const ESC = '0x' + '33'.repeat(20);
 function setup(over = {}) {
-  const LP = { ...LP0, factories: { ...LP0.factories, base: FACTORY } };
+  const LP = { ...LP0, factories: { ...LP0.factories, base: FACTORY, bnb: FACTORY }, omniEscrows: { ...LP0.omniEscrows, base: ESC, bnb: ESC } };
   const env = { COLLECTIONS: kv(), ADMIN_ADDRESSES: ADMIN, ...over.env };
   let who = lc(creator.address);
   const L = makeLaunchpad({ LP, chains: CFG.chains, lc, bad, ADDR, admins: e => [ADMIN], requireSession: async () => ({ address: who }), isDropOnChain: async (k, f, a) => over.isDrop ?? true, now: () => 1_800_000_000_000 });
@@ -88,4 +88,34 @@ test('reject stores reason and clears queue', async () => {
   await call('POST', '/admin/launchpad/reject/lil-foots-drop', { reason: 'art rights unclear' });
   assert.equal((await call('GET', '/admin/launchpad/pending')).pending.length, 0);
   assert.equal((await env.COLLECTIONS.get('lrejected:lil-foots-drop', 'json')).reason, 'art rights unclear');
+});
+
+test('omniConfigHash matches the Solidity vector (contracts/test/LaunchpadOmni.t.sol)', () => {
+  const C = '0x0000000000000000000000000000000000c0ffee';
+  const h = omniConfigHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 50, maxSupply: 10, royaltyReceiver: C, royaltyBps: 500n,
+    baseURI: 'ipfs://bafyFINAL/', preRevealURI: '', phases: [{ start: 1800000000n, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: '0x' + '0'.repeat(64) }],
+    eids: [1, 2, 3], allocEnd: [5, 8, 11], prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n], rebalancer: '0x0000000000000000000000000000000000004ee9' });
+  assert.equal(h, '0xab5a4c531768ef27025f95820c4fc60ef1c5b2b4a4afe43a4675c74c1d56c988');
+});
+
+test('multichain drop: validation, shared supply pools, omni approval, escrow excluded on auto-list', async () => {
+  const { call, env, as } = setup();
+  const md = o => drop({ slug: 'omni-foots', mode: 'multichain', chains: ['base', 'bnb'], allocations: { base: 3404, bnb: 1000 }, creatorReserve: 0,
+    phases: [{ name: 'Public', kind: 'public', start: 1800000000, end: 0, price: '3000000000000000', prices: { bnb: '10000000000000000' }, maxPerWallet: 5 }], ...o });
+  await assert.rejects(call('POST', '/launchpad/submit', md({ chains: ['base'], allocations: { base: 4404 } })), /at least 2 chains/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ phases: [{ kind: 'public', start: 1800000000, price: '1' }] })), /price on bnb/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ creatorReserve: 4 })), /reserve/);
+  assert.equal((await call('POST', '/launchpad/submit', md({ slug: 'omni-zero', allocations: { base: 4404, bnb: 0 } }))).status, 'pending'); // empty initial pool is allowed
+  await call('POST', '/launchpad/submit', md()); as(ADMIN); await call('POST', '/admin/launchpad/approve/omni-foots'); as(creator.address);
+  env.LAUNCHPAD_APPROVER_KEY = (await import('viem/accounts')).generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
+  const a = await call('POST', '/launchpad/approval/omni-foots', { chain: 'bnb' });
+  assert.equal(a.mode, 'multichain'); assert.deepEqual(a.params.allocEnd, [3405, 4405]); assert.deepEqual(a.params.eids, [30184, 30102]);
+  assert.deepEqual(a.params.prices, ['3000000000000000', '10000000000000000']);
+  assert.equal(a.collectionId, collectionIdOf('omni-foots', creator.address.toLowerCase()));
+  const b2 = await call('POST', '/launchpad/approval/omni-foots', { chain: 'base' }); assert.equal(b2.configHash, a.configHash, 'same config on every chain');
+  assert.ok(await verifyTypedData({ address: appr.address, domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: CFG.chains.bnb.chainId, verifyingContract: FACTORY }, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message: { creator: creator.address, configHash: a.configHash, collectionId: a.collectionId, deadline: BigInt(a.deadline) }, signature: a.signature }));
+  await call('POST', '/launchpad/deployed/omni-foots', { chain: 'base', address: '0x' + '44'.repeat(20) });
+  await call('POST', '/launchpad/deployed/omni-foots', { chain: 'bnb', address: '0x' + '44'.repeat(20) });
+  const col = await env.COLLECTIONS.get('col:omni-foots', 'json');
+  assert.equal(col.deployments.length, 2); assert.deepEqual(col.escrow.map(e => e.chain), ['base', 'bnb']); assert.equal(col.escrow[0].address, ESC);
 });

@@ -2,9 +2,11 @@
 // here is either demo data (clearly labeled) or a local preview submission saved in this browser.
 import LP from '../config/launchpad.json';
 import APP from '../config/app.json';
-export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; maxPerWallet: number; allowlist?: string[]; allowCount?: number };
-export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides phase price)
+export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; prices?: Record<string, number>; maxPerWallet: number; allowlist?: string[]; allowCount?: number }; // prices: per-chain native price (multichain)
+// supply: single-chain = that chain's edition size; multichain = that chain's current unminted-ID pool size (initial pool ± rebalances).
+export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides public phase price)
 export type Drop = {
+  mode?: 'single' | 'multichain'; // multichain = one shared supply, escrow + LayerZero (MultiSeaOmniDrop)
   slug: string; name: string; symbol: string; creator: string; description: string; chains: ChainAlloc[];
   maxSupply: number; royaltyBps: number; reveal: 'instant' | 'delayed'; phases: Phase[]; img: string; art: string[];
   demo?: boolean; local?: boolean; status?: 'pending' | 'approved' | 'rejected' | 'live'; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
@@ -18,13 +20,13 @@ const img = (id: number) => `/img/lil-foots/m/${id}.webp`;
 const t = Date.now(); const s = (ms: number) => Math.floor((t + ms) / 1000);
 export const DEMO_ALLOWLIST = [...APP.adminAddresses, '0x000000000000000000000000000000000000f007'].map(a => a.toLowerCase());
 export const DEMO: Drop[] = [
-  { slug: 'lil-foots', name: 'LIL FOOTS', symbol: 'FOOT', creator: APP.adminAddresses[0], demo: true, status: 'live',
-    description: '4,404 tiny feet walking every chain. Demo drop for the MultiSea Launchpad preview: the real LIL FOOTS collection already exists, nothing here mints on-chain.',
-    chains: [{ chain: 'base', supply: 2404, minted: 1862, price: 0.003 }, { chain: 'apechain', supply: 1000, minted: 731, price: 12 }, { chain: 'bnb', supply: 1000, minted: 525, price: 0.012 }],
+  { slug: 'lil-foots', name: 'LIL FOOTS', symbol: 'FOOT', creator: APP.adminAddresses[0], demo: true, status: 'live', mode: 'multichain',
+    description: '4,404 tiny feet walking every chain, as ONE multichain collection: one shared supply across Base, Ethereum, ApeChain, BNB and Robinhood. Demo drop for the MultiSea Launchpad preview: the real LIL FOOTS collection already exists, nothing here mints on-chain.',
+    chains: [{ chain: 'base', supply: 1604, minted: 1320, price: 0.003 }, { chain: 'ethereum', supply: 400, minted: 212, price: 0.003 }, { chain: 'apechain', supply: 800, minted: 590, price: 50 }, { chain: 'bnb', supply: 800, minted: 541, price: 0.01 }, { chain: 'robinhood', supply: 800, minted: 455, price: 0.003 }],
     maxSupply: 4404, royaltyBps: 500, reveal: 'instant', img: img(2396), art: [2396, 1858, 3958, 4356, 4088, 1, 777, 4404].map(img),
     phases: [
       { name: 'Foot holders', kind: 'allowlist', start: s(-3 * D), end: s(-1 * D), price: 0, maxPerWallet: 1, allowlist: DEMO_ALLOWLIST, allowCount: 491 },
-      { name: 'Allowlist', kind: 'allowlist', start: s(-1 * D), end: s(-2 * H), price: 0.002, maxPerWallet: 3, allowlist: DEMO_ALLOWLIST, allowCount: 1250 },
+      { name: 'Allowlist', kind: 'allowlist', start: s(-1 * D), end: s(-2 * H), price: 0.002, prices: { apechain: 35, bnb: 0.007 }, maxPerWallet: 3, allowlist: DEMO_ALLOWLIST, allowCount: 1250 },
       { name: 'Public', kind: 'public', start: s(-2 * H), end: s(1 * D + 14 * H + 23 * 60_000), price: 0.003, maxPerWallet: 10 },
     ] },
   { slug: 'lil-foots-robinhood', name: 'LIL FOOTS: Robinhood Steps', symbol: 'STEP', creator: APP.adminAddresses[0], demo: true, status: 'approved',
@@ -58,3 +60,22 @@ export function countdown(toS: number) {
   return { d, h, m, s: sec, text: d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m ${sec}s` : `${m}m ${sec}s` };
 }
 export const pct = (a: number, b: number) => (b ? Math.min(100, (a / b) * 100) : 0);
+// ---- multichain (escrow) helpers ----
+export const isMulti = (d: Drop) => d.mode === 'multichain';
+/** Price of phase p on chain k in k's native token. */
+export function priceOn(d: Drop, p: Phase, k: string) { const c = d.chains.find(x => x.chain === k); if (p.prices?.[k] != null) return p.prices[k]; return p.kind === 'public' && c?.price != null ? c.price : p.price; }
+// LayerZero V2 fee ESTIMATES in USD per message (fork quotes, 2 DVNs, Oct 17 2026: foot-wallets FORK_DRYRUN.md). Real fees come from escrow.quoteMove().
+export function lzUsd(src: string, dst: string) {
+  if (dst === 'ethereum') return 1.8; if (src === 'ethereum') return 0.51;
+  if ((src === 'apechain' && dst === 'bnb') || (src === 'bnb' && dst === 'apechain')) return 1.47;
+  return 0.27;
+}
+export const lzEta = (src: string, dst: string) => (src === 'ethereum' || dst === 'ethereum' ? '≈ 3-5 min' : '≈ 1-3 min');
+export const MOVE_FEE_USD: number = LP.moveFeeUsd;
+export const MOVE_GAS_UNITS = BigInt(LP.moveGasUnits);
+export const OMNI_GAS_UNITS = (qty: number) => BigInt(LP.omniMintGasUnits.first + LP.omniMintGasUnits.perExtra * Math.max(0, qty - 1));
+// Demo "your NFTs" in a multichain drop (in-memory; a move just flips the Active chain after a short fake delay).
+export type Held = { id: number; active: string; moving?: string };
+const HKEY = 'multisea-lp-held';
+export const demoHeld = (): Held[] => { try { const h = JSON.parse(sessionStorage.getItem(HKEY) || 'null'); if (Array.isArray(h)) return h; } catch {} return [{ id: 2396, active: 'base' }, { id: 1858, active: 'apechain' }, { id: 3958, active: 'robinhood' }]; };
+export const saveHeld = (h: Held[]) => sessionStorage.setItem(HKEY, JSON.stringify(h));

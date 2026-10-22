@@ -20,6 +20,13 @@ export const INIT_T = [{ type: 'tuple', components: [
   { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' }, { name: 'creatorReserve', type: 'uint32' },
   { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
   { name: 'phases', type: 'tuple[]', components: PHASE_T }] }];
+export const OMNI_T = [{ type: 'tuple', components: [
+  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' },
+  { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' },
+  { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
+  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'allocEnd', type: 'uint32[]' }, { name: 'prices', type: 'uint128[]' },
+  { name: 'rebalancer', type: 'address' }] }];
+export const OMNI_APPROVAL_TYPES = { OmniDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'collectionId', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const APPROVAL_TYPES = { DropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repeat(64);
 
@@ -39,6 +46,10 @@ export function proofFor(layers, addr) {
   return out;
 }
 /** Mirrors MultiSeaLaunchpadFactory.configHash: abi.encode(InitParams) with feeWallet/platformFeeBps zeroed. */
+/** Mirrors MultiSeaLaunchpadFactory.omniConfigHash for multichain (escrow) drops. */
+export const omniConfigHash = p => keccak256(encodeAbiParameters(OMNI_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
+/** Same collection id on every chain: routes LayerZero messages between the drop's clones. */
+export const collectionIdOf = (slug, creator) => keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'address' }], [slug, creator]));
 export const configHash = p => keccak256(encodeAbiParameters(INIT_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
 
 export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, now = () => Date.now() }) {
@@ -54,12 +65,16 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const name = str(b.name, 60); if (!name) bad('name required');
     const symbol = str(b.symbol, 12).toUpperCase(); if (!/^[A-Z0-9]{1,12}$/.test(symbol)) bad('symbol must be 1-12 letters/digits');
     const chainsSel = Array.isArray(b.chains) ? [...new Set(b.chains)] : []; if (!chainsSel.length || chainsSel.some(k => !LP.chains.includes(k) || !chains[k])) bad('pick supported chains: ' + LP.chains.join(', '));
+    const mode = b.mode === 'multichain' ? 'multichain' : 'single';
+    if (mode === 'multichain' && chainsSel.length < 2) bad('multichain drops need at least 2 chains');
     const maxSupply = int(b.maxSupply, 1, 1_000_000, 'supply');
     // Per-chain allocation: each chain is its own contract with its own maxSupply. Default: everything on the first chain.
     const allocations = {}; const al = b.allocations && typeof b.allocations === 'object' ? b.allocations : { [chainsSel[0]]: maxSupply };
     for (const k of chainsSel) allocations[k] = int(al[k] ?? 0, 0, maxSupply, `${k} supply`);
     if (Object.values(allocations).reduce((a, v) => a + v, 0) !== maxSupply) bad('per-chain supplies must add up to the total supply');
-    if (Object.entries(allocations).some(([, v]) => v === 0)) bad('every selected chain needs a supply');
+    // Multichain: allocations are each chain's INITIAL unminted id pool (may be 0, rebalanced later); single: per-chain editions.
+    if (mode === 'single' && Object.entries(allocations).some(([, v]) => v === 0)) bad('every selected chain needs a supply');
+    if (mode === 'multichain' && Number(b.creatorReserve || 0) > 0) bad('creator reserve is not supported in multichain mode yet (allocate a pool instead)');
     const creatorReserve = int(b.creatorReserve ?? 0, 0, allocations[chainsSel[0]], 'creator reserve (taken from the first chain)');
     const royaltyBps = int(b.royaltyBps ?? 0, 0, LP.maxRoyaltyBps, 'royalty bps');
     const payout = lc(b.payout || creator); if (!ADDR.test(payout)) bad('payout must be an address');
@@ -78,15 +93,23 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         totalAllow += list.length; if (totalAllow > LP.maxAllowlist) bad(`allowlists capped at ${LP.maxAllowlist} addresses in this version`);
         const u = [...new Set(list)].sort(); allowlists[i] = u; merkleRoot = merkle(u).root;
       }
-      return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price: wei(x.price, `phase ${i + 1} price`), maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), merkleRoot };
+      const price = wei(x.price, `phase ${i + 1} price`);
+      // Multichain: one price per chain in that chain's native token (ETH / APE / BNB); defaults to `price` for ETH chains.
+      const prices = mode === 'multichain' ? Object.fromEntries(chainsSel.map(k => [k, wei(x.prices?.[k] ?? (chains[k].native === 'ETH' ? price : undefined), `phase ${i + 1} price on ${k}`)])) : undefined;
+      return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), merkleRoot };
     });
     return { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
-      chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
+      mode, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
   }
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), price: BigInt(p.price), maxPerWallet: p.maxPerWallet, merkleRoot: p.merkleRoot })) });
+
+  const omniParams = (d, creator) => { let end = 1; return { name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.maxSupply,
+    royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
+    phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), price: 0n, maxPerWallet: p.maxPerWallet, merkleRoot: p.merkleRoot })),
+    eids: d.chains.map(k => LP.eids[k]), allocEnd: d.chains.map(k => (end += d.allocations[k])), prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))), rebalancer: LP.rebalancer || ZERO }; };
 
   async function handle(req, env, url, p, M, body) {
     if (p[0] === 'launchpad') {
@@ -109,6 +132,13 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         if (lc(d.submitter) !== s.address) bad('only the creator can request a deploy approval', 403);
         if (!env.LAUNCHPAD_APPROVER_KEY) bad('launchpad deploy approvals are not enabled yet', 501);
         const b = await body(); const chain = b.chain; const factory = LP.factories[chain]; if (!d.chains.includes(chain) || !factory) bad('no factory on that chain yet', 501);
+        if (d.mode === 'multichain') {
+          if (!LP.omniEscrows?.[chain]) bad('no multichain escrow on that chain yet', 501);
+          const ip = omniParams(d, s.address); const cfg = omniConfigHash(ip); const collectionId = collectionIdOf(d.slug, s.address);
+          const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
+          const signature = await privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY).signTypedData({ domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory }, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message: { creator: s.address, configHash: cfg, collectionId, deadline } });
+          return { mode: 'multichain', chain, factory, collectionId, deadline: deadline.toString(), signature, configHash: cfg, params: JSON.parse(JSON.stringify(ip, (k, v) => (typeof v === 'bigint' ? v.toString() : v))) };
+        }
         const ip = initParams(d, s.address, chain); const cfg = configHash(ip);
         const salt = keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'string' }, { type: 'address' }], [d.slug, chain, s.address]));
         const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
@@ -126,7 +156,10 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         const live = { ...d, deployments, status: 'live' }; await K.put('ldrop:' + d.slug, JSON.stringify(live));
         // Auto-list on MultiSea: the drop becomes a normal approved collection page /c/<slug> (trading uses the 0.5% marketplace fee).
         const col = (await K.get('col:' + d.slug, 'json')) || { slug: d.slug, name: d.name, description: d.description, website: d.website, x: d.x, logo: d.logo, banner: d.banner, escrow: [], submitter: d.submitter, status: 'approved', approvedAt: new Date(now()).toISOString(), source: 'launchpad' };
-        col.deployments = deployments; await K.put('col:' + d.slug, JSON.stringify(col));
+        col.deployments = deployments;
+        // Multichain: the shared per-chain escrow holds every non-Active copy, so it is excluded from holder counts.
+        if (d.mode === 'multichain') col.escrow = deployments.map(x => ({ chain: x.chain, address: lc(LP.omniEscrows?.[x.chain] || ZERO) })).filter(x => x.address !== ZERO);
+        await K.put('col:' + d.slug, JSON.stringify(col));
         return { ok: true, drop: pub(live) };
       }
       return undefined;

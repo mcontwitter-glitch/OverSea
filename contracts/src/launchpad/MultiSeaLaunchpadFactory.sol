@@ -6,6 +6,9 @@ import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MultiSeaDrop } from "./MultiSeaDrop.sol";
+import { MultiSeaOmniDrop } from "./MultiSeaOmniDrop.sol";
+
+interface IOmniEscrowRegistry { function register(bytes32 cid, address drop) external; }
 
 /// @title MultiSeaLaunchpadFactory
 /// @notice One per chain. Deploys MultiSeaDrop EIP-1167 clones for drops that MultiSea approved off-chain (admin
@@ -27,6 +30,14 @@ contract MultiSeaLaunchpadFactory is Ownable2Step, EIP712 {
 
     bytes32 public constant APPROVAL_TYPEHASH =
         keccak256("DropApproval(address creator,bytes32 configHash,bytes32 salt,uint256 deadline)");
+
+    // ---- multichain (escrow) mode ----
+    address public omniImplementation;
+    address public omniEscrow;
+    bytes32 public constant OMNI_APPROVAL_TYPEHASH =
+        keccak256("OmniDropApproval(address creator,bytes32 configHash,bytes32 collectionId,uint256 deadline)");
+    event OmniDropCreated(address indexed drop, address indexed creator, bytes32 indexed collectionId, uint16 feeBps);
+    event OmniSet(address impl, address escrow);
 
     event DropCreated(address indexed drop, address indexed creator, bytes32 indexed salt, uint16 feeBps);
     event FeeSet(uint16 bps);
@@ -76,7 +87,32 @@ contract MultiSeaLaunchpadFactory is Ownable2Step, EIP712 {
         emit DropCreated(drop, msg.sender, salt, platformFeeBps);
     }
 
+    /// @notice Multichain drop: same `collectionId` and the same signed config on every chain (approval is chain-bound by
+    ///         the EIP-712 domain). Unlike createDrop, anyone may submit it (e.g. MultiSea's deployer on chains where the
+    ///         creator holds no gas token): the signature fixes the config and p.owner = creator.
+    function omniConfigHash(MultiSeaOmniDrop.OmniInit calldata p) public pure returns (bytes32) {
+        MultiSeaOmniDrop.OmniInit memory q = p; q.feeWallet = address(0); q.platformFeeBps = 0;
+        return keccak256(abi.encode(q));
+    }
+    function omniDigest(address creator, bytes32 cfg, bytes32 cid, uint256 deadline) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(OMNI_APPROVAL_TYPEHASH, creator, cfg, cid, deadline)));
+    }
+    function createOmniDrop(MultiSeaOmniDrop.OmniInit calldata p, bytes32 cid, uint256 deadline, bytes calldata sig) external returns (address drop) {
+        if (omniImplementation == address(0) || omniEscrow == address(0)) revert ZeroAddress();
+        if (block.timestamp > deadline) revert Expired();
+        if (usedSalt[cid]) revert SaltUsed();
+        if (ECDSA.recover(omniDigest(p.owner, omniConfigHash(p), cid, deadline), sig) != approver) revert BadSignature();
+        usedSalt[cid] = true;
+        MultiSeaOmniDrop.OmniInit memory q = p; q.feeWallet = feeWallet; q.platformFeeBps = platformFeeBps;
+        drop = Clones.cloneDeterministic(omniImplementation, cid);
+        isDrop[drop] = true;
+        MultiSeaOmniDrop(drop).initialize(q, omniEscrow, cid);
+        IOmniEscrowRegistry(omniEscrow).register(cid, drop);
+        emit OmniDropCreated(drop, p.owner, cid, platformFeeBps);
+    }
+
     // ---- owner (timelock) ----
+    function setOmni(address impl, address escrow) external onlyOwner { if (impl == address(0) || escrow == address(0)) revert ZeroAddress(); omniImplementation = impl; omniEscrow = escrow; emit OmniSet(impl, escrow); }
     function setFee(uint16 bps) external onlyOwner { if (bps > MAX_FEE_BPS) revert FeeTooHigh(); platformFeeBps = bps; emit FeeSet(bps); }
     function setFeeWallet(address w) external onlyOwner { if (w == address(0)) revert ZeroAddress(); feeWallet = w; emit FeeWalletSet(w); }
     function setApprover(address a) external onlyOwner { if (a == address(0)) revert ZeroAddress(); approver = a; emit ApproverSet(a); }
