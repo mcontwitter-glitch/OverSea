@@ -45,8 +45,54 @@
   "moveFeeUsd": 0.3,
   "lzReceiveGas": 250000,
   "omniMintGasUnits": {
-    "first": 100000,
-    "perExtra": 45000
+    "hub": {
+      "first": 1500000,
+      "perExtra": 30000
+    },
+    "remote": {
+      "first": 450000,
+      "perExtra": 15000
+    }
   },
-  "moveGasUnits": 300000
+  "moveGasUnits": 300000,
+  "hubChain": "base",
+  "lzEstUsd": {
+    "_note": "LayerZero V2 fee estimates per message, USD. Fork quotes Oct 17 2026, 2 DVNs (foot-wallets/contracts/mainnet/FORK_DRYRUN.md). REQUEST ~ +$0.04 for the 2.4M hub gas. Real fees come from escrow.quoteFanout / quoteRequest.",
+    "base": {
+      "ethereum": 1.638,
+      "apechain": 0.247,
+      "bnb": 0.259,
+      "robinhood": 0.267
+    },
+    "ethereum": {
+      "base": 0.488,
+      "apechain": 0.487,
+      "bnb": 0.499,
+      "robinhood": 0.507
+    },
+    "apechain": {
+      "base": 0.259,
+      "ethereum": 1.802,
+      "bnb": 1.51,
+      "robinhood": 0.276
+    },
+    "bnb": {
+      "base": 0.244,
+      "ethereum": 1.715,
+      "apechain": 1.41,
+      "robinhood": 0.261
+    },
+    "robinhood": {
+      "base": 0.253,
+      "ethereum": 1.77,
+      "apechain": 0.25,
+      "bnb": 0.262
+    },
+    "requestExtra": 0.04
+  },
+  "perIdLzUsd": {
+    "_note": "extra destination gas per additional id in one batched message (~30k gas), USD at today's gas; Ethereum busy (3 gwei) ~0.22",
+    "ethereum": 0.005,
+    "other": 0.001
+  }
 }

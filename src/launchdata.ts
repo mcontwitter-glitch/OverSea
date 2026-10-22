@@ -3,7 +3,8 @@
 import LP from '../config/launchpad.json';
 import APP from '../config/app.json';
 export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; prices?: Record<string, number>; maxPerWallet: number; allowlist?: string[]; allowCount?: number }; // prices: per-chain native price (multichain)
-// supply: single-chain = that chain's edition size; multichain = that chain's current unminted-ID pool size (initial pool ± rebalances).
+// supply: single-chain = that chain's edition size; multichain = unused (one shared supply, ids assigned by the Base hub).
+// minted: multichain = ids whose minter picked this chain (Active here at mint; escrow copies exist on every other chain).
 export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides public phase price)
 export type Drop = {
   mode?: 'single' | 'multichain'; // multichain = one shared supply, escrow + LayerZero (MultiSeaOmniDrop)
@@ -21,8 +22,8 @@ const t = Date.now(); const s = (ms: number) => Math.floor((t + ms) / 1000);
 export const DEMO_ALLOWLIST = [...APP.adminAddresses, '0x000000000000000000000000000000000000f007'].map(a => a.toLowerCase());
 export const DEMO: Drop[] = [
   { slug: 'lil-foots', name: 'LIL FOOTS', symbol: 'FOOT', creator: APP.adminAddresses[0], demo: true, status: 'live', mode: 'multichain',
-    description: '4,404 tiny feet walking every chain, as ONE multichain collection: one shared supply across Base, Ethereum, ApeChain, BNB and Robinhood. Demo drop for the MultiSea Launchpad preview: the real LIL FOOTS collection already exists, nothing here mints on-chain.',
-    chains: [{ chain: 'base', supply: 1604, minted: 1320, price: 0.003 }, { chain: 'ethereum', supply: 400, minted: 212, price: 0.003 }, { chain: 'apechain', supply: 800, minted: 590, price: 50 }, { chain: 'bnb', supply: 800, minted: 541, price: 0.01 }, { chain: 'robinhood', supply: 800, minted: 455, price: 0.003 }],
+    description: '4,404 tiny feet walking every chain, as ONE multichain collection: one shared supply across Base, Ethereum, ApeChain, BNB and Robinhood. Every NFT minted is Active on the chain its minter picked and also minted into MultiSea escrow on the other four. Demo drop for the MultiSea Launchpad preview: the real LIL FOOTS collection already exists, nothing here mints on-chain.',
+    chains: [{ chain: 'base', supply: 0, minted: 1320, price: 0.003 }, { chain: 'ethereum', supply: 0, minted: 212, price: 0.003 }, { chain: 'apechain', supply: 0, minted: 590, price: 50 }, { chain: 'bnb', supply: 0, minted: 541, price: 0.01 }, { chain: 'robinhood', supply: 0, minted: 455, price: 0.003 }],
     maxSupply: 4404, royaltyBps: 500, reveal: 'instant', img: img(2396), art: [2396, 1858, 3958, 4356, 4088, 1, 777, 4404].map(img),
     phases: [
       { name: 'Foot holders', kind: 'allowlist', start: s(-3 * D), end: s(-1 * D), price: 0, maxPerWallet: 1, allowlist: DEMO_ALLOWLIST, allowCount: 491 },
@@ -64,18 +65,35 @@ export const pct = (a: number, b: number) => (b ? Math.min(100, (a / b) * 100) :
 export const isMulti = (d: Drop) => d.mode === 'multichain';
 /** Price of phase p on chain k in k's native token. */
 export function priceOn(d: Drop, p: Phase, k: string) { const c = d.chains.find(x => x.chain === k); if (p.prices?.[k] != null) return p.prices[k]; return p.kind === 'public' && c?.price != null ? c.price : p.price; }
-// LayerZero V2 fee ESTIMATES in USD per message (fork quotes, 2 DVNs, Oct 17 2026: foot-wallets FORK_DRYRUN.md). Real fees come from escrow.quoteMove().
-export function lzUsd(src: string, dst: string) {
-  if (dst === 'ethereum') return 1.8; if (src === 'ethereum') return 0.51;
-  if ((src === 'apechain' && dst === 'bnb') || (src === 'bnb' && dst === 'apechain')) return 1.47;
-  return 0.27;
+// LayerZero V2 fee ESTIMATES in USD per message (fork quotes, 2 DVNs, Oct 17 2026: foot-wallets FORK_DRYRUN.md). Real fees come
+// from escrow.quoteMove() / quoteFanout() / quoteRequest().
+const LZ = LP.lzEstUsd as unknown as Record<string, Record<string, number>> & { requestExtra: number };
+export function lzUsd(src: string, dst: string) { return LZ[src]?.[dst] ?? 0.27; }
+export const HUB: string = LP.hubChain;
+/** One leg of the cross-chain work a multichain mint triggers. */
+export type Leg = { kind: 'request' | 'confirm' | 'copy'; from: string; to: string; usd: number };
+/** Every LayerZero message one mint of `qty` on `origin` sends (default model: escrow copies on every other chain at mint).
+ *  Base (hub) mints: 1 COPY per other chain. Other chains: REQUEST to Base, CONFIRM back, COPY to the 3 remaining chains.
+ *  One message per destination carries all `qty` ids (batched); extra ids only add destination gas. */
+export function mintLegs(d: Drop, origin: string, qty = 1): Leg[] {
+  const per = (to: string) => (qty - 1) * (to === 'ethereum' ? LP.perIdLzUsd.ethereum : LP.perIdLzUsd.other);
+  const others = d.chains.map(c => c.chain).filter(k => k !== HUB && k !== origin);
+  const legs: Leg[] = [];
+  if (origin !== HUB) {
+    legs.push({ kind: 'request', from: origin, to: HUB, usd: lzUsd(origin, HUB) + LZ.requestExtra });
+    legs.push({ kind: 'confirm', from: HUB, to: origin, usd: lzUsd(HUB, origin) + per(origin) });
+  }
+  for (const k of others) legs.push({ kind: 'copy', from: HUB, to: k, usd: lzUsd(HUB, k) + per(k) });
+  return legs;
 }
+export const legsUsd = (l: Leg[]) => l.reduce((a, x) => a + x.usd, 0);
 export const lzEta = (src: string, dst: string) => (src === 'ethereum' || dst === 'ethereum' ? '≈ 3-5 min' : '≈ 1-3 min');
 export const MOVE_FEE_USD: number = LP.moveFeeUsd;
 export const MOVE_GAS_UNITS = BigInt(LP.moveGasUnits);
-export const OMNI_GAS_UNITS = (qty: number) => BigInt(LP.omniMintGasUnits.first + LP.omniMintGasUnits.perExtra * Math.max(0, qty - 1));
+// Origin-chain gas: Base also sends the 4 COPY messages in the minter's tx; other chains send 1 REQUEST.
+export const OMNI_GAS_UNITS = (qty: number, hub: boolean) => { const g = hub ? LP.omniMintGasUnits.hub : LP.omniMintGasUnits.remote; return BigInt(g.first + g.perExtra * Math.max(0, qty - 1)); };
 // Demo "your NFTs" in a multichain drop (in-memory; a move just flips the Active chain after a short fake delay).
-export type Held = { id: number; active: string; moving?: string };
+export type Held = { id: number; active: string; moving?: string; minting?: number }; // minting: demo step 1-4 of a pending mint
 const HKEY = 'multisea-lp-held';
 export const demoHeld = (): Held[] => { try { const h = JSON.parse(sessionStorage.getItem(HKEY) || 'null'); if (Array.isArray(h)) return h; } catch {} return [{ id: 2396, active: 'base' }, { id: 1858, active: 'apechain' }, { id: 3958, active: 'robinhood' }]; };
 export const saveHeld = (h: Held[]) => sessionStorage.setItem(HKEY, JSON.stringify(h));

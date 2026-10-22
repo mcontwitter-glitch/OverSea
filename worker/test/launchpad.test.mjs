@@ -94,22 +94,23 @@ test('omniConfigHash matches the Solidity vector (contracts/test/LaunchpadOmni.t
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = omniConfigHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 50, maxSupply: 10, royaltyReceiver: C, royaltyBps: 500n,
     baseURI: 'ipfs://bafyFINAL/', preRevealURI: '', phases: [{ start: 1800000000n, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: '0x' + '0'.repeat(64) }],
-    eids: [1, 2, 3], allocEnd: [5, 8, 11], prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n], rebalancer: '0x0000000000000000000000000000000000004ee9' });
-  assert.equal(h, '0xab5a4c531768ef27025f95820c4fc60ef1c5b2b4a4afe43a4675c74c1d56c988');
+    eids: [1, 2, 3, 4], hubEid: 1, prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n, 3000000000000000n] });
+  assert.equal(h, '0x6d15644241a5cdc88fe4880565e1c2e4fb91cc540c3dd1c22eda3d78ea1dceab');
 });
 
-test('multichain drop: validation, shared supply pools, omni approval, escrow excluded on auto-list', async () => {
+test('multichain drop: validation, shared supply via the Base hub, omni approval, escrow excluded on auto-list', async () => {
   const { call, env, as } = setup();
-  const md = o => drop({ slug: 'omni-foots', mode: 'multichain', chains: ['base', 'bnb'], allocations: { base: 3404, bnb: 1000 }, creatorReserve: 0,
+  const md = o => drop({ slug: 'omni-foots', mode: 'multichain', chains: ['base', 'bnb'], maxSupply: 4404, creatorReserve: 0,
     phases: [{ name: 'Public', kind: 'public', start: 1800000000, end: 0, price: '3000000000000000', prices: { bnb: '10000000000000000' }, maxPerWallet: 5 }], ...o });
-  await assert.rejects(call('POST', '/launchpad/submit', md({ chains: ['base'], allocations: { base: 4404 } })), /at least 2 chains/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ chains: ['base'] })), /at least 2 chains/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ chains: ['apechain', 'bnb'], phases: [{ kind: 'public', start: 1800000000, price: '1', prices: { apechain: '1', bnb: '1' } }] })), /supply hub/);
   await assert.rejects(call('POST', '/launchpad/submit', md({ phases: [{ kind: 'public', start: 1800000000, price: '1' }] })), /price on bnb/);
   await assert.rejects(call('POST', '/launchpad/submit', md({ creatorReserve: 4 })), /reserve/);
-  assert.equal((await call('POST', '/launchpad/submit', md({ slug: 'omni-zero', allocations: { base: 4404, bnb: 0 } }))).status, 'pending'); // empty initial pool is allowed
+  assert.equal((await call('POST', '/launchpad/submit', md({ slug: 'omni-alloc', allocations: { base: 1, bnb: 1 } }))).status, 'pending'); // per-chain splits are ignored: one shared supply
   await call('POST', '/launchpad/submit', md()); as(ADMIN); await call('POST', '/admin/launchpad/approve/omni-foots'); as(creator.address);
   env.LAUNCHPAD_APPROVER_KEY = (await import('viem/accounts')).generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
   const a = await call('POST', '/launchpad/approval/omni-foots', { chain: 'bnb' });
-  assert.equal(a.mode, 'multichain'); assert.deepEqual(a.params.allocEnd, [3405, 4405]); assert.deepEqual(a.params.eids, [30184, 30102]);
+  assert.equal(a.mode, 'multichain'); assert.equal(a.params.allocEnd, undefined); assert.equal(a.params.hubEid, 30184); assert.equal(a.params.maxSupply, 4404); assert.deepEqual(a.params.eids, [30184, 30102]);
   assert.deepEqual(a.params.prices, ['3000000000000000', '10000000000000000']);
   assert.equal(a.collectionId, collectionIdOf('omni-foots', creator.address.toLowerCase()));
   const b2 = await call('POST', '/launchpad/approval/omni-foots', { chain: 'base' }); assert.equal(b2.configHash, a.configHash, 'same config on every chain');

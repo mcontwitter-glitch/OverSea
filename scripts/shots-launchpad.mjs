@@ -28,8 +28,14 @@ for (const vp of ['mobile', 'desktop']) {
   await go(p, '/launchpad/lil-foots'); await p.evaluate(() => sessionStorage.removeItem('multisea-lp-held')); await go(p, '/launchpad/lil-foots'); await p.waitForTimeout(3000);
   await p.locator('.ldprog.big').scrollIntoViewIfNeeded(); await shot(p, `mc-shared-supply-${vp}`);
   await p.click('[data-ch="apechain"]'); await p.waitForTimeout(300); await p.locator('.ldmintbox').scrollIntoViewIfNeeded(); await shot(p, `mc-mint-apechain-${vp}`);
+  await p.click('[data-act=mint]'); await p.waitForTimeout(700); await p.locator('.ldmintbox .ldpend').scrollIntoViewIfNeeded(); await shot(p, `mc-minting-pending-${vp}`);
+  await p.waitForTimeout(2200); await p.locator('.ldmintbox .ldpend').scrollIntoViewIfNeeded(); await shot(p, `mc-minting-assigned-${vp}`);
+  await p.waitForTimeout(4000); await p.locator('.ldmintbox .ldpend').scrollIntoViewIfNeeded(); await shot(p, `mc-minted-done-${vp}`);
+  await p.click('[data-ch="base"]'); await p.waitForTimeout(300); await p.locator('.ldmintbox').scrollIntoViewIfNeeded(); await shot(p, `mc-mint-base-${vp}`);
+  await p.click('[data-act=mint]'); await p.waitForTimeout(500); await p.locator('.ldmintbox .ldpend').scrollIntoViewIfNeeded(); await shot(p, `mc-mint-base-pending-${vp}`);
+  await p.waitForTimeout(5000);
   await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-your-nfts-${vp}`);
-  await p.click('[data-move="2396"]'); await p.waitForTimeout(2500); await shot(p, `mc-move-modal-${vp}`);
+  await p.click('.ldheld [data-move]:not([disabled]) >> nth=0'); await p.waitForTimeout(2500); await shot(p, `mc-move-modal-${vp}`);
   await p.click('.ldmodal [data-dst="ethereum"]'); await p.waitForTimeout(300); await shot(p, `mc-move-modal-eth-${vp}`);
   await p.click('.ldmodal [data-dst="bnb"]'); await p.click('[data-act=domove]'); await p.waitForTimeout(300); await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-moving-${vp}`);
   await p.waitForTimeout(3000); await p.locator('.ldheld').scrollIntoViewIfNeeded(); await shot(p, `mc-moved-${vp}`);

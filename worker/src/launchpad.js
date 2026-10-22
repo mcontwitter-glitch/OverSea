@@ -24,8 +24,7 @@ export const OMNI_T = [{ type: 'tuple', components: [
   { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' },
   { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' },
   { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
-  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'allocEnd', type: 'uint32[]' }, { name: 'prices', type: 'uint128[]' },
-  { name: 'rebalancer', type: 'address' }] }];
+  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' }] }];
 export const OMNI_APPROVAL_TYPES = { OmniDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'collectionId', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const APPROVAL_TYPES = { DropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repeat(64);
@@ -67,15 +66,21 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const chainsSel = Array.isArray(b.chains) ? [...new Set(b.chains)] : []; if (!chainsSel.length || chainsSel.some(k => !LP.chains.includes(k) || !chains[k])) bad('pick supported chains: ' + LP.chains.join(', '));
     const mode = b.mode === 'multichain' ? 'multichain' : 'single';
     if (mode === 'multichain' && chainsSel.length < 2) bad('multichain drops need at least 2 chains');
+    // Multichain: the hub chain (Base) assigns every token id and enforces the shared supply, so it must be in the drop.
+    if (mode === 'multichain' && !chainsSel.includes(LP.hubChain)) bad(`multichain drops must include ${chains[LP.hubChain]?.name || LP.hubChain} (the supply hub)`);
     const maxSupply = int(b.maxSupply, 1, 1_000_000, 'supply');
     // Per-chain allocation: each chain is its own contract with its own maxSupply. Default: everything on the first chain.
-    const allocations = {}; const al = b.allocations && typeof b.allocations === 'object' ? b.allocations : { [chainsSel[0]]: maxSupply };
-    for (const k of chainsSel) allocations[k] = int(al[k] ?? 0, 0, maxSupply, `${k} supply`);
-    if (Object.values(allocations).reduce((a, v) => a + v, 0) !== maxSupply) bad('per-chain supplies must add up to the total supply');
-    // Multichain: allocations are each chain's INITIAL unminted id pool (may be 0, rebalanced later); single: per-chain editions.
-    if (mode === 'single' && Object.entries(allocations).some(([, v]) => v === 0)) bad('every selected chain needs a supply');
-    if (mode === 'multichain' && Number(b.creatorReserve || 0) > 0) bad('creator reserve is not supported in multichain mode yet (allocate a pool instead)');
-    const creatorReserve = int(b.creatorReserve ?? 0, 0, allocations[chainsSel[0]], 'creator reserve (taken from the first chain)');
+    // Single chain: per-chain editions that must add up to the total. Multichain: ONE shared supply, no per-chain split
+    // (any chain can mint the next id; the hub assigns it), so allocations are not used.
+    let allocations;
+    if (mode === 'single') {
+      allocations = {}; const al = b.allocations && typeof b.allocations === 'object' ? b.allocations : { [chainsSel[0]]: maxSupply };
+      for (const k of chainsSel) allocations[k] = int(al[k] ?? 0, 0, maxSupply, `${k} supply`);
+      if (Object.values(allocations).reduce((a, v) => a + v, 0) !== maxSupply) bad('per-chain supplies must add up to the total supply');
+      if (Object.entries(allocations).some(([, v]) => v === 0)) bad('every selected chain needs a supply');
+    }
+    if (mode === 'multichain' && Number(b.creatorReserve || 0) > 0) bad('creator reserve is not supported in multichain mode yet (mint it in an allowlist phase)');
+    const creatorReserve = mode === 'multichain' ? 0 : int(b.creatorReserve ?? 0, 0, allocations[chainsSel[0]], 'creator reserve (taken from the first chain)');
     const royaltyBps = int(b.royaltyBps ?? 0, 0, LP.maxRoyaltyBps, 'royalty bps');
     const payout = lc(b.payout || creator); if (!ADDR.test(payout)) bad('payout must be an address');
     const royaltyReceiver = lc(b.royaltyReceiver || payout); if (!ADDR.test(royaltyReceiver)) bad('royalty receiver must be an address');
@@ -106,10 +111,10 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), price: BigInt(p.price), maxPerWallet: p.maxPerWallet, merkleRoot: p.merkleRoot })) });
 
-  const omniParams = (d, creator) => { let end = 1; return { name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.maxSupply,
+  const omniParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.maxSupply,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), price: 0n, maxPerWallet: p.maxPerWallet, merkleRoot: p.merkleRoot })),
-    eids: d.chains.map(k => LP.eids[k]), allocEnd: d.chains.map(k => (end += d.allocations[k])), prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))), rebalancer: LP.rebalancer || ZERO }; };
+    eids: d.chains.map(k => LP.eids[k]), hubEid: LP.eids[LP.hubChain], prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))) });
 
   async function handle(req, env, url, p, M, body) {
     if (p[0] === 'launchpad') {

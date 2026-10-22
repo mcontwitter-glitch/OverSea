@@ -5,7 +5,7 @@ import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wal
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
 import { FLAT_FEE_USD } from './xpaycore';
-import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, demoHeld, saveHeld, type Drop, type Held } from './launchdata';
+import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, demoHeld, saveHeld, type Drop, type Held } from './launchdata';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; native: string; chainId: number }>;
 const path = location.pathname.replace(/\/+$/, '');
@@ -76,32 +76,36 @@ function breakdown(d: Drop) {
   if (!p) return '';
   const nat = chains[c.chain].native; const unit = priceOn(d, p, c.chain); const price = unit * qty;
   const r = rateOf(rates, c.chain); const g = gp[c.chain];
-  const gasNat = g ? Number(((isMulti(d) ? OMNI_GAS_UNITS(qty) : GAS_UNITS(qty)) * 125n / 100n + 10_000n) * g) / 1e18 : null;
+  const gasNat = g ? Number(((isMulti(d) ? OMNI_GAS_UNITS(qty, c.chain === HUB) : GAS_UNITS(qty)) * 125n / 100n + 10_000n) * g) / 1e18 : null;
   const feeNat = (price * FEE_BPS) / 10_000; const relayUsd = pay === 'relay' ? FLAT_FEE_USD : 0;
-  const total = price + (gasNat ?? 0) + (r ? relayUsd / r : 0);
+  // Multichain: the LayerZero messages that create the escrow copies are a pass-through cost, shown on their OWN line
+  // (not inside "MultiSea fee": MultiSea keeps none of it). Estimate from the Oct 17 fork quotes; production uses quoteMint().
+  const legs = isMulti(d) ? mintLegs(d, c.chain, qty) : []; const lzUsdTot = legsUsd(legs); const lzNat = r ? lzUsdTot / r : 0;
+  const total = price + (gasNat ?? 0) + (r ? relayUsd / r : 0) + lzNat;
   return `<div class="kv bkv ldkv"><span>Mint price</span><b>${qty} × ${fmt(unit)} = ${fmt(price)} ${esc(nat)} <i class="usd">${usdTxt(r ? price * r : null)}</i></b>
     <span>MultiSea fee</span><b>${fmt(feeNat + (r ? relayUsd / r : 0))} ${esc(nat)} <i class="usd">${pay === 'relay' ? `0.5% included + $${FLAT_FEE_USD.toFixed(2)} Relay route` : '0.5% included in price'}</i></b>
     <span>Network gas (est.)</span><b>${gasNat == null ? '<span class="spin"></span>' : `${fmt(gasNat, 7)} ${esc(nat)} <i class="usd">${usdTxt(r ? gasNat * r : null)}</i>`}</b>
-    ${isMulti(d) ? `<span>LayerZero fee</span><b>None <i class="usd">minting never sends a cross-chain message</i></b>` : ''}
+    ${isMulti(d) ? `<span>Escrow copies on ${legs.filter(l => l.kind === 'copy').length + (c.chain === HUB ? 0 : 1)} chains (LayerZero, est.)</span><b>${r ? fmt(lzNat, 5) + ' ' + esc(nat) : ''} <i class="usd">≈ $${lzUsdTot.toFixed(2)} · ${legs.length} message${legs.length > 1 ? 's' : ''}, passed through to LayerZero${qty > 1 ? ` · one message per chain carries all ${qty}` : ''}</i></b>` : ''}
     <span>Total</span><b class="xtot">${fmt(total)} ${esc(nat)} <i class="usd">${usdTxt(r ? total * r : null)}</i></b></div>`;
 }
 function mintBox(d: Drop) {
   const st = dropState(d); const ai = activePhase(d); const p = d.phases[ai]; const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
-  const left = Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || 20, left, 20));
+  const left = isMulti(d) ? Math.max(0, d.maxSupply - minted(d)) : Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || 20, left, 20));
   if (qty > max) qty = max;
   const al = p?.kind === 'allowlist'; const eligible = !al || (!!wallet.address && !!p.allowlist?.includes(wallet.address.toLowerCase()));
   const btn = st !== 'live' ? `<button class="bbtn" disabled>${st === 'upcoming' ? 'Not started' : 'Minting ended'}</button>`
     : !eligible ? `<button class="bbtn" disabled>${wallet.address ? 'Not on this allowlist' : 'Connect to check allowlist'}</button>`
-    : left <= 0 ? `<button class="bbtn" disabled>${esc(chains[c.chain].name)} pool is empty: pick another chain</button>`
+    : left <= 0 ? `<button class="bbtn" disabled>Sold out</button>`
+    : isMulti(d) && pend && !pend.done ? `<button class="bbtn" disabled><span class="spin"></span> Minting… confirming across chains</button>`
     : `<button class="bbtn ldmint" data-act="mint">Mint ${qty} on ${esc(chains[c.chain].name)} · demo (no transaction)</button>`;
   return `<div class="fcard ldmintbox">
-   ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}" ${isMulti(d) && x.supply - x.minted <= 0 ? 'data-empty="1"' : ''}><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${x.supply - x.minted > 0 ? `${(x.supply - x.minted).toLocaleString()} left${isMulti(d) ? ' in pool' : ''}` : 'Pool empty'}</em></span></button>`).join('')}</div>` : ''}
-   ${isMulti(d) ? `<div class="ldexpl"><b>🔁 One collection on ${d.chains.length} chains.</b> Every token ID exists on every chain. Yours is <b>Active</b> on ${esc(chains[c.chain].name)}, the chain you mint on, and locked in MultiSea's escrow everywhere else (never burned). You can move it to another chain later via LayerZero.</div>` : ''}
+   ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}"><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${isMulti(d) ? (x.chain === HUB ? 'Instant · supply hub' : 'Confirms via Base') : `${(x.supply - x.minted).toLocaleString()} left`}</em></span></button>`).join('')}</div>` : ''}
+   ${isMulti(d) ? mcExplainer(d, c.chain) : ''}
    ${st === 'live' ? `<div class="ldqty"><span class="gh">Quantity</span><div class="qpick"><button data-q="-1" ${qty <= 1 ? 'disabled' : ''} aria-label="Less">−</button><input data-qin type="number" min="1" max="${max}" value="${qty}" aria-label="Quantity"><button data-q="1" ${qty >= max ? 'disabled' : ''} aria-label="More">+</button></div><button class="pill" data-q="max">Max ${max}</button></div>
    <div class="ldpay"><label class="${pay === 'direct' ? 'on' : ''}"><input type="radio" name="pay" value="direct" ${pay === 'direct' ? 'checked' : ''}><span><b>${esc(chains[c.chain].native)} on ${esc(chains[c.chain].name)}</b><em>Direct mint</em></span></label><label class="${pay === 'relay' ? 'on' : ''}"><input type="radio" name="pay" value="relay" ${pay === 'relay' ? 'checked' : ''}><span><b>Any token, any chain</b><em>Routed by Relay</em></span></label></div>
    ${breakdown(d)}` : ''}
    ${btn}
-   ${demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
+   ${isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
    <p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p></div>`;
 }
 function alBox(d: Drop) {
@@ -113,13 +117,42 @@ function sharedBar(d: Drop) {
   const m = minted(d);
   return `<div class="ldprog big"><div class="ldprogh"><b>${pct(m, d.maxSupply).toFixed(1)}% of the shared supply minted</b><span>${m.toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div>
    <div class="ldbar ldseg">${d.chains.map(c => `<i style="width:${pct(c.minted, d.maxSupply)}%;background:${CH_COL[c.chain] || '#888'}" title="${esc(chains[c.chain]?.name)}: ${c.minted.toLocaleString()}"></i>`).join('')}</div>
-   <div class="ldpools">${d.chains.map(c => { const left = Math.max(0, c.supply - c.minted); return `<div class="ldpool"><span class="dot" style="background:${CH_COL[c.chain] || '#888'}"></span><img class="cl" src="/logos/${c.chain}.svg" alt=""><b>${esc(chains[c.chain]?.name)}</b><span class="mut">${c.minted.toLocaleString()} minted</span><em>${left ? `${left.toLocaleString()} left` : 'pool empty'}</em></div>`; }).join('')}</div>
-   <p class="mut small">One supply of ${d.maxSupply.toLocaleString()} for the whole collection. Each chain mints from its own pool of unminted IDs, so nothing can oversell; MultiSea can rebalance pools between chains during the mint.</p></div>`;
+   <div class="ldlegend">${d.chains.map(c => `<span><i style="background:${CH_COL[c.chain] || '#888'}"></i>${esc(chains[c.chain]?.name)} <b>${c.minted.toLocaleString()}</b></span>`).join('')}<span class="mut">${(d.maxSupply - m).toLocaleString()} left, mintable on any chain</span></div>
+   <p class="mut small">One supply of ${d.maxSupply.toLocaleString()} for the whole collection, shown by the chain each NFT was minted on. Every minted NFT also exists in escrow on the other ${d.chains.length - 1} chains. The next ID always comes from the Base supply hub, so no ID is minted twice and the total can't be exceeded.</p></div>`;
+}
+function mcExplainer(d: Drop, k: string) {
+  const others = d.chains.map(c => c.chain).filter(x => x !== k).map(x => esc(chains[x]?.name)); const nm = esc(chains[k].name);
+  return `<div class="ldexpl"><b>🔁 One NFT, ${d.chains.length} chains.</b> Your NFT is <b>Active on ${nm}</b>, the chain you mint on. The same ID is also <b>minted into MultiSea's escrow on ${others.join(', ')}</b> (locked, never burned), so you can move it later via LayerZero.
+   ${k === HUB ? '<span class="mut">Base is the supply hub: your ID is assigned in your mint transaction (instant), and the escrow copies arrive on the other chains within minutes.</span>' : `<span class="mut">Minting on ${nm} takes two steps: you pay on ${nm} (held by the contract), the Base supply hub assigns your ID and checks the shared supply, then it becomes Active here (≈ ${lzEta(k, HUB).replace('≈ ', '')} each way). If it sold out meanwhile, you're refunded automatically.</span>`}</div>`;
+}
+// Demo pending-mint tracker (no transaction): shows the real sequence honestly.
+type Pend = { origin: string; qty: number; start: number; t0: number; done?: boolean };
+let pend: Pend | null = null;
+function pendSteps(d: Drop, p: Pend) {
+  const el = (Date.now() - p.t0) / 1000; const hub = p.origin === HUB; const o = esc(chains[p.origin].name);
+  const ids = p.qty > 1 ? `#${p.start}–#${p.start + p.qty - 1}` : `#${p.start}`;
+  const st = (ok: boolean) => (ok ? '<i class="ok">✓</i>' : '<span class="spin"></span>');
+  const steps: string[] = [];
+  if (!hub) {
+    steps.push(`${st(true)} Paid on ${o} · held by the drop contract`);
+    steps.push(`${st(el > 1.5)} Base hub ${el > 1.5 ? `assigned ${ids} · shared supply checked` : 'assigning your ID · checking shared supply'}`);
+    steps.push(`${st(el > 3)} ${el > 3 ? `Active on ${o}` : `Confirming on ${o}`}`);
+  } else steps.push(`${st(true)} ${ids} assigned by the Base hub · Active on Base`);
+  const copyChains = d.chains.map(c => c.chain).filter(k => k !== p.origin);
+  const copies = copyChains.map((k, i) => { const at = (hub ? 1 : 3) + (k === 'ethereum' ? 2.5 : 0.6 + i * 0.4) + (k === HUB && !hub ? -1.6 : 0); return `<span class="ldcopy ${el > at ? 'ok' : ''}"><img class="cl" src="/logos/${k}.svg" alt="">${esc(chains[k].name)} ${el > at ? '✓' : '…'}</span>`; });
+  const allDone = el > (hub ? 1 : 3) + 2.6;
+  return { steps, copies, allDone, ids };
+}
+function pendBox(d: Drop) {
+  const p = pend!; const x = pendSteps(d, p); const o = esc(chains[p.origin].name);
+  return `<div class="ldpend ${x.allDone ? 'done' : ''}"><b>${x.allDone ? `✓ Minted ${x.ids} · Active on ${o}` : '<span class="spin"></span> Minting… confirming across chains'}</b>
+   <ul>${x.steps.map(t => `<li>${t}</li>`).join('')}<li>${x.allDone ? '<i class="ok">✓</i>' : '<span class="spin"></span>'} Escrow copies <span class="ldcopies">${x.copies.join('')}</span></li></ul>
+   <span class="mut small">Demo only: no transaction was sent. Timings are simulated (real LayerZero delivery ≈ 1-5 min per hop).</span></div>`;
 }
 let held: Held[] = demoHeld(); let moveId = 0; let moveDst = ''; let moveMsg = '';
 function heldBox(d: Drop) {
-  return `<div class="fcard ldheld"><div class="gh">Your NFTs <span class="mut small">demo</span></div>${held.map(h => `<div class="ldhrow"><img src="/img/lil-foots/m/${h.id}.webp" alt="" width="48" height="48"><div><b>${esc(d.symbol)} #${h.id}</b>${h.moving ? `<span class="ldactive moving">Moving → ${esc(chains[h.moving]?.name)}…</span>` : `<span class="ldactive"><img class="cl" src="/logos/${h.active}.svg" alt="">Active on ${esc(chains[h.active]?.name)}</span>`}</div><button class="obtn sm" data-move="${h.id}" ${h.moving ? 'disabled' : ''}>Move to chain</button></div>`).join('')}
-   <p class="mut small">An NFT is Active on one chain at a time. On every other chain the same ID sits locked in the escrow contract.</p></div>`;
+  return `<div class="fcard ldheld"><div class="gh">Your NFTs <span class="mut small">demo</span></div>${held.map(h => `<div class="ldhrow"><img src="/img/lil-foots/m/${h.id}.webp" alt="" width="48" height="48"><div><b>${esc(d.symbol)} #${h.id}</b>${h.minting ? `<span class="ldactive moving">Minting… confirming across chains</span>` : h.moving ? `<span class="ldactive moving">Moving → ${esc(chains[h.moving]?.name)}…</span>` : `<span class="ldactive"><img class="cl" src="/logos/${h.active}.svg" alt="">Active on ${esc(chains[h.active]?.name)}</span>`}</div><button class="obtn sm" data-move="${h.id}" ${h.moving || h.minting ? 'disabled' : ''}>Move to chain</button></div>`).join('')}
+   <p class="mut small">An NFT is Active on one chain at a time. On every other chain the same ID is held by the escrow contract: it was minted there into escrow when you minted.</p></div>`;
 }
 function moveModal(d: Drop) {
   const h = held.find(x => x.id === moveId); if (!h) return '';
@@ -156,7 +189,7 @@ function dropPage(d: Drop) {
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
    <aside class="ldside">${mintBox(d)}${alBox(d)}
-    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared by ${d.chains.length} chains</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
+    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
 }
@@ -190,13 +223,21 @@ app.addEventListener('click', e => {
     setTimeout(() => { h.active = dst; delete h.moving; saveHeld(held); render(); }, 2500);
     return;
   }
-  if (el.dataset.ch) { chainSel = el.dataset.ch; qty = 1; demoMsg = ''; render(); }
+  if (el.dataset.ch) { chainSel = el.dataset.ch; qty = 1; demoMsg = ''; if (pend?.done) pend = null; render(); }
   if (el.dataset.q) { qty = el.dataset.q === 'max' ? 999 : Math.max(1, qty + +el.dataset.q); demoMsg = ''; render(); }
   if (el.dataset.act === 'alcheck') {
     alAddr = (app.querySelector('[data-al]') as HTMLInputElement).value.trim().toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(alAddr)) alRes = '<span class="err">Enter a 0x address.</span>';
     else alRes = d.phases.filter(p => p.kind === 'allowlist').map(p => `${p.allowlist?.includes(alAddr) ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} ${esc(p.name)}`).join(' &nbsp; ') + ' <span class="mut">(demo list)</span>';
     render();
+  }
+  if (el.dataset.act === 'mint' && isMulti(d)) {
+    const c = d.chains.find(x => x.chain === chainSel)!; const start = minted(d) + 1; const q = qty;
+    pend = { origin: c.chain, qty: q, start, t0: Date.now() }; c.minted += q; // demo counter only
+    const h: Held = { id: Math.min(start, d.maxSupply), active: c.chain, minting: 1 };
+    held.unshift(h); saveHeld(held.filter(x => !x.minting));
+    const iv = setInterval(() => { if (!pend) return clearInterval(iv); const x = pendSteps(d, pend); if (x.allDone) { pend.done = true; delete h.minting; saveHeld(held); clearInterval(iv); } render(); }, 400);
+    render(); return;
   }
   if (el.dataset.act === 'mint') {
     const c = d.chains.find(x => x.chain === chainSel)!;
