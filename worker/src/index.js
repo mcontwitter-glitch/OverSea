@@ -41,6 +41,8 @@ const FOOT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb', 'robinhood'];
 const FOOT_REG = '0x000000006551c19487814612e58FE06813775758', FOOT_IMPL = '0x02e9fE944e1604160dac0fF5f35b8cE581D1e9b3', FOOT_BASE = '0x1Ec054906b4A45DeBa936Aa88492D725cb06508e';
 const footTba = id => getContractAddress({ opcode: 'CREATE2', from: FOOT_REG, salt: '0x' + '0'.repeat(64), bytecode: concat(['0x3d60ad80600a3d3981f3363d3d373d3d3d363d73', FOOT_IMPL, '0x5af43d82803e903d91602b57fd5bf3', encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], ['0x' + '0'.repeat(64), 8453n, FOOT_BASE, BigInt(id)])]) });
 const osFetch = (env, path, init = {}) => fetch(OS + path, { ...init, headers: { 'x-api-key': env.OPENSEA_API_KEY, accept: 'application/json', 'content-type': 'application/json', ...(init.headers || {}) } });
+// Foot wallet NFT list cache (seconds); see GET /foot/<id>/nfts.
+const FW_TTL = 30, FW_TTL_PARTIAL = 10, FW_MIN_AGE = 10;
 async function cached(key, ttl, fn) {
   const cache = caches.default; const req = new Request('https://cache.multisea/' + key);
   const hit = await cache.match(req); if (hit) return hit.json();
@@ -447,12 +449,17 @@ async function handle(req, env, url) {
       }
       return [];
     };
+    // Edge cache: FW_TTL s for a full answer, FW_TTL_PARTIAL s when a chain failed (was 120 / 15). `?fresh=1` (the page's
+    // Refresh button) skips the cache, but only once the cached copy is FW_MIN_AGE s old, so a foot costs at most one
+    // OpenSea fan-out per FW_MIN_AGE s however often it is clicked (plus the per-IP 60/min API limit).
     const key = `fw:${id}`; const cache = caches.default; const creq = new Request('https://cache.multisea/' + key);
-    const hit = await cache.match(creq); if (hit) return hit.json();
+    const fresh = url.searchParams.get('fresh') === '1';
+    const hit = await cache.match(creq);
+    if (hit) { const v = await hit.json(); if (!fresh || Date.now() - (v.at || 0) < FW_MIN_AGE * 1000) return { ...v, cached: true }; }
     const parts = await Promise.all(FOOT_CHAINS.map(k => (chains[k]?.openseaSlug ? one(k, chains[k].openseaSlug) : [])));
     const nfts = parts.flat(); const failed = nfts.filter(n => n.error).map(n => n.chain);
-    const val = { id, account: tba, nfts: nfts.filter(n => !n.error), failed, unsupported: FOOT_CHAINS.filter(k => !chains[k]?.openseaSlug) };
-    await cache.put(creq, new Response(JSON.stringify(val), { headers: { 'cache-control': `public, max-age=${failed.length ? 15 : 120}` } }));
+    const val = { id, account: tba, nfts: nfts.filter(n => !n.error), failed, unsupported: FOOT_CHAINS.filter(k => !chains[k]?.openseaSlug), at: Date.now() };
+    await cache.put(creq, new Response(JSON.stringify(val), { headers: { 'cache-control': `public, max-age=${failed.length ? FW_TTL_PARTIAL : FW_TTL}` } }));
     return val;
   }
 

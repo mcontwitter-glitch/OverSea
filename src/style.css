@@ -540,3 +540,7 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .ldtnrow>span{display:flex;gap:6px;align-items:center;color:#cfcfd4}.ldtnrow .cl{width:16px;height:16px}.ldtnrow b{font-weight:600;text-align:right}.ldtnrow em{font-style:normal;color:#5eead4;font-size:12px;margin-left:4px}
 .ldtn .ldkv>div{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.ldtn .ldkv>div>b{text-align:right;max-width:62%}.ldtn .ldkv i.usd{display:block}
 .ldtn .ldkv{display:block}
+.fwrf{display:flex;align-items:center;gap:8px;min-width:0}
+.fwrbtn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;background:#17181b;border:1px solid #2e3136;color:#dfe8ef;font-size:12px;font-weight:600;cursor:pointer}
+.fwrbtn .fi{width:14px;height:14px}.fwrbtn:hover:not(:disabled){border-color:#45bdfa88}.fwrbtn:disabled{opacity:.5;cursor:progress}.fwrbtn:disabled .fi{animation:fwspin 1s linear infinite}
+@keyframes fwspin{to{transform:rotate(360deg)}}

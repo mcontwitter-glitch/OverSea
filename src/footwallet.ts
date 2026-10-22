@@ -43,12 +43,13 @@ const nat = (k: string) => chains[k]?.native || 'ETH';
 
 const id = +(location.pathname.match(/^\/w\/(\d+)/)?.[1] || 0);
 const pg = frame('', `${footName(id)} wallet`, 'fwpage');
-const S: { tba: Hex; regOk: boolean | null; cs: CS[]; base: { active: number; trueOwner: Hex | null; baseLocked: boolean } | null; abs: { owner: Hex | null; inVault: boolean } | null; nfts: Nft[] | null; nftNote: string; rates: UsdRates | null; loaded: boolean } =
-  { tba: footTba(id), regOk: null, cs: [], base: null, abs: null, nfts: null, nftNote: '', rates: null, loaded: false };
+const S: { tba: Hex; regOk: boolean | null; cs: CS[]; base: { active: number; trueOwner: Hex | null; baseLocked: boolean } | null; abs: { owner: Hex | null; inVault: boolean } | null; nfts: Nft[] | null; nftNote: string; nftAt: number | null; rates: UsdRates | null; loaded: boolean } =
+  { tba: footTba(id), regOk: null, cs: [], base: null, abs: null, nfts: null, nftNote: '', nftAt: null, rates: null, loaded: false };
 
 const I = {
   send: '<svg class="fi" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg>', recv: '<svg class="fi" viewBox="0 0 24 24"><path d="M17 7 7 17M16 17H7V8"/></svg>',
   lock: '<svg class="fi" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>', unlock: '<svg class="fi" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>',
+  refresh: '<svg class="fi" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
   item: '<svg class="fi" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m4 15 4-4 5 5 3-3 4 4"/></svg>', copy: '<svg class="fi" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
 };
 const CC: Record<string, string> = { base: '#2c6bff', ethereum: '#627eea', apechain: '#0054fa', bnb: '#f0b90b', robinhood: '#c3f53c' };
@@ -66,28 +67,60 @@ async function readChain(k: FwChain): Promise<CS> {
   const g = (i: number) => (hub && hub[i].status === 'success' ? hub[i].result : null);
   return { k, ok: !!hub && hub[0].status === 'success', live: g(0) as Hex | null, lock: g(1) as Lock | null, paused: g(2) as boolean | null, deployed: code == null ? null : code !== '0x', bal, usd: null, epoch: ((g(3) as any)?.[1] as bigint) ?? 0n };
 }
-async function load() {
+// NFT list freshness. The Worker edge-caches /foot/<id>/nfts for 30 s (10 s if a chain failed); OpenSea itself usually
+// needs ~1-5 min to index a new transfer. So the page re-polls the (cached, cheap) list every NFT_POLL_MS while the tab
+// is visible, for NFT_POLL_FOR_MS after the last load/refresh, and the Refresh button asks the Worker to skip its cache
+// (`?fresh=1`, which the Worker honours at most once per 10 s per foot).
+export const NFT_POLL_MS = 30_000, NFT_POLL_FOR_MS = 10 * 60_000;
+let nftSeq = 0, pollT: ReturnType<typeof setTimeout> | null = null, pollUntil = 0, lastNftFetch = 0, busy = false;
+async function loadNfts(fresh = false) {
+  const my = ++nftSeq; lastNftFetch = Date.now();
+  // Worker -> OpenSea. One retry; per-chain gaps are named instead of hiding the whole list.
+  const getNfts = async () => { const r = await fetch(`${API}/foot/${id}/nfts${fresh ? '?fresh=1' : ''}`, { cache: 'no-store' }); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { http: r.status }); return j; };
+  try {
+    const j = await getNfts().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return getNfts(); });
+    const list: Nft[] = (j.nfts || []).filter((n: any) => !n.error); const name = (k: string) => chains[k]?.name;
+    // OpenSea does not index some chains (BNB): read LIL FOOTS held by this account there from chain instead.
+    const onchain = await Promise.all((j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).map((k: string) => footsHeldOnchain(k, S.tba as Hex).catch(() => null)));
+    const readOk = new Set<string>(); (j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).forEach((k: string, i: number) => { const r = onchain[i]; if (r) { readOk.add(k); list.push(...r); } });
+    if (my !== nftSeq) return;
+    const un = (j.unsupported || []).filter((k: string) => !readOk.has(k)).map(name).filter(Boolean);
+    const failed = [...new Set<string>([...(j.failed || []), ...(j.nfts || []).filter((n: any) => n.error).map((n: any) => n.chain)])].map(name).filter(Boolean);
+    S.nfts = list; S.nftAt = typeof j.at === 'number' ? j.at : Date.now();
+    S.nftNote = [un.length ? `NFTs on ${un.join(', ')} are not indexed by OpenSea.` : '', failed.length ? `Couldn't load NFTs on ${failed.join(', ')} right now; refresh to retry.` : ''].filter(Boolean).join(' ');
+  } catch (e: any) {
+    if (my !== nftSeq) return;
+    if (S.nfts && S.nftAt) return; // a background re-poll failed: keep the list we already show
+    S.nfts = null; S.nftNote = e instanceof TypeError ? "NFT list unavailable: couldn't reach api.multisea.io (check ad-blockers / privacy settings or your connection)." : `NFT list unavailable right now (MultiSea API${e?.http ? ' ' + e.http : ''}); refresh to retry.`;
+  }
+}
+async function loadChains() {
   const big = BigInt(id);
-  // NFT list (Worker -> OpenSea). One retry; per-chain gaps are named instead of hiding the whole list.
-  const getNfts = async () => { const r = await fetch(`${API}/foot/${id}/nfts`); const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { http: r.status }); return j; };
-  const nfts = getNfts().catch(async () => { await new Promise(r => setTimeout(r, 1500)); return getNfts(); })
-    .then(async j => { S.nfts = (j.nfts || []).filter((n: any) => !n.error); const name = (k: string) => chains[k]?.name;
-      // OpenSea does not index some chains (BNB): read LIL FOOTS held by this account there from chain instead.
-      const onchain = await Promise.all((j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).map((k: string) => footsHeldOnchain(k, S.tba as Hex).catch(() => null)));
-      const readOk = new Set<string>(); (j.unsupported || []).filter((k: string) => FOOT_ADDR[k]).forEach((k: string, i: number) => { const r = onchain[i]; if (r) { readOk.add(k); S.nfts!.push(...r); } });
-      const un = (j.unsupported || []).filter((k: string) => !readOk.has(k)).map(name).filter(Boolean);
-      const failed = [...new Set<string>([...(j.failed || []), ...(j.nfts || []).filter((n: any) => n.error).map((n: any) => n.chain)])].map(name).filter(Boolean);
-      S.nftNote = [un.length ? `NFTs on ${un.join(', ')} are not indexed by OpenSea.` : '', failed.length ? `Couldn't load NFTs on ${failed.join(', ')} right now; refresh to retry.` : ''].filter(Boolean).join(' '); })
-    .catch((e: any) => { S.nfts = null; S.nftNote = e instanceof TypeError ? "NFT list unavailable: couldn't reach api.multisea.io (check ad-blockers / privacy settings or your connection)." : `NFT list unavailable right now (MultiSea API${e?.http ? ' ' + e.http : ''}); refresh to retry.`; });
   const reg = readClient('base').readContract({ address: FW.registry, abi: REG, functionName: 'account', args: [FW.impl, ('0x' + '0'.repeat(64)) as Hex, FW.baseChainId, FW.baseFoot, big] }).then((a: Hex) => { S.regOk = getAddress(a) === getAddress(S.tba); if (!S.regOk) S.tba = getAddress(a); }).catch(() => { S.regOk = null; });
   const base = readClient('base').multicall({ multicallAddress: MC3, allowFailure: true, contracts: [{ address: FW.hub, abi: HUB, functionName: 'activeChain', args: [big] }, { address: FW.hub, abi: HUB, functionName: 'trueOwner', args: [big] }, { address: FW.hub, abi: HUB, functionName: 'isBaseLocked', args: [big] }] })
     .then((r: any[]) => { S.base = { active: Number(r[0].result ?? 0), trueOwner: r[1].result || null, baseLocked: !!r[2].result }; }).catch(() => {});
   const abs = readClient('abstract').readContract({ address: FOOT_ADDR.abstract, abi: ERC721, functionName: 'ownerOf', args: [big] }).then((o: Hex) => { S.abs = { owner: o, inVault: o.toLowerCase() === ABSTRACT_VAULT.toLowerCase() }; }).catch(() => { S.abs = { owner: null, inVault: false }; });
   await reg;
   const [cs, rates] = await Promise.all([Promise.all(FW_CHAINS.map(readChain)), usdRates(), base, abs]);
-  S.rates = rates; S.cs = cs.map(c => ({ ...c, usd: chainUsd(c.k, c.bal, rates) })); S.loaded = true; render();
-  await nfts; render();
+  S.rates = rates; S.cs = cs.map(c => ({ ...c, usd: chainUsd(c.k, c.bal, rates) })); S.loaded = true;
 }
+function schedulePoll() {
+  if (pollT) clearTimeout(pollT); pollT = null; if (Date.now() >= pollUntil) return;
+  pollT = setTimeout(async () => { if (document.visibilityState === 'visible' && !busy) { await loadNfts(); render(); } schedulePoll(); }, NFT_POLL_MS);
+}
+/** Full read (chains + NFTs). `fresh` = user asked (Refresh button, after a send): skip the Worker's NFT cache. */
+async function load(fresh = false) {
+  busy = true; if (S.loaded) render();
+  const nfts = loadNfts(fresh);
+  await loadChains(); render();
+  await nfts; busy = false; render();
+  pollUntil = Date.now() + NFT_POLL_FOR_MS; schedulePoll();
+}
+// Back on the tab after a while (e.g. sent an NFT from another tab/app): re-read the list once and restart the poll window.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || busy || !S.loaded || Date.now() - lastNftFetch < NFT_POLL_MS) return;
+  loadNfts().then(render); pollUntil = Date.now() + NFT_POLL_FOR_MS; schedulePoll();
+});
 
 // ---------------------------------------------------------------- view
 // LIL FOOTS held by `who` on `k`, via balanceOf + an ownerOf sweep (only when the balance is non-zero).
@@ -159,7 +192,7 @@ function render() {
     <section class="fwcard fwsec"><div class="sechd"><h3>Balances by chain</h3><span class="mut small mono">Same TBA · ${short(S.tba)}</span></div>
       <div class="fwgrid">${S.cs.length ? S.cs.map(c => `<div class="fwch ${f?.k === c.k ? 'here' : ''}"><div class="chh"><span class="chn">${logo(c.k)}${esc(chains[c.k].name)}</span><span class="chv">${c.usd == null ? '-' : fmtUsd(c.usd)}</span></div>${tokLines(c)}<div class="fwchs">${f?.k === c.k ? '<i class="g">Active here</i>' : ''}<i>${c.deployed == null ? '?' : c.deployed ? 'Account deployed' : 'Counterfactual'}</i></div></div>`).join('') : FW_CHAINS.map(k => `<div class="fwch sk"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">…</span></div></div>`).join('')}</div></section>
     <div class="fwbot">
-      <section class="fwcard fwsec"><div class="sechd"><h3>NFTs inside the foot</h3><span class="mut small">${nfts.length || ''}</span></div>
+      <section class="fwcard fwsec"><div class="sechd"><h3>NFTs inside the foot${nfts.length ? ` <span class="mut small">${nfts.length}</span>` : ''}</h3><span class="fwrf"><span class="mut small" title="NFT list re-checks every 30 s for 10 min while this tab is open">${busy ? 'Checking…' : S.nftAt ? `Updated ${esc(new Date(S.nftAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }))}` : ''}</span><button class="fwrbtn" data-fw="refresh" ${busy ? 'disabled' : ''} title="Re-read all 5 chains and the NFT list now" aria-label="Refresh wallet contents">${I.refresh}<span>Refresh</span></button></span></div>
         ${S.nfts == null && !S.nftNote ? '<div class="mut small">Loading…</div>' : nfts.length ? `<div class="fwnftg">${nfts.slice(0, 12).map(n => `<div class="nftc"><img src="${esc(nftImg(n))}" alt="" loading="lazy"><div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div></div>`).join('')}</div>` : `<div class="mut small">${S.nfts ? 'No NFTs inside yet.' : ''}</div>`}
         ${S.nftNote ? `<div class="mut small" style="margin-top:8px">${esc(S.nftNote)}</div>` : ''}</section>
       <section class="fwcard fwsec"><div class="sechd"><h3>Status on each chain</h3><span class="mut small">live from the hubs</span></div>
@@ -280,7 +313,7 @@ function openSend(pre?: string) {
   m.addEventListener('click', async e => {
     const b = (e.target as HTMLElement).closest('[data-k]') as HTMLElement | null; if (!b) return;
     if (b.dataset.k === 'max') { const a = asset(); if (a) { q('amt').value = formatUnits(a.bal, a.decimals); deb(); } }
-    if (b.dataset.k === 'go' && cur) { const msg = q('msg'); b.setAttribute('disabled', ''); try { await runSteps(cur, msg); msg.innerHTML = `<span class="ok">✓ Sent.${cur.route === 'remote' ? ' LayerZero delivers it in a few minutes; balances refresh when it lands.' : ''}</span>`; setTimeout(() => { sessionStorage.removeItem('multisea-fw'); load(); }, 4000); } catch (err) { msg.innerHTML = `<span class="err">${esc(friendly(err, cur.from))}</span>`; b.removeAttribute('disabled'); } }
+    if (b.dataset.k === 'go' && cur) { const msg = q('msg'); b.setAttribute('disabled', ''); try { await runSteps(cur, msg); msg.innerHTML = `<span class="ok">✓ Sent.${cur.route === 'remote' ? ' LayerZero delivers it in a few minutes; balances refresh when it lands.' : ''}</span>`; setTimeout(() => { sessionStorage.removeItem('multisea-fw'); load(true); }, 4000); } catch (err) { msg.innerHTML = `<span class="err">${esc(friendly(err, cur.from))}</span>`; b.removeAttribute('disabled'); } }
   });
   sync(); if (pre) update();
 }
@@ -313,7 +346,7 @@ async function openLock(unlock: boolean) {
     const gas = await gasCost(C, () => pc.estimateContractGas({ address: FW.hub, abi: HUB, functionName: unlock ? 'unlock' : 'lockForListingWithOptions', args: (unlock ? [big] : [big, snapshot(), '0x', '0x']) as any, value, account: me }));
     q('sum').innerHTML = `<div><span class="mut">On</span><b>${logo(C)} ${esc(chains[C].name)}</b></div><div><span class="mut">LayerZero fee</span><b>${C === 'base' ? 'none (Base is the controller)' : feeTxt(C, value)}</b></div><div><span class="mut">Gas</span><b>${gas == null ? '-' : '~' + feeTxt(C, gas)}</b></div>${!unlock && C !== 'base' ? '<ul class="fwnotes"><li>Includes the Base → ' + esc(chains[C].name) + ' acknowledgement. A few percent extra is kept and refunded on unlock.</li></ul>' : ''}`;
     q('go').removeAttribute('disabled');
-    q('go').addEventListener('click', async () => { q('go').setAttribute('disabled', ''); try { await ensureChain(C); const h = await run(); q('msg').innerHTML = `Waiting for ${esc(chains[C].name)}… <a href="${chains[C].explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`; await pc.waitForTransactionReceipt({ hash: h, timeout: 240_000 }); q('msg').innerHTML = `<span class="ok">✓ ${unlock ? 'Unlocked' : 'Locked'}.</span>`; load(); } catch (e) { q('msg').innerHTML = `<span class="err">${esc(friendly(e, C))}</span>`; q('go').removeAttribute('disabled'); } });
+    q('go').addEventListener('click', async () => { q('go').setAttribute('disabled', ''); try { await ensureChain(C); const h = await run(); q('msg').innerHTML = `Waiting for ${esc(chains[C].name)}… <a href="${chains[C].explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`; await pc.waitForTransactionReceipt({ hash: h, timeout: 240_000 }); q('msg').innerHTML = `<span class="ok">✓ ${unlock ? 'Unlocked' : 'Locked'}.</span>`; load(true); } catch (e) { q('msg').innerHTML = `<span class="err">${esc(friendly(e, C))}</span>`; q('go').removeAttribute('disabled'); } });
   } catch (e) { q('sum').innerHTML = `<div class="err small">Couldn't quote: ${esc(friendly(e, C))}</div>`; }
 }
 
@@ -325,10 +358,11 @@ pg.addEventListener('click', e => {
   if (a === 'connect') openConnect();
   else if (a === 'recv') document.getElementById('fwrecv')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   else if (a === 'send') openSend();
+  else if (a === 'refresh') { sessionStorage.removeItem('multisea-fw'); load(true); }
   else if (a === 'lock' || a === 'unlock') openLock(a === 'unlock');
 });
 onWallet(() => render());
 if (!(id >= 1 && id <= FOOT_SUPPLY)) pg.innerHTML = `<div class="fcard"><h2>No such foot</h2><p class="mut">LIL FOOTS ids run from 1 to ${FOOT_SUPPLY}.</p></div>`;
 else { render(); load(); }
 // Read-only test hook for the preview E2E (quotes only; never signs): enabled with localStorage multisea-debug=1.
-if (localStorage.getItem('multisea-debug') === '1') (window as any).__fw = { S, plan, resolveRecipient, callFor, openLock, openSend };
+if (localStorage.getItem('multisea-debug') === '1') (window as any).__fw = { S, load, loadNfts, plan, resolveRecipient, callFor, openLock, openSend };
