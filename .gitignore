@@ -20,3 +20,6 @@ public/bridge.json
 contracts/.secrets/
 contracts/plans/
 worker/.relay-key
+
+# staging UI build (testnets) - never commit
+dist-staging

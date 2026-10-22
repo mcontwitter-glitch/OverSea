@@ -1,0 +1,22 @@
+# STAGING Worker for the launchpad on TESTNETS (spec §14 L2). Separate name, workers.dev only (no api.multisea.io route),
+# separate KV namespaces, no crons, no R2. Never shares state with the live multisea-api.
+#   CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… npx wrangler deploy -c wrangler.staging.toml
+#   npx wrangler secret put LAUNCHPAD_APPROVER_KEY -c wrangler.staging.toml   # testnet-only approver (contracts/.secrets/staging-approver.key)
+name = "multisea-api-staging"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+kv_namespaces = [
+  { binding = "COLLECTIONS", id = "201f4352bcd24107bb5d15ca322c741b" },
+  { binding = "NONCES", id = "76ba59c5efe9424496db24a58920e871" },
+]
+
+[vars]
+LP_NETWORK = "testnet"
+FEE_WALLET = "0x25411039F77529A543344603bD8acdd65fABA4d0"
+ALLOWED_ORIGINS = "http://localhost:4300"
+SIWE_DOMAINS = "localhost:4300"
+# admin wallet + the testnet deployer (staging only, so a scripted smoke test can approve its own test drop)
+ADMIN_ADDRESSES = "0xca89ae48a5c61d13e78236daa4ac29ee588ea475,0x0f84abc1ce26fca7ed8c733603bd91a88032be4f"
+STATIC_EDITORS = '{}'

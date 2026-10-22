@@ -1,0 +1,245 @@
+{
+ "_note": "TESTNETS ONLY. MultiSea launchpad staging deployment (spec §14 L2). Preview defaults: 0.5% fee to the fee wallet, creator deploys, timelock proposer = admin wallet, batched escrow copies (K=50, T=30 min default; the smoke-test drop uses K=10, the contract minimum).",
+ "network": "testnet",
+ "admin": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+ "feeWallet": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+ "platformFeeBps": 50,
+ "timelockDelaySec": 300,
+ "hubChain": "baseSepolia",
+ "batch": {
+  "K": 50,
+  "TMin": 30
+ },
+ "chains": {
+  "baseSepolia": {
+   "name": "Base Sepolia",
+   "chainId": 84532,
+   "eid": 40245,
+   "native": "ETH",
+   "rpc": "https://sepolia.base.org",
+   "endpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
+   "explorer": "https://sepolia.basescan.org",
+   "blockscout": "https://base-sepolia.blockscout.com",
+   "moveFee": "100000000000000",
+   "status": "deployed",
+   "contracts": {
+    "timelock": "0x1613BA308bCF89F07C80E54F9f7b99269dC48C47",
+    "dropImplementation": "0x3dE96B4ea712F3682bDD7c0B90b23efcd3110a3a",
+    "omniImplementation": "0x00b7103eE06F8614eA676a906EC9989a98212b24",
+    "omniEscrow": "0xfA290d09902d50Ec980Eb42e6348892f8b46f81F",
+    "factory": "0xa351fB6dDEe84DF95025ECB54A68CAEd3Fb0A47F"
+   },
+   "lzPeers": [
+    "robinhoodTestnet",
+    "sepolia"
+   ],
+   "lzNoPathway": [],
+   "dvn": {
+    "send:robinhoodTestnet": {
+     "lib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+     ]
+    },
+    "receive:robinhoodTestnet": {
+     "lib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+     "confirmations": 1,
+     "requiredDVNs": [
+      "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+     ]
+    },
+    "send:sepolia": {
+     "lib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+     ]
+    },
+    "receive:sepolia": {
+     "lib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+     ]
+    }
+   }
+  },
+  "sepolia": {
+   "name": "Sepolia",
+   "chainId": 11155111,
+   "eid": 40161,
+   "native": "ETH",
+   "rpc": "https://ethereum-sepolia-rpc.publicnode.com",
+   "endpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
+   "explorer": "https://sepolia.etherscan.io",
+   "moveFee": "100000000000000",
+   "status": "deployed",
+   "contracts": {
+    "timelock": "0x00b7103eE06F8614eA676a906EC9989a98212b24",
+    "dropImplementation": "0xfA290d09902d50Ec980Eb42e6348892f8b46f81F",
+    "omniImplementation": "0xa351fB6dDEe84DF95025ECB54A68CAEd3Fb0A47F",
+    "omniEscrow": "0xbd943A51Be215A2e0dc8A8B22124A148eef64F0f",
+    "factory": "0x0920f7B5A6fc50FFA0aa85A23522665Da954FC79"
+   },
+   "lzPeers": [
+    "baseSepolia",
+    "robinhoodTestnet"
+   ],
+   "lzNoPathway": [],
+   "dvn": {
+    "send:baseSepolia": {
+     "lib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+     ]
+    },
+    "receive:baseSepolia": {
+     "lib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+     ]
+    },
+    "send:robinhoodTestnet": {
+     "lib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+     ]
+    },
+    "receive:robinhoodTestnet": {
+     "lib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+     "confirmations": 1,
+     "requiredDVNs": [
+      "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+     ]
+    }
+   }
+  },
+  "bscTestnet": {
+   "status": "blocked: deployer has 0 tBNB",
+   "name": "BNB testnet",
+   "chainId": 97,
+   "eid": 40102,
+   "native": "tBNB",
+   "rpc": "https://bsc-testnet-rpc.publicnode.com",
+   "endpoint": "0x6EDCE65403992e310A62460808c4b910D972f10f",
+   "explorer": "https://testnet.bscscan.com",
+   "moveFee": "500000000000000"
+  },
+  "curtis": {
+   "status": "blocked: deployer has 1 APE, deploy+wire needs ~2.5 APE (gas ~102 gwei)",
+   "name": "ApeChain Curtis",
+   "chainId": 33111,
+   "eid": 40306,
+   "native": "APE",
+   "rpc": "https://curtis.rpc.caldera.xyz/http",
+   "endpoint": "0x6C7Ab2202C98C4227C5c46f1417D81144DA716Ff",
+   "explorer": "https://curtis.apescan.io",
+   "blockscout": "https://curtis.explorer.caldera.xyz",
+   "moveFee": "300000000000000000"
+  },
+  "robinhoodTestnet": {
+   "name": "Robinhood testnet",
+   "chainId": 46630,
+   "eid": 40451,
+   "native": "ETH",
+   "rpc": "https://rpc.testnet.chain.robinhood.com",
+   "endpoint": "0x3aCAAf60502791D199a5a5F0B173D78229eBFe32",
+   "explorer": "https://explorer.testnet.chain.robinhood.com",
+   "moveFee": "100000000000000",
+   "status": "deployed",
+   "contracts": {
+    "timelock": "0xED82E859C3ee532f904c34866dafeF0bCf9dbe33",
+    "dropImplementation": "0xf374Eae4b2163AecEB2C0541Fcd2E50B0FE63F2F",
+    "omniImplementation": "0x7b993C1d0346866b20d30ebcd570D4e225aEeaE7",
+    "omniEscrow": "0x1613BA308bCF89F07C80E54F9f7b99269dC48C47",
+    "factory": "0x3dE96B4ea712F3682bDD7c0B90b23efcd3110a3a"
+   },
+   "lzPeers": [
+    "baseSepolia",
+    "sepolia"
+   ],
+   "lzNoPathway": [],
+   "dvn": {
+    "send:baseSepolia": {
+     "lib": "0x45841dd1ca50265Da7614fC43A361e526c0e6160",
+     "confirmations": 1,
+     "requiredDVNs": [
+      "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+     ]
+    },
+    "receive:baseSepolia": {
+     "lib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+     ]
+    },
+    "send:sepolia": {
+     "lib": "0x45841dd1ca50265Da7614fC43A361e526c0e6160",
+     "confirmations": 1,
+     "requiredDVNs": [
+      "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+     ]
+    },
+    "receive:sepolia": {
+     "lib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+     "confirmations": 2,
+     "requiredDVNs": [
+      "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+     ]
+    }
+   }
+  }
+ },
+ "deployer": "0x0F84abC1CE26fCa7Ed8c733603BD91a88032be4F",
+ "approver": "0xEfE2b6C0938b488a251B96423794e09Bb776773E",
+ "worker": {
+  "chains": [
+   "baseSepolia",
+   "sepolia",
+   "robinhoodTestnet"
+  ],
+  "hubChain": "baseSepolia",
+  "factories": {
+   "baseSepolia": "0xa351fB6dDEe84DF95025ECB54A68CAEd3Fb0A47F",
+   "sepolia": "0x0920f7B5A6fc50FFA0aa85A23522665Da954FC79",
+   "robinhoodTestnet": "0x3dE96B4ea712F3682bDD7c0B90b23efcd3110a3a"
+  },
+  "eids": {
+   "baseSepolia": 40245,
+   "sepolia": 40161,
+   "robinhoodTestnet": 40451
+  },
+  "omniEscrows": {
+   "baseSepolia": "0xfA290d09902d50Ec980Eb42e6348892f8b46f81F",
+   "sepolia": "0xbd943A51Be215A2e0dc8A8B22124A148eef64F0f",
+   "robinhoodTestnet": "0x1613BA308bCF89F07C80E54F9f7b99269dC48C47"
+  }
+ },
+ "drops": [
+  {
+   "slug": "smoke-1792642666",
+   "name": "MultiSea Smoke",
+   "symbol": "MSMOKE",
+   "collectionId": "0xfbabd7a1e2c03eff81d5ae455354d3698ae4ed7ffc541a0b73a402bb41faaee7",
+   "maxSupply": 20,
+   "batchK": 10,
+   "batchTMin": 5,
+   "priceWei": "10000000000000",
+   "chains": [
+    "baseSepolia",
+    "sepolia",
+    "robinhoodTestnet"
+   ],
+   "addresses": {
+    "baseSepolia": "0x9cFa67815E3793fcF620a97E1E5Ef50d45a3DE70",
+    "sepolia": "0xB6aF523158651464b0eC40fC2685A1F19Bb27250",
+    "robinhoodTestnet": "0x9462f78767B9C8D0E40d70d4600F1A73f2ceB0F5"
+   }
+  }
+ ]
+}

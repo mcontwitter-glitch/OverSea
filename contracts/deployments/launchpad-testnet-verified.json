@@ -1,0 +1,83 @@
+{
+ "baseSepolia": {
+  "timelock": {
+   "address": "0x1613BA308bCF89F07C80E54F9f7b99269dC48C47",
+   "verified": true,
+   "name": "MultiSeaTimelock"
+  },
+  "dropImpl": {
+   "address": "0x3dE96B4ea712F3682bDD7c0B90b23efcd3110a3a",
+   "verified": true,
+   "name": "MultiSeaDrop"
+  },
+  "omniImpl": {
+   "address": "0x00b7103eE06F8614eA676a906EC9989a98212b24",
+   "verified": true,
+   "name": "MultiSeaOmniDrop"
+  },
+  "escrow": {
+   "address": "0xfA290d09902d50Ec980Eb42e6348892f8b46f81F",
+   "verified": true,
+   "name": "MultiSeaOmniEscrow"
+  },
+  "factory": {
+   "address": "0xa351fB6dDEe84DF95025ECB54A68CAEd3Fb0A47F",
+   "verified": true,
+   "name": "MultiSeaLaunchpadFactory"
+  }
+ },
+ "robinhoodTestnet": {
+  "timelock": {
+   "address": "0xED82E859C3ee532f904c34866dafeF0bCf9dbe33",
+   "verified": true,
+   "name": "Sourcify match"
+  },
+  "dropImpl": {
+   "address": "0xf374Eae4b2163AecEB2C0541Fcd2E50B0FE63F2F",
+   "verified": true,
+   "name": "Sourcify match"
+  },
+  "omniImpl": {
+   "address": "0x7b993C1d0346866b20d30ebcd570D4e225aEeaE7",
+   "verified": true,
+   "name": "Sourcify match"
+  },
+  "escrow": {
+   "address": "0x1613BA308bCF89F07C80E54F9f7b99269dC48C47",
+   "verified": true,
+   "name": "Sourcify match"
+  },
+  "factory": {
+   "address": "0x3dE96B4ea712F3682bDD7c0B90b23efcd3110a3a",
+   "verified": true,
+   "name": "Sourcify match"
+  }
+ },
+ "sepolia": {
+  "timelock": {
+   "address": "0x00b7103eE06F8614eA676a906EC9989a98212b24",
+   "verified": true,
+   "name": "MultiSeaTimelock"
+  },
+  "dropImpl": {
+   "address": "0xfA290d09902d50Ec980Eb42e6348892f8b46f81F",
+   "verified": true,
+   "name": "MultiSeaDrop"
+  },
+  "omniImpl": {
+   "address": "0xa351fB6dDEe84DF95025ECB54A68CAEd3Fb0A47F",
+   "verified": true,
+   "name": "MultiSeaOmniDrop"
+  },
+  "escrow": {
+   "address": "0xbd943A51Be215A2e0dc8A8B22124A148eef64F0f",
+   "verified": true,
+   "name": "MultiSeaOmniEscrow"
+  },
+  "factory": {
+   "address": "0x0920f7B5A6fc50FFA0aa85A23522665Da954FC79",
+   "verified": true,
+   "name": "MultiSeaLaunchpadFactory"
+  }
+ }
+}

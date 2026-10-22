@@ -534,3 +534,9 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 @media (max-width:520px){.ldbatch{grid-template-columns:1fr}}
 .ldhrow .ldq{display:block;font-style:normal;margin-top:2px}
 .ldkv i.ldbuf{display:block;margin-top:2px;opacity:.85}
+
+/* testnet staging page (launchtestnet.ts, staging build only) */
+.ldtn{max-width:760px;margin:0 auto;padding:16px}.ldtn h1{font-size:26px}.ldtnrow{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #1c1c1c;font-size:13px;flex-wrap:wrap}.ldtnrow:first-of-type{border-top:0}
+.ldtnrow>span{display:flex;gap:6px;align-items:center;color:#cfcfd4}.ldtnrow .cl{width:16px;height:16px}.ldtnrow b{font-weight:600;text-align:right}.ldtnrow em{font-style:normal;color:#5eead4;font-size:12px;margin-left:4px}
+.ldtn .ldkv>div{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.ldtn .ldkv>div>b{text-align:right;max-width:62%}.ldtn .ldkv i.usd{display:block}
+.ldtn .ldkv{display:block}

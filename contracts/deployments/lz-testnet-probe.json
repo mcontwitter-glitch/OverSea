@@ -1,0 +1,302 @@
+{
+ "baseSepolia": {
+  "sepolia": {
+   "sendLib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+   "receiveLib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   }
+  },
+  "bscTestnet": {
+   "sendLib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+   "receiveLib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 5,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   }
+  },
+  "curtis": {
+   "sendLib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+   "receiveLib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   }
+  },
+  "robinhoodTestnet": {
+   "sendLib": "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+   "receiveLib": "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"
+    ]
+   }
+  }
+ },
+ "sepolia": {
+  "baseSepolia": {
+   "sendLib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+   "receiveLib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   }
+  },
+  "bscTestnet": {
+   "sendLib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+   "receiveLib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   },
+   "receive": {
+    "confirmations": 5,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   }
+  },
+  "curtis": {
+   "sendLib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+   "receiveLib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   }
+  },
+  "robinhoodTestnet": {
+   "sendLib": "0xcc1ae8Cf5D3904Cef3360A9532B477529b177cCE",
+   "receiveLib": "0xdAf00F5eE2158dD58E0d3857851c432E34A3A851",
+   "send": {
+    "confirmations": 2,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0x8eebf8b423B73bFCa51a1Db4B7354AA0bFCA9193"
+    ]
+   }
+  }
+ },
+ "bscTestnet": {
+  "baseSepolia": {
+   "sendLib": "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+   "receiveLib": "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+   "send": {
+    "confirmations": 5,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   }
+  },
+  "sepolia": {
+   "sendLib": "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+   "receiveLib": "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+   "send": {
+    "confirmations": 5,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   }
+  },
+  "curtis": {
+   "sendLib": "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+   "receiveLib": "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+   "send": {
+    "confirmations": 5,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   }
+  },
+  "robinhoodTestnet": {
+   "sendLib": "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+   "receiveLib": "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+   "send": {
+    "confirmations": 5,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"
+    ]
+   }
+  }
+ },
+ "curtis": {
+  "baseSepolia": {
+   "sendLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "receiveLib": "0xcF1B0F4106B0324F96fEfcC31bA9498caa80701C",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 1,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   }
+  },
+  "sepolia": {
+   "sendLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "receiveLib": "0xcF1B0F4106B0324F96fEfcC31bA9498caa80701C",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   }
+  },
+  "bscTestnet": {
+   "sendLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "receiveLib": "0xcF1B0F4106B0324F96fEfcC31bA9498caa80701C",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   },
+   "receive": {
+    "confirmations": 5,
+    "dvns": [
+     "0xF49d162484290EAeAd7bb8C2c7E3a6f8f52e32d6"
+    ]
+   }
+  },
+  "robinhoodTestnet": null
+ },
+ "robinhoodTestnet": {
+  "baseSepolia": {
+   "sendLib": "0x45841dd1ca50265Da7614fC43A361e526c0e6160",
+   "receiveLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   }
+  },
+  "sepolia": {
+   "sendLib": "0x45841dd1ca50265Da7614fC43A361e526c0e6160",
+   "receiveLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   },
+   "receive": {
+    "confirmations": 2,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   }
+  },
+  "bscTestnet": {
+   "sendLib": "0x45841dd1ca50265Da7614fC43A361e526c0e6160",
+   "receiveLib": "0xd682ECF100f6F4284138AA925348633B0611Ae21",
+   "send": {
+    "confirmations": 1,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   },
+   "receive": {
+    "confirmations": 5,
+    "dvns": [
+     "0xa78A78a13074eD93aD447a26Ec57121f29E8feC2"
+    ]
+   }
+  },
+  "curtis": null
+ }
+}
