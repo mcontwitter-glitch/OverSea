@@ -2,7 +2,7 @@
 //   npx vite preview --outDir <build> --port 4199 & node scripts/shots-launchpad.mjs
 import { chromium } from 'playwright';
 const U = process.env.U || 'http://localhost:4199';
-const OUT = 'screens/launchpad/';
+const OUT = process.env.OUT || 'screens/launchpad/';
 const b = await chromium.launch();
 const errs = [];
 const VPS = { mobile: { width: 390, height: 844 }, desktop: { width: 1440, height: 900 } };

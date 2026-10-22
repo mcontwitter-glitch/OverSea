@@ -18,7 +18,9 @@ interface IOmniDrop {
     function batchK() external view returns (uint16);
     function batchT() external view returns (uint32);
     function mintClosed() external view returns (bool);
-    function payout() external view returns (address);
+    function feeWallet() external view returns (address);
+    function totalAssigned() external view returns (uint256);
+    function maxSupply() external view returns (uint32);
 }
 
 /// @title MultiSeaOmniEscrow
@@ -34,8 +36,9 @@ interface IOmniDrop {
 ///         BATCHED mode: the hub QUEUES copy ranges instead of sending them at each mint. A flush becomes possible once K ids
 ///         are queued, T seconds after the oldest queued range, or when minting has closed. flush() is permissionless and
 ///         paid from the drop's copy pool, which every mint funds with a small per-id share (batch quote / K + buffer);
-///         the flusher is reimbursed its gas from the pool surplus. The pool is accounted per drop and is never a MultiSea
-///         fee: what is left after the last flush goes to the drop's payout (creator).
+///         the flusher is reimbursed its gas from the pool surplus. The pool is accounted per drop; what is left after the
+///         final batch (decision M3b) goes to the MultiSea fee wallet the factory configured for the drop. It is swept
+///         straight from this escrow, so it never touches the drop's balance or the 0.5% withdraw fee math.
 ///             MOVE     any -> any      the holder locked id on the source; release it to `to` here
 ///         The HUB (Base for MultiSea) is the only place ids are assigned, so ids never collide and the shared cap holds even
 ///         when minters on different chains mint at the same moment: LayerZero deliveries to the hub execute one at a time.
@@ -73,7 +76,10 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     mapping(bytes32 => Queue) public queueOf;    // hub, BATCHED: copy ranges waiting for the next flush
     mapping(bytes32 => mapping(uint256 => uint256)) public rangeAt;
     mapping(bytes32 => uint256) public poolOf;   // hub, BATCHED: per-drop copy pool (minters' shares), pays flushes
-    uint256 public totalPools;                   // sum of poolOf (accounting; never withdrawable by MultiSea)
+    uint256 public totalPools;                   // sum of poolOf (accounting)
+    uint256 public totalRefunds;                 // sum of refundOf (minters' unspent native-drop buffers)
+    mapping(bytes32 => uint64) public lastQueuedAt; // hub, BATCHED: last time a range was queued (sweep grace period)
+    uint256 public constant SWEEP_GRACE = 3 days; // after a phase-end close: late REQUESTs already in flight may still queue
     uint16 public shareBufferBps = 2000;         // +20% on the batch quote: covers quote drift + the flusher's gas
     uint256 public maxTipGasPrice = 1 gwei;      // cap on the gas price reimbursed to a flusher
 
@@ -85,7 +91,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     event CopiesQueued(bytes32 indexed collectionId, uint32 originEid, uint256 start, uint256 qty, uint256 share, uint256 queuedIds);
     event Flushed(bytes32 indexed collectionId, address indexed flusher, uint256 ids, uint256 ranges, uint256 lzFees, uint256 tip);
     event PoolFunded(bytes32 indexed collectionId, address indexed from, uint256 amount);
-    event PoolSwept(bytes32 indexed collectionId, address payout, uint256 amount);
+    event PoolSwept(bytes32 indexed collectionId, address feeWallet, uint256 amount);
 
     error NotFactory();
     error NotDrop();
@@ -101,6 +107,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     error InsufficientPool(uint256 required, uint256 available);
     error NotClosed();
     error BadBuffer();
+    error Underfunded();
 
     constructor(address _endpoint, address _owner, address _feeWallet, uint256 _moveFee) OApp(_endpoint, _owner) Ownable(_owner) {
         if (_feeWallet == address(0)) revert ZeroAddress();
@@ -179,7 +186,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
 
     /// @notice HUB chain, BATCHED: the per-mint copy-pool share for `qty` ids = (cost of one full batch of K ids to every
     ///         other chain) / K * qty, plus `shareBufferBps`. The real flush usually costs less (fewer ranges, origin chains
-    ///         skipped), so the pool runs a surplus that reimburses flushers and is returned to the creator at the end.
+    ///         skipped), so the pool runs a surplus that reimburses flushers; the final leftover goes to the MultiSea fee wallet.
     function quoteBatchShare(bytes32 cid, uint256 qty) public view returns (uint256) {
         IOmniDrop d = IOmniDrop(dropOf[cid]);
         uint256 k = d.batchK();
@@ -277,15 +284,23 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     /// @notice Anyone can add to a drop's copy pool (e.g. if LayerZero quotes rose above what the shares collected).
     function fundPool(bytes32 cid) external payable { if (dropOf[cid] == address(0)) revert UnknownCollection(cid); _fund(cid, msg.value); }
 
-    /// @notice After minting closed and every copy was flushed, the pool's surplus goes to the drop's payout (the creator).
-    ///         It is never a MultiSea fee.
+    /// @notice Decision M3b: once every copy has been sent, the pool's true leftover goes to the MultiSea fee wallet that the
+    ///         factory configured for this drop (`drop.feeWallet()`). Only `poolOf[cid]` can be swept, never other drops'
+    ///         pools or minters' `refundOf` balances. It requires an empty queue and closed minting. After a sell-out no
+    ///         request can queue again (they are rejected), so the sweep is immediate. After a phase-end close it waits
+    ///         SWEEP_GRACE after the last queued range, so a REQUEST still in flight can't find its batch unfunded. The
+    ///         money moves escrow -> fee wallet directly; it never enters the drop, so withdraw()'s 0.5% is not applied to it
+    ///         and the creator is not charged twice.
     function sweepPool(bytes32 cid) external nonReentrant {
         IOmniDrop d = IOmniDrop(dropOf[cid]);
         if (address(d) == address(0)) revert UnknownCollection(cid);
         if (queueOf[cid].ids != 0 || !d.mintClosed()) revert NotClosed();
+        bool soldOut = d.totalAssigned() >= d.maxSupply();
+        if (!soldOut && block.timestamp < uint256(lastQueuedAt[cid]) + SWEEP_GRACE) revert NotClosed();
         uint256 v = poolOf[cid]; poolOf[cid] = 0; totalPools -= v;
-        address to = d.payout();
+        address to = d.feeWallet();
         if (v > 0) _pay(to, v);
+        if (address(this).balance < totalPools + totalRefunds) revert Underfunded(); // other pools + refunds stay covered
         emit PoolSwept(cid, to, v);
     }
 
@@ -299,6 +314,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     function _enqueue(bytes32 cid, uint32 origin, uint256 start, uint256 qty, uint256 share) internal {
         Queue storage q = queueOf[cid];
         if (q.ids == 0) q.oldest = uint64(block.timestamp);
+        lastQueuedAt[cid] = uint64(block.timestamp);
         rangeAt[cid][q.tail++] = (uint256(origin) << 104) | (uint256(uint40(block.timestamp)) << 64) | (start << 32) | qty;
         q.ids += uint32(qty);
         emit CopiesQueued(cid, origin, start, qty, share, q.ids);
@@ -374,7 +390,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     }
 
     function claimRefund(address who) external nonReentrant {
-        uint256 v = refundOf[who]; refundOf[who] = 0; if (v > 0) _pay(who, v);
+        uint256 v = refundOf[who]; refundOf[who] = 0; totalRefunds -= v; if (v > 0) _pay(who, v);
     }
 
     // --------------------------------------------------------------- receive
@@ -419,7 +435,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
             if (fee <= budget) { budget -= fee; _sendPaid(cid, dst[i], pl[i], fee); }
             else { owed[keccak256(abi.encode(dst[i], pl[i]))] = true; emit LegOwed(dst[i], pl[i], fee); }
         }
-        if (budget > 0) refundOf[to] += budget; // unspent buffer: the minter can claim it on the hub chain
+        if (budget > 0) { refundOf[to] += budget; totalRefunds += budget; } // unspent buffer: the minter can claim it on the hub chain
     }
 
     /// @dev BATCHED: send CONFIRM (or REJECT) straight back to the origin so the minter's NFT is Active right away, put the
@@ -436,7 +452,7 @@ contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
             if (share > 0) { _fund(cid, share); budget -= share; }
             _enqueue(cid, src, start, qty, share);
         }
-        if (budget > 0) refundOf[to] += budget;
+        if (budget > 0) { refundOf[to] += budget; totalRefunds += budget; }
     }
 
     function _send(bytes32 cid, uint32 dst, bytes memory pl, address refund) internal returns (uint256 fee) {

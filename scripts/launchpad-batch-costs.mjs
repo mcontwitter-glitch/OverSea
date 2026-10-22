@@ -33,3 +33,14 @@ for (const o of CH) console.log(`  ${o.padEnd(10)} batched ${$(batched(o, 1, fal
 for (const q of [1, 2, 3, 5]) console.log(`  demo mix qty ${q}: batched ${$(mix(batched, q, false))}/NFT → ${N} drop ≈ $${Math.round(mix(batched, q, false) * N)} (busy ≈ $${Math.round(mix(batched, q, true) * N)}) · at-mint ${$(mix(atMint, q, false))} → ≈ $${Math.round(mix(atMint, q, false) * N)}`);
 console.log(`  all on Base, any qty: ${$(batched('base', 3, false))}/NFT → ≈ $${Math.round(batched('base', 3, false) * N)} (busy ≈ $${Math.round(batched('base', 3, true) * N)})`);
 for (const k of [10, 25, 50, 100, 200]) { const s = dests.reduce((a, d) => a + lz(HUB, d) / k + ((k - 1) / k) * perId(d), 0) * BUF; console.log(`  K=${k}: share ${$(s)}`); }
+// Pool leftover at the end of a 4,404 drop (decision M3b: swept to the MultiSea fee wallet). Shares are priced on a full
+// K batch to all 4 other chains; real batches skip the origin chain's ids (less per-id gas) and the flusher is tipped
+// (≈ 1.5M gas on Base at 0.01 gwei ≈ $0.04, assumed on every batch). Full batches leave a surplus; batches under
+// ≈ K × (fixed cost / collected) ids, and the final partial one, eat into it.
+{
+  const fixed = dests.reduce((a, d) => a + lz(HUB, d), 0), TIP = 0.04;
+  const batchCost = n => fixed + dests.reduce((a, d) => a + Math.max(0, n * (1 - (MIX[d] || 0)) - 1) * perId(d), 0);
+  const leftover = n => { const full = Math.floor(N / n), rest = N - full * n; let v = full * (n * share(false) - batchCost(n) - TIP); if (rest) v += rest * share(false) - batchCost(rest) - TIP; return v; };
+  for (const n of [K, 45, 40, 30]) console.log(`  leftover if every batch carries ${n} ids: ≈ $${leftover(n).toFixed(0)} (≈ $${(leftover(n) / N).toFixed(3)}/NFT)`);
+  console.log(`  break-even batch size ≈ ${(fixed / (share(false) - 0.008)).toFixed(0)} ids (smaller batches draw on the surplus)`);
+}

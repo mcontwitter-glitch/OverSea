@@ -533,3 +533,4 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .ldbatch{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:520px){.ldbatch{grid-template-columns:1fr}}
 .ldhrow .ldq{display:block;font-style:normal;margin-top:2px}
+.ldkv i.ldbuf{display:block;margin-top:2px;opacity:.85}

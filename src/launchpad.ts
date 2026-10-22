@@ -79,7 +79,9 @@ function breakdown(d: Drop) {
   const gasNat = g ? Number(((isMulti(d) ? OMNI_GAS_UNITS(qty, c.chain === HUB, isBatched(d)) : GAS_UNITS(qty)) * 125n / 100n + 10_000n) * g) / 1e18 : null;
   const feeNat = (price * FEE_BPS) / 10_000; const relayUsd = pay === 'relay' ? FLAT_FEE_USD : 0;
   // Multichain: the LayerZero messages that create the escrow copies are a pass-through cost, shown on their OWN line
-  // (not inside "MultiSea fee": MultiSea keeps none of it). Estimate from the Oct 17 fork quotes; production uses quoteMint().
+  // (not inside "MultiSea fee"). It pays LayerZero; in BATCHED mode the unused part of the batch-pool buffer is swept to
+  // the MultiSea fee wallet at the end of the drop (decision M3b), which the line says. Estimate from the Oct 17 fork
+  // quotes; production uses quoteMint().
   const legs = isMulti(d) ? mintLegs(d, c.chain, qty) : []; const lzUsdTot = legsUsd(legs); const lzNat = r ? lzUsdTot / r : 0;
   const total = price + (gasNat ?? 0) + (r ? relayUsd / r : 0) + lzNat;
   return `<div class="kv bkv ldkv"><span>Mint price</span><b>${qty} × ${fmt(unit)} = ${fmt(price)} ${esc(nat)} <i class="usd">${usdTxt(r ? price * r : null)}</i></b>
@@ -89,12 +91,13 @@ function breakdown(d: Drop) {
     <span>Total</span><b class="xtot">${fmt(total)} ${esc(nat)} <i class="usd">${usdTxt(r ? total * r : null)}</i></b></div>`;
 }
 // BATCHED (default): the escrow copies ride in the next batch, so the minter pays a per-NFT share of one batch message per
-// chain (+ REQUEST/CONFIRM when not minting on Base). Own line, never inside "MultiSea fee": it is all passed to LayerZero.
+// chain (+ REQUEST/CONFIRM when not minting on Base). Own line, not inside "MultiSea fee". The share includes a 20% buffer;
+// what the batches don't use goes to MultiSea when the drop closes (≈ $0.01 per NFT at full batches).
 function batchedLine(d: Drop, k: string, legs: ReturnType<typeof mintLegs>, lzNat: number, nat: string) {
   const tot = legsUsd(legs); const share = legs.find(l => l.kind === 'share')!.usd; const conf = tot - share;
   const n = d.chains.length - 1; const per = tot / qty;
   const how = k === HUB ? `your share of one batch message per chain` : `batch share $${share.toFixed(2)} + confirm via Base $${conf.toFixed(2)}`;
-  return `<span>Escrow copies on ${n} chains (batched, LayerZero est.)</span><b>${lzNat ? fmt(lzNat, 5) + ' ' + esc(nat) : ''} <i class="usd">≈ $${per.toFixed(2)} per NFT · ${how} · passed through to LayerZero</i></b>`;
+  return `<span>Escrow copies on ${n} chains (batched, LayerZero est.)</span><b>${lzNat ? fmt(lzNat, 5) + ' ' + esc(nat) : ''} <i class="usd">≈ $${per.toFixed(2)} per NFT · ${how} · pays LayerZero</i><i class="usd ldbuf">Unused batch buffer goes to MultiSea</i></b>`;
 }
 // Gentle nudge where quantity really lowers the per-NFT cost (the REQUEST/CONFIRM pair is per tx, not per NFT).
 function qtyHint(d: Drop, k: string) {

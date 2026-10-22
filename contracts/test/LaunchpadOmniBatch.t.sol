@@ -199,7 +199,7 @@ contract LaunchpadOmniBatchTest is TestHelperOz5 {
         move(C, B, alice, 1); assertEq(drop[B].ownerOf(1), alice); assertEq(activeCount(1), 1);
     }
 
-    function test_soldOut_rejectRefund_finalFlush_sweepToCreator() public {
+    function test_soldOut_rejectRefund_finalFlush_sweepToFeeWallet() public {
         mint(A, alice, 20); mint(A, alice, 7); // 27 assigned (auto-flushed at K)
         mint(B, bob, 3); mint(C, carol, 3); // 6 requested for 3 left: B first fits, C is rejected
         uint256 c0 = carol.balance;
@@ -215,9 +215,69 @@ contract LaunchpadOmniBatchTest is TestHelperOz5 {
         vm.prank(flusher); esc[A].flush(CID); deliverAll();
         for (uint256 id = 1; id <= SUPPLY; ++id) { assertEq(copies(id), 4); assertEq(activeCount(id), 1); }
         assertEq(copies(SUPPLY + 1), 0);
-        uint256 left = esc[A].poolOf(CID); uint256 k0 = creator.balance;
+        uint256 left = esc[A].poolOf(CID); uint256 k0 = creator.balance; uint256 f0 = FEE.balance;
+        assertGt(left, 0, "a leftover exists");
+        vm.prank(flusher); esc[A].sweepPool(CID); // anyone may trigger it; the recipient is fixed
+        assertEq(FEE.balance - f0, left, "leftover to the MultiSea fee wallet (M3b)");
+        assertEq(creator.balance, k0, "creator gets nothing from the pool"); assertEq(esc[A].totalPools(), 0); assertEq(esc[A].poolOf(CID), 0);
+        vm.expectRevert(); esc[A].sweepPool(keccak256("unknown"));
+        esc[A].sweepPool(CID); assertEq(FEE.balance - f0, left, "second sweep pays nothing");
+    }
+
+    /// The sweep is separate from the drop's 0.5% withdraw fee: the creator's proceeds are charged exactly once.
+    function test_sweep_separateFromWithdrawFee_noDoubleCharge() public {
+        mint(A, alice, 20); mint(A, alice, 10); // sells out; the second mint completes the final batch
+        assertEq(queued(), 0); assertTrue(drop[A].mintClosed());
+        uint256 proceeds = address(drop[A]).balance; assertEq(proceeds, 30 * 0.003 ether, "pool share never sits in the drop");
+        uint256 left = esc[A].poolOf(CID); uint256 f0 = FEE.balance; uint256 k0 = creator.balance;
         esc[A].sweepPool(CID);
-        assertEq(creator.balance - k0, left, "surplus to the creator, not MultiSea"); assertEq(esc[A].totalPools(), 0);
+        drop[A].withdraw();
+        uint256 fee = proceeds * 50 / 10_000;
+        assertEq(FEE.balance - f0, left + fee, "fee wallet: pool leftover + 0.5% of proceeds, nothing more");
+        assertEq(creator.balance - k0, proceeds - fee, "creator: proceeds minus 0.5% exactly once");
+    }
+
+    /// Sweep only takes TRUE leftovers: not while copies are queued, not before minting closes, not during the grace period
+    /// after a phase-end close (a REQUEST in flight can still queue), and never other drops' pools or minters' refunds.
+    function test_sweep_cannotTouchPendingFunds() public {
+        // a second drop whose only phase ends in 1 hour, on all 4 chains
+        MultiSeaOmniDrop.OmniInit memory p = params(); p.phases[0].end = uint64(block.timestamp + 1 hours);
+        bytes32 c2 = keccak256("ends-soon");
+        MultiSeaOmniDrop[4] memory d2;
+        for (uint256 i; i < N; ++i) d2[i] = deploy(E[i], p, c2);
+        mint(A, alice, 2); // main drop: its pool must stay untouched
+        uint256 mainPool = esc[A].poolOf(CID);
+        // c2: a Base mint, plus a REQUEST from B with a big buffer (-> claimable refundOf) that is still in flight at close
+        (uint256 pr, uint256 lz) = d2[0].quoteMint(0, 3, alice, 0);
+        vm.prank(alice); d2[0].mint{ value: pr + lz }(alice, 0, 3, new bytes32[](0), 0);
+        uint128 hv = uint128(esc[A].quoteHubValue(c2, B, 1) * 3);
+        (pr, lz) = d2[1].quoteMint(0, 1, bob, hv);
+        vm.prank(bob); d2[1].mint{ value: pr + lz }(bob, 0, 1, new bytes32[](0), hv);
+        vm.expectRevert(MultiSeaOmniEscrow.NotClosed.selector); esc[A].sweepPool(c2); // minting open, copies queued
+        vm.warp(block.timestamp + 2 hours); // phase over: mintClosed, final batch due
+        assertTrue(d2[0].mintClosed());
+        vm.expectRevert(MultiSeaOmniEscrow.NotClosed.selector); esc[A].sweepPool(c2); // copies still queued
+        vm.prank(flusher); esc[A].flush{ value: 0.1 ether }(c2);
+        vm.expectRevert(MultiSeaOmniEscrow.NotClosed.selector); esc[A].sweepPool(c2); // grace period after close
+        deliver(A); // the late REQUEST lands after close: id 4 assigned, its copies queue, its buffer is refundable
+        assertEq(d2[0].totalAssigned(), 4);
+        (, uint256 q2, , ) = esc[A].queueOf(c2); assertEq(q2, 1);
+        uint256 bobRefund = esc[A].refundOf(bob); assertGt(bobRefund, 0);
+        vm.expectRevert(MultiSeaOmniEscrow.NotClosed.selector); esc[A].sweepPool(c2); // its copies are still owed
+        vm.prank(flusher); esc[A].flush{ value: 0.1 ether }(c2);
+        vm.warp(block.timestamp + 3 days - 1);
+        vm.expectRevert(MultiSeaOmniEscrow.NotClosed.selector); esc[A].sweepPool(c2); // grace counts from the LAST queue
+        vm.warp(block.timestamp + 1);
+        uint256 left = esc[A].poolOf(c2); uint256 f0 = FEE.balance;
+        esc[A].sweepPool(c2);
+        assertEq(FEE.balance - f0, left);
+        assertEq(esc[A].poolOf(CID), mainPool, "other drops' pools untouched");
+        assertEq(esc[A].refundOf(bob), bobRefund, "minter refunds untouched");
+        assertEq(esc[A].totalPools(), mainPool); assertEq(esc[A].totalRefunds(), bobRefund);
+        assertGe(address(esc[A]).balance, esc[A].totalPools() + esc[A].totalRefunds(), "escrow still covers what it owes");
+        uint256 b0 = bob.balance; esc[A].claimRefund(bob); assertEq(bob.balance - b0, bobRefund);
+        deliver(B); deliver(C); deliver(D);
+        for (uint256 id = 1; id <= 4; ++id) { uint256 n; for (uint256 i; i < N; ++i) if (d2[i].existsHere(id)) ++n; assertEq(n, 4, "every id has its 4 copies"); }
     }
 
     function deployExpectRevert(MultiSeaOmniDrop.OmniInit memory p, bytes32 cid) internal {
