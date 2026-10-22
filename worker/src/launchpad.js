@@ -24,7 +24,8 @@ export const OMNI_T = [{ type: 'tuple', components: [
   { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' },
   { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' },
   { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
-  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' }] }];
+  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' },
+  { name: 'copyMode', type: 'uint8' }, { name: 'batchK', type: 'uint16' }, { name: 'batchT', type: 'uint32' }] }];
 export const OMNI_APPROVAL_TYPES = { OmniDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'collectionId', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const APPROVAL_TYPES = { DropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repeat(64);
@@ -79,6 +80,12 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       if (Object.values(allocations).reduce((a, v) => a + v, 0) !== maxSupply) bad('per-chain supplies must add up to the total supply');
       if (Object.entries(allocations).some(([, v]) => v === 0)) bad('every selected chain needs a supply');
     }
+    // Multichain escrow copies: BATCHED (default) queues them on the hub and flushes one message per chain every K ids or
+    // T minutes; AT_MINT sends them with every mint (≈ 5-35x the LayerZero cost, see spec §7.4).
+    const BT = LP.batch;
+    const copyMode = mode !== 'multichain' ? undefined : (b.copyMode ?? BT.defaultMode) === 'at-mint' ? 'at-mint' : b.copyMode == null || b.copyMode === 'batched' ? 'batched' : bad('copyMode must be batched or at-mint');
+    const batchK = copyMode === 'batched' ? int(b.batchK ?? BT.defaultK, BT.minK, BT.maxK, 'batch size K') : undefined;
+    const batchTMin = copyMode === 'batched' ? int(b.batchTMin ?? BT.defaultTMin, BT.minTMin, BT.maxTMin, 'batch window T (minutes)') : undefined;
     if (mode === 'multichain' && Number(b.creatorReserve || 0) > 0) bad('creator reserve is not supported in multichain mode yet (mint it in an allowlist phase)');
     const creatorReserve = mode === 'multichain' ? 0 : int(b.creatorReserve ?? 0, 0, allocations[chainsSel[0]], 'creator reserve (taken from the first chain)');
     const royaltyBps = int(b.royaltyBps ?? 0, 0, LP.maxRoyaltyBps, 'royalty bps');
@@ -104,7 +111,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), merkleRoot };
     });
     return { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
-      mode, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
+      mode, copyMode, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
   }
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
@@ -114,7 +121,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   const omniParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.maxSupply,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), price: 0n, maxPerWallet: p.maxPerWallet, merkleRoot: p.merkleRoot })),
-    eids: d.chains.map(k => LP.eids[k]), hubEid: LP.eids[LP.hubChain], prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))) });
+    eids: d.chains.map(k => LP.eids[k]), hubEid: LP.eids[LP.hubChain], prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))),
+    copyMode: d.copyMode === 'at-mint' ? 1 : 0, batchK: d.copyMode === 'at-mint' ? 0 : d.batchK ?? LP.batch.defaultK, batchT: d.copyMode === 'at-mint' ? 0 : (d.batchTMin ?? LP.batch.defaultTMin) * 60 });
 
   async function handle(req, env, url, p, M, body) {
     if (p[0] === 'launchpad') {

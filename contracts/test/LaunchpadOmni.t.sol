@@ -9,7 +9,7 @@ import { MultiSeaOmniEscrow } from "../src/launchpad/MultiSeaOmniEscrow.sol";
 import { MultiSeaLaunchpadFactory } from "../src/launchpad/MultiSeaLaunchpadFactory.sol";
 
 /// Multichain (escrow) launchpad drops on 4 mock LayerZero endpoints. A is the HUB (stands for Base); B, C, D stand for
-/// ApeChain, BNB and Robinhood. Minting id X on one chain makes X Active there and mints X into escrow on the other three.
+/// ApeChain, BNB and Robinhood. AT_MINT copy mode (creator-selectable alternative). Minting id X on one chain makes X Active there and mints X into escrow on the other three.
 contract LaunchpadOmniTest is TestHelperOz5 {
     uint32 constant A = 1; uint32 constant B = 2; uint32 constant C = 3; uint32 constant D = 4;
     uint256 constant N = 4;
@@ -50,6 +50,7 @@ contract LaunchpadOmniTest is TestHelperOz5 {
         p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), 0, 0, 0, bytes32(0));
         p.eids = new uint32[](4); p.eids[0] = A; p.eids[1] = B; p.eids[2] = C; p.eids[3] = D; p.hubEid = A;
         p.prices = new uint128[](4); p.prices[0] = 0.003 ether; p.prices[1] = 12 ether; p.prices[2] = 0.012 ether; p.prices[3] = 0.003 ether;
+        p.copyMode = 1; // this suite covers the AT_MINT alternative (copies sent at each mint); BATCHED: LaunchpadOmniBatch.t.sol
     }
     /// Mirrors MultiSeaLaunchpadFactory.omniConfigHash (fee fields zeroed). createOmniDrop succeeding proves they agree.
     function cfg(MultiSeaOmniDrop.OmniInit memory p) public pure returns (bytes32) { p.feeWallet = address(0); p.platformFeeBps = 0; return keccak256(abi.encode(p)); }
@@ -284,9 +285,8 @@ contract LaunchpadOmniTest is TestHelperOz5 {
         assertEq(a0 - alice.balance, pf + mv);
     }
 
-    /// Cross-check vector for worker/test/launchpad.test.mjs (viem omniConfigHash must equal this).
-    function test_omniConfigHashVector() public {
-        bytes32 h = cfg(params()); emit log_named_bytes32("omniConfigHash", h);
-        assertEq(h, 0x6d15644241a5cdc88fe4880565e1c2e4fb91cc540c3dd1c22eda3d78ea1dceab);
+    /// AT_MINT config hash (the Worker cross-check vector for the default BATCHED config is in LaunchpadOmniBatch.t.sol).
+    function test_omniConfigHashVector_atMint() public view {
+        assertEq(cfg(params()), 0x38f6cc814ab373dcc1bee2df016bc9bb1a4add76f2737607739e3f8ef8fb937f);
     }
 }

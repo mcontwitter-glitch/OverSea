@@ -52,12 +52,16 @@
     "remote": {
       "first": 450000,
       "perExtra": 15000
+    },
+    "hubBatched": {
+      "first": 320000,
+      "perExtra": 30000
     }
   },
   "moveGasUnits": 300000,
   "hubChain": "base",
   "lzEstUsd": {
-    "_note": "LayerZero V2 fee estimates per message, USD. Fork quotes Oct 17 2026, 2 DVNs (foot-wallets/contracts/mainnet/FORK_DRYRUN.md). REQUEST ~ +$0.04 for the 2.4M hub gas. Real fees come from escrow.quoteFanout / quoteRequest.",
+    "_note": "LayerZero V2 fee estimates per message, USD. Fork quotes Oct 17 2026, 2 DVNs (foot-wallets/contracts/mainnet/FORK_DRYRUN.md). REQUEST ~ +$0.04 for the 2.4M hub gas (AT_MINT) or ~ +$0.03 for the 1.6M hub gas (BATCHED). Real fees come from escrow.quoteFanout / quoteRequest.",
     "base": {
       "ethereum": 1.638,
       "apechain": 0.247,
@@ -88,11 +92,23 @@
       "apechain": 0.25,
       "bnb": 0.262
     },
-    "requestExtra": 0.04
+    "requestExtra": 0.04,
+    "requestExtraBatched": 0.03
   },
   "perIdLzUsd": {
     "_note": "extra destination gas per additional id in one batched message (~30k gas), USD at today's gas; Ethereum busy (3 gwei) ~0.22",
     "ethereum": 0.005,
     "other": 0.001
+  },
+  "batch": {
+    "_note": "BATCHED copy mode (default for multichain drops): Base queues escrow copies and flushes one LayerZero message per chain per batch. K = ids per batch, T = minutes after the oldest queued id. Per-id pool share = (batch quote / K) x (1 + buffer). Mirrors MultiSeaOmniDrop MIN_K/MAX_K/MIN_T/MAX_T and MultiSeaOmniEscrow.shareBufferBps.",
+    "defaultMode": "batched",
+    "defaultK": 50,
+    "defaultTMin": 30,
+    "minK": 10,
+    "maxK": 200,
+    "minTMin": 5,
+    "maxTMin": 1440,
+    "shareBufferBps": 2000
   }
 }

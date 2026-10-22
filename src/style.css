@@ -527,3 +527,9 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .ldpend ul{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}.ldpend li{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.ldpend i.ok{color:#5eead4;font-style:normal;font-weight:800}
 .ldcopies{display:flex;flex-wrap:wrap;gap:6px}.ldcopy{display:inline-flex;gap:4px;align-items:center;font-size:11.5px;background:#151515;border:1px solid #262626;border-radius:99px;padding:2px 8px;color:#bbb}.ldcopy.ok{color:#5eead4;border-color:#2dd4bf55}.ldcopy .cl{width:13px;height:13px}
 .ldpend li{flex-wrap:nowrap}.ldpend li>.spin,.ldpend li>i.ok{flex:none;margin-top:2px}
+/* launchpad: batched escrow copies */
+.ldhint{margin:8px 0 4px;padding:8px 10px;border:1px solid #1f3b2a;background:#0b1a12;border-radius:10px;font-size:13px;color:#b9e8c8;line-height:1.4}
+.ldpend i.q{font-style:normal}
+.ldbatch{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.ldbatch{grid-template-columns:1fr}}
+.ldhrow .ldq{display:block;font-style:normal;margin-top:2px}

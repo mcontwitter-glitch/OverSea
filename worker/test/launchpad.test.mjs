@@ -90,12 +90,12 @@ test('reject stores reason and clears queue', async () => {
   assert.equal((await env.COLLECTIONS.get('lrejected:lil-foots-drop', 'json')).reason, 'art rights unclear');
 });
 
-test('omniConfigHash matches the Solidity vector (contracts/test/LaunchpadOmni.t.sol)', () => {
+test('omniConfigHash matches the Solidity vector (contracts/test/LaunchpadOmniBatch.t.sol)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
-  const h = omniConfigHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 50, maxSupply: 10, royaltyReceiver: C, royaltyBps: 500n,
+  const h = omniConfigHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 50, maxSupply: 30, royaltyReceiver: C, royaltyBps: 500n,
     baseURI: 'ipfs://bafyFINAL/', preRevealURI: '', phases: [{ start: 1800000000n, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: '0x' + '0'.repeat(64) }],
-    eids: [1, 2, 3, 4], hubEid: 1, prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n, 3000000000000000n] });
-  assert.equal(h, '0x6d15644241a5cdc88fe4880565e1c2e4fb91cc540c3dd1c22eda3d78ea1dceab');
+    eids: [1, 2, 3, 4], hubEid: 1, prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n, 3000000000000000n], copyMode: 0, batchK: 10, batchT: 1800 });
+  assert.equal(h, '0x6115664fee8498b1e1533fc5c415bc3861629814e6238bf7074b227638197050');
 });
 
 test('multichain drop: validation, shared supply via the Base hub, omni approval, escrow excluded on auto-list', async () => {
@@ -106,11 +106,16 @@ test('multichain drop: validation, shared supply via the Base hub, omni approval
   await assert.rejects(call('POST', '/launchpad/submit', md({ chains: ['apechain', 'bnb'], phases: [{ kind: 'public', start: 1800000000, price: '1', prices: { apechain: '1', bnb: '1' } }] })), /supply hub/);
   await assert.rejects(call('POST', '/launchpad/submit', md({ phases: [{ kind: 'public', start: 1800000000, price: '1' }] })), /price on bnb/);
   await assert.rejects(call('POST', '/launchpad/submit', md({ creatorReserve: 4 })), /reserve/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ batchK: 5 })), /batch size K/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ batchTMin: 2000 })), /batch window T/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ copyMode: 'pools' })), /copyMode/);
+  const am = await call('POST', '/launchpad/submit', md({ slug: 'omni-atmint', copyMode: 'at-mint' })); assert.equal(am.status, 'pending');
   assert.equal((await call('POST', '/launchpad/submit', md({ slug: 'omni-alloc', allocations: { base: 1, bnb: 1 } }))).status, 'pending'); // per-chain splits are ignored: one shared supply
   await call('POST', '/launchpad/submit', md()); as(ADMIN); await call('POST', '/admin/launchpad/approve/omni-foots'); as(creator.address);
   env.LAUNCHPAD_APPROVER_KEY = (await import('viem/accounts')).generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
   const a = await call('POST', '/launchpad/approval/omni-foots', { chain: 'bnb' });
   assert.equal(a.mode, 'multichain'); assert.equal(a.params.allocEnd, undefined); assert.equal(a.params.hubEid, 30184); assert.equal(a.params.maxSupply, 4404); assert.deepEqual(a.params.eids, [30184, 30102]);
+  assert.equal(a.params.copyMode, 0, 'BATCHED is the default'); assert.equal(a.params.batchK, 50); assert.equal(a.params.batchT, 1800);
   assert.deepEqual(a.params.prices, ['3000000000000000', '10000000000000000']);
   assert.equal(a.collectionId, collectionIdOf('omni-foots', creator.address.toLowerCase()));
   const b2 = await call('POST', '/launchpad/approval/omni-foots', { chain: 'base' }); assert.equal(b2.configHash, a.configHash, 'same config on every chain');

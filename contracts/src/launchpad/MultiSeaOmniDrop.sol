@@ -14,6 +14,8 @@ interface IOmniEscrow {
     function quoteFanout(bytes32 cid, uint32 originEid, uint256 qty) external view returns (uint256);
     function quoteRequest(bytes32 cid, uint256 qty, address to, uint128 hubValue) external view returns (uint256);
     function fanoutCopies(bytes32 cid, uint256 start, uint256 qty, address refund) external payable;
+    function queueCopies(bytes32 cid, uint256 start, uint256 qty, address refund) external payable;
+    function quoteBatchShare(bytes32 cid, uint256 qty) external view returns (uint256);
     function sendRequest(bytes32 cid, uint256 rid, address to, uint256 qty, uint256 phaseId, uint128 hubValue, address refund) external payable;
     function sendMove(bytes32 cid, uint32 dstEid, uint256 tokenId, address to, address refund) external payable;
 }
@@ -48,6 +50,9 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
         uint32[] eids;               // LayerZero EIDs of the drop's chains
         uint32 hubEid;               // the chain that assigns ids and enforces the cap (Base); must be in eids
         uint128[] prices;            // per chain per phase, native token: prices[i * phases.length + phaseId]
+        uint8 copyMode;              // 0 = BATCHED (default): copies queued on the hub and flushed in batches; 1 = AT_MINT
+        uint16 batchK;               // BATCHED: a flush is due once this many ids are queued (10..200)
+        uint32 batchT;               // BATCHED: ...or this many seconds after the oldest queued id (5 min..24 h)
     }
 
     enum Req { None, Pending, Confirmed, Refunded }
@@ -58,6 +63,12 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     uint8 public constant R_SOLD_OUT = 1;
     uint8 public constant R_WALLET_LIMIT = 2;
     uint8 public constant R_PAUSED = 3;
+    uint8 public constant MODE_BATCHED = 0;
+    uint8 public constant MODE_AT_MINT = 1;
+    uint16 public constant MIN_K = 10;
+    uint16 public constant MAX_K = 200;
+    uint32 public constant MIN_T = 5 minutes;
+    uint32 public constant MAX_T = 24 hours;
 
     IOmniEscrow public escrow;
     bytes32 public collectionId;
@@ -69,6 +80,9 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     uint32 public pendingQty;    // non-hub: requested, not yet confirmed or refunded
     uint16 public platformFeeBps;
     uint16 private _chainIdx;
+    uint8 public copyMode;
+    uint16 public batchK;
+    uint32 public batchT;
     address public owner;
     address public pendingOwner;
     address public payout;
@@ -121,6 +135,9 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
         uint256 n = p.eids.length; uint256 np = p.phases.length;
         if (p.owner == address(0) || p.payout == address(0) || p.maxSupply == 0 || p.royaltyBps > MAX_ROYALTY_BPS) revert BadParams();
         if (n < 2 || n > 8 || np == 0 || np > 8 || p.prices.length != n * np) revert BadParams();
+        if (p.copyMode > MODE_AT_MINT) revert BadParams();
+        if (p.copyMode == MODE_BATCHED && (p.batchK < MIN_K || p.batchK > MAX_K || p.batchT < MIN_T || p.batchT > MAX_T)) revert BadParams();
+        copyMode = p.copyMode; batchK = p.batchK; batchT = p.batchT;
         __ERC721_init(p.name, p.symbol);
         escrow = IOmniEscrow(escrow_); collectionId = cid; localEid = escrow.localEid(); hubEid = p.hubEid;
         owner = p.owner; payout = p.payout; feeWallet = p.feeWallet; platformFeeBps = p.platformFeeBps;
@@ -142,6 +159,12 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     // ------------------------------------------------------------------ mint
     function priceOf(uint256 phaseId) public view returns (uint256) { return _prices[uint256(_chainIdx) * _phases.length + phaseId]; }
     function isHub() public view returns (bool) { return localEid == hubEid; }
+    /// @notice Hub: sold out, or every phase has an end and the last one has passed. Lets the copy pool flush and sweep.
+    function mintClosed() external view returns (bool) {
+        if (isHub() && nextId > maxSupply) return true;
+        for (uint256 i; i < _phases.length; ++i) if (_phases[i].end == 0 || block.timestamp < _phases[i].end) return false;
+        return true;
+    }
     /// @notice Hub view: ids assigned so far across all chains (the shared supply counter).
     function totalAssigned() external view returns (uint256) { return nextId - 1; }
 
@@ -149,7 +172,8 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     ///         hub-native amount (from escrow.quoteFanout on the hub chain, plus a small buffer) dropped on the hub.
     function quoteMint(uint256 phaseId, uint256 qty, address to, uint128 hubValue) external view returns (uint256 price, uint256 lz) {
         price = priceOf(phaseId) * qty;
-        lz = isHub() ? escrow.quoteFanout(collectionId, localEid, qty) : escrow.quoteRequest(collectionId, qty, to, hubValue);
+        if (!isHub()) lz = escrow.quoteRequest(collectionId, qty, to, hubValue);
+        else lz = copyMode == MODE_BATCHED ? escrow.quoteBatchShare(collectionId, qty) : escrow.quoteFanout(collectionId, localEid, qty);
     }
 
     /// @notice Mint on THIS chain (the token will be Active here). Hub chain: instant, ids assigned now, escrow copies sent to
@@ -168,7 +192,8 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
             if (reason == R_WALLET_LIMIT) revert WalletLimit();
             for (uint256 k; k < qty; ++k) _mint(to, start + k); // Active here, no receiver callback
             mintedHere += uint32(qty);
-            escrow.fanoutCopies{ value: msg.value - cost }(collectionId, start, qty, msg.sender); // reverts if underpaid
+            if (copyMode == MODE_BATCHED) escrow.queueCopies{ value: msg.value - cost }(collectionId, start, qty, msg.sender); // pool share
+            else escrow.fanoutCopies{ value: msg.value - cost }(collectionId, start, qty, msg.sender); // reverts if underpaid
             emit Minted(to, phaseId, start, qty, cost);
         } else {
             uint256 rid = ++nextRid;
