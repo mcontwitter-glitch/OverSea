@@ -58,7 +58,9 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   const int = (v, lo, hi, what) => { const n = Number(v); if (!Number.isInteger(n) || n < lo || n > hi) bad(`${what} must be an integer ${lo}-${hi}`); return n; };
   const wei = (v, what) => { if (!/^\d{1,30}$/.test(String(v ?? ''))) bad(`${what} must be a wei integer string`); return String(v); };
   const uri = (v, what) => { const s = str(v, 200); if (s && !/^(ipfs:\/\/|ar:\/\/|https:\/\/)[\w\-./?=&%#]+$/.test(s)) bad(`${what} must be ipfs://, ar:// or https://`); return s; };
-  const pub = d => ({ ...d, submitter: undefined, approval: undefined, allowlists: undefined });
+  // deployed: true only once POST /launchpad/deployed verified a contract on-chain against a factory (status 'live').
+  // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
+  const pub = d => ({ ...d, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
   function validate(b, creator) {
     const slug = str(b.slug, 40); if (!SLUG.test(slug)) bad('slug must be 3-40 chars a-z 0-9 -');

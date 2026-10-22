@@ -58,7 +58,7 @@ test('submit -> admin queue -> approve -> proof -> approval signature -> deploye
   await assert.rejects(call('GET', '/admin/launchpad/pending'), /admin only/);
   as(ADMIN); const q = await call('GET', '/admin/launchpad/pending'); assert.equal(q.pending.length, 1); assert.equal(q.pending[0].allowlistCounts[0], 3); assert.equal(q.pending[0].allowlists, undefined);
   const ap = await call('POST', '/admin/launchpad/approve/lil-foots-drop'); assert.equal(ap.status, 'approved');
-  assert.equal((await call('GET', '/launchpad/drops')).drops.length, 1);
+  { const l = (await call('GET', '/launchpad/drops')).drops; assert.equal(l.length, 1); assert.equal(l[0].deployed, false, 'approved, no contract yet -> deployed: false'); }
   const pr = await call('GET', `/launchpad/proof/lil-foots-drop/0/${AL[1]}`); assert.ok(pr.eligible && pr.proof.length >= 1);
   assert.equal((await call('GET', `/launchpad/proof/lil-foots-drop/0/0x00000000000000000000000000000000000000d4`)).eligible, false);
   as(creator.address);
@@ -72,7 +72,8 @@ test('submit -> admin queue -> approve -> proof -> approval signature -> deploye
   as(AL[0]); await assert.rejects(call('POST', '/launchpad/approval/lil-foots-drop', { chain: 'base' }), /only the creator/);
   as(creator.address);
   const dep = await call('POST', '/launchpad/deployed/lil-foots-drop', { chain: 'base', address: '0x' + '22'.repeat(20) });
-  assert.equal(dep.drop.status, 'live');
+  assert.equal(dep.drop.status, 'live'); assert.equal(dep.drop.deployed, true);
+  assert.equal((await call('GET', '/launchpad/drops/lil-foots-drop')).drop.deployed, true);
   const col = await env.COLLECTIONS.get('col:lil-foots-drop', 'json'); assert.equal(col.status, 'approved'); assert.equal(col.source, 'launchpad'); assert.equal(col.deployments[0].chain, 'base');
 });
 

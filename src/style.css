@@ -544,3 +544,5 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .fwrbtn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;background:#17181b;border:1px solid #2e3136;color:#dfe8ef;font-size:12px;font-weight:600;cursor:pointer}
 .fwrbtn .fi{width:14px;height:14px}.fwrbtn:hover:not(:disabled){border-color:#45bdfa88}.fwrbtn:disabled{opacity:.5;cursor:progress}.fwrbtn:disabled .fi{animation:fwspin 1s linear infinite}
 @keyframes fwspin{to{transform:rotate(360deg)}}
+.ldst.soon{color:#fbbf24;background:#2a2208;border:1px solid #fbbf2455;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+.ldph.soon{opacity:.85}

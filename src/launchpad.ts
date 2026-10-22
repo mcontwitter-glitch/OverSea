@@ -5,7 +5,7 @@ import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wal
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
 import { FLAT_FEE_USD } from './xpaycore';
-import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, type Drop, type Held } from './launchdata';
+import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, type Drop, type Held } from './launchdata';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; native: string; chainId: number }>;
 const path = location.pathname.replace(/\/+$/, '');
@@ -22,6 +22,8 @@ let rates: UsdRates = { ETH: null, APE: null, BNB: null };
 // from each drop contract's totalMinted() (not wired in this preview: shows 0 until contracts exist).
 let remote: Drop[] = [];
 const fromApi = (d: any): Drop => ({ mode: d.mode === 'multichain' ? 'multichain' : 'single', slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
+  // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
+  deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
   chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
   phases: (d.phases || []).map((p: any) => ({ ...p, price: Number(BigInt(p.price)) / 1e18, prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, Number(BigInt(v as string)) / 1e18])) : undefined })), img: d.logo ? API + d.logo : '/brand/icon-128.webp', art: d.banner ? [API + d.banner] : [] });
 const allDrops = () => [...remote, ...demoAndLocal().filter(x => !remote.some(r => r.slug === x.slug))];
@@ -29,7 +31,10 @@ const findDrop = (s: string) => remote.find(d => d.slug === s) || findLocal(s);
 
 // ---------------- list ----------------
 let tab: 'live' | 'upcoming' | 'ended' = 'live';
+const SOON = '<span class="ldst soon">Coming soon</span>';
+const fmtStart = (s: number) => new Date(s * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 function stateChip(d: Drop) {
+  if (comingSoon(d)) return SOON;
   const st = dropState(d); const a = activePhase(d), n = nextPhase(d);
   if (st === 'live') { const p = d.phases[a]; return `<span class="ldst live"><i></i>Live${p.end ? ` · ends in <b data-cd="${p.end}">${countdown(p.end).text}</b>` : ''}</span>`; }
   if (st === 'upcoming') return `<span class="ldst up">Starts in <b data-cd="${d.phases[n].start}">${countdown(d.phases[n].start).text}</b></span>`;
@@ -41,11 +46,11 @@ function dropCard(d: Drop) {
   return `<a class="ldcard" href="/launchpad/${esc(d.slug)}"><div class="ldimg"><img src="${esc(d.img)}" alt="" loading="lazy" width="384" height="384"><span class="ldtags2">${demoTag(d)}${mcTag(d)}</span></div>
    <div class="ldbody"><div class="ldname">${esc(d.name)}</div><div class="ldchains">${chainLogos(d)}</div>${stateChip(d)}
    <div class="ldprog"><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()} minted${isMulti(d) ? ` · shared by ${d.chains.length} chains` : ''}</span></div>
-   <div class="ldmeta"><span>${st === 'ended' ? 'Price' : esc(ph.name)}</span><b>${price ? `${fmt(price)} ${esc(chains[c0.chain]?.native)}` : 'No mint price'}</b></div></div></a>`;
+   <div class="ldmeta"><span>${st === 'ended' && !comingSoon(d) ? 'Price' : esc(ph.name)}</span><b>${price ? `${fmt(price)} ${esc(chains[c0.chain]?.native)}` : 'No mint price'}</b></div></div></a>`;
 }
 function listPage() {
   document.title = 'Launchpad · MultiSea';
-  const drops = allDrops(); const by = (s: string) => drops.filter(d => dropState(d) === s);
+  const drops = allDrops(); const by = (s: string) => drops.filter(d => (comingSoon(d) ? 'upcoming' : dropState(d)) === s);
   const mine = localDrops().filter(d => d.status === 'pending' || d.status === 'rejected');
   const l = by(tab);
   app.innerHTML = `${navHtml('launchpad')}<section class="page wide ldpage">
@@ -61,12 +66,12 @@ function listPage() {
 // ---------------- drop / mint page ----------------
 let chainSel = ''; let qty = 1; let pay: 'direct' | 'relay' = 'direct'; let gp: Record<string, bigint | null> = {}; let alAddr = ''; let alRes = ''; let demoMsg = '';
 function phaseRows(d: Drop) {
-  const a = activePhase(d);
+  const a = activePhase(d); const soon = comingSoon(d);
   return d.phases.map((p, i) => {
-    const n = Math.floor(Date.now() / 1000); const st = i === a ? 'live' : p.start > n ? 'up' : 'end';
-    const when = st === 'live' ? (p.end ? `Ends in <b data-cd="${p.end}">${countdown(p.end).text}</b>` : 'Open until sold out') : st === 'up' ? `Starts in <b data-cd="${p.start}">${countdown(p.start).text}</b>` : 'Ended';
+    const n = Math.floor(Date.now() / 1000); const st = soon ? 'soon' : i === a ? 'live' : p.start > n ? 'up' : 'end';
+    const when = soon ? `Planned start ${esc(fmtStart(p.start))} · opens once the contract is deployed` : st === 'live' ? (p.end ? `Ends in <b data-cd="${p.end}">${countdown(p.end).text}</b>` : 'Open until sold out') : st === 'up' ? `Starts in <b data-cd="${p.start}">${countdown(p.start).text}</b>` : 'Ended';
     const c = d.chains.find(x => x.chain === chainSel) || d.chains[0]; const price = priceOn(d, p, c.chain);
-    return `<div class="ldph ${st}"><div class="ldphh"><b>${esc(p.name)}</b><span class="ldst ${st === 'up' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'up' ? 'Upcoming' : 'Ended'}</span></div>
+    return `<div class="ldph ${st}"><div class="ldphh"><b>${esc(p.name)}</b><span class="ldst ${st === 'up' ? 'up' : st}">${st === 'soon' ? 'Coming soon' : st === 'live' ? '<i></i>Live' : st === 'up' ? 'Upcoming' : 'Ended'}</span></div>
      <div class="ldphm"><span>${p.kind === 'allowlist' ? `🔒 Allowlist${p.allowCount ? ` · ${p.allowCount.toLocaleString()} wallets` : ''}` : '🌐 Public'}</span><span>${price ? `${fmt(price)} ${esc(chains[c.chain]?.native)}` : 'No mint price'}</span><span>${p.maxPerWallet ? `Max ${p.maxPerWallet} / wallet` : 'No wallet limit'}</span></div>
      <div class="ldphw mut small">${when}</div></div>`;
   }).join('');
@@ -109,6 +114,9 @@ function qtyHint(d: Drop, k: string) {
   return `<div class="ldhint">💡 Buy 3+ to save: cross-chain cost ≈ $${per(3).toFixed(2)}/NFT at 3 vs $${per(1).toFixed(2)} at 1 (one confirm covers the whole mint). Base is cheapest at ≈ $${base.toFixed(2)}.</div>`;
 }
 function mintBox(d: Drop) {
+  if (comingSoon(d)) return `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
+   <p class="mut small">This drop is approved. Minting opens once its contract is deployed and verified on-chain.</p>
+   <button class="bbtn" disabled>Minting opens soon</button></div>`;
   const st = dropState(d); const ai = activePhase(d); const p = d.phases[ai]; const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
   const left = isMulti(d) ? Math.max(0, d.maxSupply - minted(d)) : Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || 20, left, 20));
   if (qty > max) qty = max;
@@ -210,21 +218,21 @@ function dropPage(d: Drop) {
   document.title = `${d.name} · Launchpad · MultiSea`;
   // Multichain: pre-select Base (the hub: instant and the cheapest chain to mint on).
   if (!chainSel || !d.chains.some(c => c.chain === chainSel)) chainSel = isMulti(d) && d.chains.some(c => c.chain === HUB) ? HUB : d.chains[0].chain;
-  const st = dropState(d); const ai = activePhase(d), ni = nextPhase(d);
-  const target = st === 'live' ? d.phases[ai].end : st === 'upcoming' ? d.phases[ni].start : 0;
+  const soon = comingSoon(d); const st = dropState(d); const ai = activePhase(d), ni = nextPhase(d);
+  const target = soon ? 0 : st === 'live' ? d.phases[ai].end : st === 'upcoming' ? d.phases[ni].start : 0;
   const cd = target ? countdown(target) : null;
   app.innerHTML = `${navHtml('launchpad')}<section class="ldrop">
    <div class="ldban"><div class="ldbanart">${d.art.slice(0, 8).map(u => `<img src="${esc(u)}" alt="" width="200" height="200">`).join('')}</div><div class="ldbanfade"></div>
-    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span></div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div></div></div></div>
+    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}${soon ? SOON : `<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span>`}</div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div></div></div></div>
    <div class="ldwrap"><div class="ldmain ldtop">
     <p class="desc">${esc(d.description)}</p>
     ${cd ? `<div class="ldcd" data-target="${target}"><span class="mut">${st === 'live' ? esc(d.phases[ai].name) + ' ends in' : esc(d.phases[ni].name) + ' starts in'}</span><div class="ldcdg"><div><b data-u="d">${cd.d}</b><em>days</em></div><div><b data-u="h">${cd.h}</b><em>hrs</em></div><div><b data-u="m">${cd.m}</b><em>min</em></div><div><b data-u="s">${cd.s}</b><em>sec</em></div></div></div>` : ''}
     ${isMulti(d) ? sharedBar(d) : `<div class="ldprog big"><div class="ldprogh"><b>${pct(minted(d), d.maxSupply).toFixed(1)}% minted</b><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div>
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
-   <aside class="ldside">${mintBox(d)}${alBox(d)}
+   <aside class="ldside">${mintBox(d)}${soon ? '' : alBox(d)}
     <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
-   ${isMulti(d) ? heldBox(d) : ''}
+   ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
 }
 function tick() {
@@ -265,6 +273,7 @@ app.addEventListener('click', e => {
     else alRes = d.phases.filter(p => p.kind === 'allowlist').map(p => `${p.allowlist?.includes(alAddr) ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} ${esc(p.name)}`).join(' &nbsp; ') + ' <span class="mut">(demo list)</span>';
     render();
   }
+  if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
   if (el.dataset.act === 'mint' && isMulti(d)) {
     const c = d.chains.find(x => x.chain === chainSel)!; const start = minted(d) + 1; const q = qty;
     pend = { origin: c.chain, qty: q, start, t0: Date.now(), batch: d.queue?.batch }; c.minted += q; // demo counter only

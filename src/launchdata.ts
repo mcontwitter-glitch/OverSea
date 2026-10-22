@@ -13,7 +13,7 @@ export type Drop = {
   copyMode?: 'batched' | 'at-mint'; batchK?: number; batchTMin?: number; queue?: { ids: number; ageMin: number; batch: number };
   slug: string; name: string; symbol: string; creator: string; description: string; chains: ChainAlloc[];
   maxSupply: number; royaltyBps: number; reveal: 'instant' | 'delayed'; phases: Phase[]; img: string; art: string[];
-  demo?: boolean; local?: boolean; status?: 'pending' | 'approved' | 'rejected' | 'live'; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
+  demo?: boolean; local?: boolean; status?: 'pending' | 'approved' | 'rejected' | 'live'; deployed?: boolean; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
 };
 export const FEE_BPS: number = LP.platformFeeBps; // 0.5% of primary sales, paid from creator proceeds by withdraw()
 export const LP_CHAINS: string[] = LP.chains;
@@ -55,6 +55,9 @@ export const nowS = () => Math.floor(Date.now() / 1000);
 export const minted = (d: Drop) => d.chains.reduce((a, c) => a + c.minted, 0);
 export function activePhase(d: Drop): number { const n = nowS(); return d.phases.findIndex(p => n >= p.start && (!p.end || n < p.end)); }
 export function nextPhase(d: Drop): number { const n = nowS(); return d.phases.findIndex(p => p.start > n); }
+// Worker drops that are approved but have no contract verified on-chain yet (no 'live' marking) are "Coming soon":
+// no phase status, no countdown, mint disabled. Demo data and browser-only previews keep their own labels.
+export const comingSoon = (d: Drop) => !d.demo && !d.local && !d.deployed;
 export function dropState(d: Drop): 'live' | 'upcoming' | 'ended' {
   if (minted(d) >= d.maxSupply) return 'ended';
   if (activePhase(d) >= 0) return 'live';
