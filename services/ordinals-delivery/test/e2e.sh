@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"; ROOT="${FORGE_ROOT:-$(cd "$HERE/../../contracts" && pwd)}"
 W="$(mktemp -d)"; BTC_PORT=${BTC_PORT:-18543}; EVM_PORT=${EVM_PORT:-8546}; PEER_PORT=${PEER_PORT:-8797}
 RPCPASS="$(openssl rand -hex 16)"
-cleanup() { kill ${ANVIL_PID:-} ${PEER_PID:-} 2>/dev/null || true; bitcoin-cli -regtest -datadir="$W/btc" -rpcport=$BTC_PORT -rpcuser=u -rpcpassword="$RPCPASS" stop >/dev/null 2>&1 || true; }
+cleanup() { [ -n "${PEER_PID:-}" ] && kill -- -"$PEER_PID" 2>/dev/null; kill ${ANVIL_PID:-} ${PEER_PID:-} 2>/dev/null || true; bitcoin-cli -regtest -datadir="$W/btc" -rpcport=$BTC_PORT -rpcuser=u -rpcpassword="$RPCPASS" stop >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 mkdir -p "$W/btc" "$W/keys"
 BCLI() { bitcoin-cli -regtest -datadir="$W/btc" -rpcport=$BTC_PORT -rpcuser=u -rpcpassword="$RPCPASS" "$@"; }
@@ -29,11 +29,12 @@ K=(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 0x59c6995e
    0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a)
 ADDR() { cast wallet address --private-key "$1"; }
 ATT1=$(ADDR ${K[1]}); ATT2=$(ADDR ${K[2]}); ATT3=$(ADDR ${K[3]}); BUYER=$(ADDR ${K[4]})
-ARTIST=0x000000000000000000000000000000000000A271; FEE=0x000000000000000000000000000000000000FEE1
+ARTIST=0x000000000000000000000000000000000000A271; FEE=0x000000000000000000000000000000000000FEE1; OPS=0x0000000000000000000000000000000000000B75
+CID=$(cast keccak "multisea-demo"); INS_FEE=5000000  # 5 USDC buyer-paid BTC network fee (B13); BTC_USD_PRICE pinned below
 
 echo "== forge script DeployLocal -> anvil"
 cd "$ROOT"
-OUT=$(DEPLOYER_PK=${K[0]} ATTESTERS=$ATT1,$ATT2,$ATT3 BUYER=$BUYER ARTIST=$ARTIST FEE_RECIPIENT=$FEE \
+OUT=$(DEPLOYER_PK=${K[0]} BTC_OPS_RECIPIENT=$OPS MIN_BTC_CONFS=3 DELIVERY_WINDOW=21600 ATTESTERS=$ATT1,$ATT2,$ATT3 BUYER=$BUYER ARTIST=$ARTIST FEE_RECIPIENT=$FEE \
   forge script script/ordinals/DeployOrdinalsLocal.s.sol:DeployLocal --rpc-url $EVM --broadcast 2>&1)
 USDC=$(echo "$OUT" | awk '/USDC 0x/{print $2}'); ESCROW=$(echo "$OUT" | awk '/ESCROW 0x/{print $2}')
 echo "USDC=$USDC ESCROW=$ESCROW"
@@ -46,19 +47,21 @@ printf '%s' "${K[1]}" > "$W/keys/attester1"; printf '%s' "${K[3]}" > "$W/keys/at
 cd "$HERE"
 COMMON=(BTC_NETWORK=regtest BTC_BACKEND=rpc BITCOIND_RPC_URL=http://127.0.0.1:$BTC_PORT BITCOIND_RPC_USER=u BITCOIND_RPC_PASS=$RPCPASS
   EVM_RPC_URL=$EVM ESCROW_ADDRESS=$ESCROW START_BLOCK=$START EVM_CONFIRMATIONS=1 BTC_MIN_CONFS=3 FEE_RATE_FALLBACK=2
-  BTC_SERVICE_PRIVKEY_FILE=$W/keys/btc_service POLL_MS=500 DEADLINE_SAFETY_SECS=600 PEER_AUTH_TOKEN=e2e-token DOTENV=/nonexistent)
+  BTC_SERVICE_PRIVKEY_FILE=$W/keys/btc_service POLL_MS=500 DEADLINE_SAFETY_SECS=7200 DELIVERY_WINDOW_SECS=21600 COLLECTION_IDS=$CID
+  BTC_USD_PRICE=100000 MAX_FEE_RATE=200 PEER_AUTH_TOKEN=e2e-token DOTENV=/nonexistent)
 SVC_ADDR=$(env "${COMMON[@]}" npx tsx src/index.ts address)
 echo "service wallet: $SVC_ADDR"
 BCLI -rpcwallet=miner sendtoaddress "$SVC_ADDR" 0.002 >/dev/null; BCLI generatetoaddress 1 "$MINER" >/dev/null
 
 echo "== peer attester #3 (independently verifies before signing)"
-env "${COMMON[@]}" ATTESTER_PRIVATE_KEY_FILE=$W/keys/attester3 ATTEST_SERVER_PORT=$PEER_PORT npx tsx src/index.ts attester > "$W/peer.log" 2>&1 & PEER_PID=$!
+setsid env "${COMMON[@]}" ATTESTER_PRIVATE_KEY_FILE=$W/keys/attester3 ATTEST_SERVER_PORT=$PEER_PORT npx tsx src/index.ts attester > "$W/peer.log" 2>&1 & PEER_PID=$!
 sleep 2
 
-echo "== buyer createOrder (25 mUSDC)"
-CID=$(cast keccak "multisea-demo")
-cast send --rpc-url $EVM --private-key ${K[4]} $USDC "approve(address,uint256)" $ESCROW 25000000 >/dev/null
-cast send --rpc-url $EVM --private-key ${K[4]} $ESCROW "createOrder(bytes32,address,string)" $CID $USDC "$BUYER_BTC" >/dev/null
+echo "== buyer createOrder (25 mUSDC price + 5 mUSDC inscription fee)"
+cast send --rpc-url $EVM --private-key ${K[4]} $USDC "approve(address,uint256)" $ESCROW 30000000 >/dev/null
+if cast send --rpc-url $EVM --private-key ${K[4]} $ESCROW "createOrder(bytes32,address,string,uint256)" $CID $USDC "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080" $INS_FEE >/dev/null 2>&1; then
+  echo "FAIL: non-taproot address accepted on-chain"; exit 1; fi   # B3: rejected on-chain
+cast send --rpc-url $EVM --private-key ${K[4]} $ESCROW "createOrder(bytes32,address,string,uint256)" $CID $USDC "$BUYER_BTC" $INS_FEE >/dev/null
 cast rpc --rpc-url $EVM anvil_mine 2 >/dev/null
 
 echo "== run service (each 'once' = fresh process => exercises restart safety)"
@@ -92,14 +95,20 @@ ENVELOPE=$(node --import tsx -e '
   console.log(i.tags.contentType+" "+Buffer.from(i.body).toString().slice(0,60))})' "$(BCLI getrawtransaction "$REVEAL")")
 echo "inscription $INSID ($CONFS confs) -> $DEST"
 echo "envelope: $ENVELOPE..."
-ORD=$(cast call --rpc-url $EVM $ESCROW "orders(uint256)(address,address,uint128,uint64,uint8,bytes32,string,bytes32,string)" 1)
-STATUS=$(echo "$ORD" | sed -n 5p); ONCHAIN_INS=$(echo "$ORD" | sed -n 9p | tr -d '"')
+read -r STATUS ONCHAIN_INS ONCHAIN_FEE <<<"$(node --import tsx -e '
+  Promise.all([import("./src/evm.ts"),import("./src/service.ts")]).then(async ([e,s])=>{const evm=await e.makeEvm(process.argv[1]);
+  const o=await s.readOrder(evm,process.argv[2],1n);console.log(e.STATUS.indexOf(o.status),o.inscriptionId,String(o.inscriptionFee))})' $EVM $ESCROW)"
+[ "$ONCHAIN_FEE" = "$INS_FEE" ] || fail "onchain inscriptionFee $ONCHAIN_FEE != $INS_FEE"
+grep -q '"msg":"attested"\|attested' "$W/svc.log" || fail "no attest log"
 [ "$STATUS" = 3 ] || fail "onchain status $STATUS != Released(3)"
 [ "$ONCHAIN_INS" = "$INSID" ] || fail "onchain inscriptionId $ONCHAIN_INS != $INSID"
 A=$(cast call --rpc-url $EVM $USDC "balanceOf(address)(uint256)" $ARTIST | awk '{print $1}')
 F=$(cast call --rpc-url $EVM $USDC "balanceOf(address)(uint256)" $FEE | awk '{print $1}')
+O=$(cast call --rpc-url $EVM $USDC "balanceOf(address)(uint256)" $OPS | awk '{print $1}')
+E=$(cast call --rpc-url $EVM $USDC "balanceOf(address)(uint256)" $ESCROW | awk '{print $1}')
 [ "$A" = 23750000 ] || fail "artist balance $A"; [ "$F" = 1250000 ] || fail "fee balance $F"
+[ "$O" = "$INS_FEE" ] || fail "btcOps balance $O != $INS_FEE"; [ "$E" = 0 ] || fail "escrow left $E"
 grep -q "signed attestation" "$W/peer.log" || fail "peer never signed"
 if grep -Eiq "$(cat "$W/keys/btc_service")|${K[1]#0x}|${K[3]#0x}|$RPCPASS" "$W/svc.log" "$W/peer.log"; then fail "secret leaked into logs"; fi
-echo "artist=$A fee=$F orderStatus=Released"
+echo "artist=$A fee=$F btcOps=$O escrow=$E orderStatus=Released (SPV-verified on-chain, $CONFS confs)"
 echo "E2E PASS"

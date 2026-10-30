@@ -54,6 +54,10 @@ export function loadConfig() {
       minConfs: num("BTC_MIN_CONFS", 3),
       feeRateFallback: num("FEE_RATE_FALLBACK", 2),
       maxFeeRate: num("MAX_FEE_RATE", 50),
+      btcUsdPrice: process.env.BTC_USD_PRICE ? Number(process.env.BTC_USD_PRICE) : undefined, // fixed price (tests/ops override)
+      priceApiUrl: process.env.BTC_PRICE_API_URL ?? "https://mempool.space/api/v1/prices",
+      quoteHeadroomPct: num("QUOTE_HEADROOM_PCT", 50),
+      bumpAfterSecs: num("BUMP_AFTER_SECS", 1800),
       postageSats: BigInt(process.env.POSTAGE_SATS ?? "546"),
     },
     attest: {
@@ -68,7 +72,10 @@ export function loadConfig() {
     contentType: process.env.CONTENT_TYPE ?? "image/svg+xml",
     statePath: process.env.STATE_PATH ?? "./data/state.json",
     maxAttempts: num("MAX_ATTEMPTS", 8),
-    deadlineSafetySecs: num("DEADLINE_SAFETY_SECS", 6 * 3600),
+    // 7200s: p99 of measured 3-block confirmation time is 4734s (mainnet blocks 972769-973788); see config/ordinals-base.json
+    deadlineSafetySecs: num("DEADLINE_SAFETY_SECS", 7200),
+    deliveryWindowSecs: num("DELIVERY_WINDOW_SECS", 21600),
+    collectionIds: (process.env.COLLECTION_IDS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   };
 }
 

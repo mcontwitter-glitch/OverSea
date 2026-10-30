@@ -3,8 +3,13 @@ import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 
 export const ESCROW_ABI = parseAbi([
   "event OrderCreated(uint256 indexed orderId, bytes32 indexed collectionId, address indexed buyer, address token, uint256 amount, string btcAddress, uint64 deadline)",
-  "function orders(uint256) view returns (address buyer, address token, uint128 amount, uint64 deadline, uint8 status, bytes32 collectionId, string btcAddress, bytes32 btcTxid, string inscriptionId)",
-  "function attestDelivery(uint256 orderId, bytes32 btcTxid, string inscriptionId, uint256 sigDeadline, bytes[] sigs)",
+  "struct Order { address buyer; address token; uint128 amount; uint128 inscriptionFee; uint64 createdAt; uint64 deadline; uint8 status; bytes32 collectionId; bytes32 btcProgram; string btcAddress; bytes32 btcTxid; string inscriptionId; }",
+  "struct SpvProof { bytes rawTx; uint256 index; bytes siblings; bytes headers; }",
+  "function getOrder(uint256) view returns (Order)",
+  "function attestDelivery(uint256 orderId, SpvProof proof, uint256 sigDeadline, bytes[] sigs)",
+  "function verifySpv(uint256 orderId, SpvProof proof) view returns (bytes32, uint256)",
+  "function minBtcConfs() view returns (uint256)",
+  "function collections(bytes32) view returns (address artist, uint96 feeBps, uint32 maxSupply, uint32 sold, uint32 deliveryWindow, bool active, uint64 payoutChainId)",
   "function release(uint256 orderId)",
   "function threshold() view returns (uint256)",
   "function isAttester(address) view returns (bool)",
@@ -12,6 +17,8 @@ export const ESCROW_ABI = parseAbi([
   "function paused() view returns (bool)",
   "error BadConfig()", "error NotAccepted()", "error SoldOut()", "error BadStatus()", "error TooEarly()",
   "error TooLate()", "error BadSigs()", "error InscriptionReused()", "error NotAuthorized()", "error WalletLimit()",
+  "error ZeroAddress()", "error FeeOnTransfer()", "error InscriptionFeeTooHigh()", "error SpvWrongRecipient()", "error SpvBadInclusion()",
+  "error SpvTooOld()", "error BadTx()", "error BadMerkle()", "error BadHeaders()", "error LowWork()", "error InvalidSegwit()",
 ]);
 export const STATUS = ["None", "Pending", "Attested", "Released", "Refunded", "Disputed"] as const;
 

@@ -7,6 +7,13 @@ export type Job = {
   state: JobState; attempts: number; nextAttemptAt: number; lastError?: string;
   commitHex?: string; commitTxid?: string; revealHex?: string; revealTxid?: string; inscriptionId?: string;
   attestTx?: string; releaseTx?: string; feeRate?: number; updatedAt: number;
+  // B7/B13 fee management
+  inscriptionFee?: string; budgetSats?: string; budgetRate?: number; commitAmount?: string; inputs?: { txid: string; vout: number; value: string; confirmed: boolean }[];
+  commitVsize?: number; revealVsize?: number; commitFee?: string; revealFee?: string; revealChange?: string | null; commitChange?: string | null;
+  lastBroadcastAt?: number; bumps?: number;
+  /** every reveal/commit version ever broadcast; whichever confirms is adopted */
+  alts?: { commitTxid: string; commitHex: string; revealTxid: string; revealHex: string; feeRate: number }[];
+  cpfp?: { txid: string; hex: string; parent: string; feeRate: number }[];
 };
 type State = { lastBlock: string; jobs: Record<string, Job>; reserved: string[] };
 

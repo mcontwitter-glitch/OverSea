@@ -1,4 +1,6 @@
+import { hex } from "@scure/base";
 import { log } from "../log.js";
+import { stripWitness, merkleBranch, makeProof, displayToInternal, type SpvProof } from "./spv.js";
 
 export type Utxo = { txid: string; vout: number; value: bigint; confirmed: boolean };
 export type TxInfo = { confirmations: number; hex: string } | null;
@@ -8,6 +10,8 @@ export interface BtcBackend {
   broadcast(hex: string): Promise<string>;
   tx(txid: string): Promise<TxInfo>;
   feeRate(): Promise<number>; // sat/vB
+  /** SPV proof for a confirmed tx: non-witness raw tx, merkle branch, inclusion header + (n-1) following headers. */
+  spvProof(txid: string, nHeaders: number): Promise<SpvProof>;
   /** One-time setup (e.g. import watch-only address). */
   init?(serviceAddress: string): Promise<void>;
 }
@@ -40,6 +44,16 @@ export class EsploraBackend implements BtcBackend {
     if (!st.confirmed) return { confirmations: 0, hex };
     const tip = Number(await (await fetch(`${this.base}/blocks/tip/height`)).text());
     return { confirmations: tip - st.block_height + 1, hex };
+  }
+  async spvProof(txid: string, n: number): Promise<SpvProof> {
+    const mp = await httpJson(`${this.base}/tx/${txid}/merkle-proof`); // {block_height, merkle[display], pos}
+    const raw = await (await fetch(`${this.base}/tx/${txid}/hex`)).text();
+    const headers: Uint8Array[] = [];
+    for (let h = mp.block_height; h < mp.block_height + n; h++) {
+      const hash = String(await httpJson(`${this.base}/block-height/${h}`)).trim();
+      headers.push(hex.decode(String(await httpJson(`${this.base}/block/${hash}/header`)).trim()));
+    }
+    return makeProof(stripWitness(raw.trim()), mp.pos, mp.merkle.map(displayToInternal), headers);
   }
   async feeRate() {
     try {
@@ -83,6 +97,18 @@ export class BitcoindRpcBackend implements BtcBackend {
   async tx(txid: string): Promise<TxInfo> {
     try { const t = await this.call("getrawtransaction", [txid, true]); return { confirmations: t.confirmations ?? 0, hex: t.hex }; }
     catch (e: any) { if (/No such mempool|not found/i.test(e.message)) return null; throw e; }
+  }
+  async spvProof(txid: string, n: number): Promise<SpvProof> {
+    const t = await this.call("getrawtransaction", [txid, true]);
+    if (!t.blockhash) throw new Error("tx not confirmed");
+    const blk = await this.call("getblock", [t.blockhash, 1]);
+    const index = blk.tx.indexOf(txid);
+    const headers: Uint8Array[] = [];
+    for (let h = blk.height; h < blk.height + n; h++) {
+      const hash = await this.call("getblockhash", [h]);
+      headers.push(hex.decode(await this.call("getblockheader", [hash, false])));
+    }
+    return makeProof(stripWitness(t.hex), index, merkleBranch(blk.tx, index), headers);
   }
   async feeRate() {
     try { const r = await this.call("estimatesmartfee", [3]); if (r.feerate) return Math.ceil((r.feerate * 1e8) / 1000); } catch {}

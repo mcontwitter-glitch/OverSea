@@ -18,6 +18,9 @@ contract DeployOrdinalsBase is Script {
         require(vm.parseJsonUint(j, ".feeBps") == FEE_BPS, "feeBps must be 50");
         require(vm.parseJsonUint(j, ".deliveryWindow") == DELIVERY_WINDOW, "deliveryWindow must be 21600");
         require(vm.parseJsonUint(j, ".threshold") == 1, "threshold must be 1");
+        address[] memory allowed = vm.parseJsonAddressArray(j, ".allowedTokens");
+        require(allowed.length == 1 && allowed[0] == usdc, "allowlist must be exactly Base USDC");
+        require(vm.parseJsonUint(j, ".serviceEnv.DEADLINE_SAFETY_SECS_NUM") < DELIVERY_WINDOW, "safety >= window");
     }
 
     function run() external returns (MultiSeaOrdinalEscrow esc) {
@@ -29,7 +32,8 @@ contract DeployOrdinalsBase is Script {
         vm.startBroadcast();
         esc = new MultiSeaOrdinalEscrow(owner, feeTo, att, 1);
         vm.stopBroadcast();
-        require(esc.feeRecipient() == feeTo && esc.owner() == owner && esc.threshold() == 1, "post-deploy check");
+        require(esc.feeRecipient() == feeTo && esc.btcOpsRecipient() == feeTo && esc.owner() == owner && esc.threshold() == 1
+                && esc.btcNetwork() == 0 && esc.minBtcConfs() == 3, "post-deploy check");
         console.log("ORDINAL_ESCROW", address(esc));
     }
 
@@ -40,5 +44,17 @@ contract DeployOrdinalsBase is Script {
             MultiSeaOrdinalEscrow.CollectionConfig(artist, FEE_BPS, maxSupply, 0, DELIVERY_WINDOW, true, 0);
         console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.configureCollection, (id, c)));
         console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.setTokenPrice, (id, usdc, priceUsdc6)));
+        string memory j = vm.readFile("config/ordinals-base.json");
+        console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.setInscriptionFeeCap, (id, vm.parseJsonUint(j, ".inscriptionFeeCapUsdc6"))));
+    }
+
+    /// One-time admin calls after deploy (allowlist Base USDC; confs; optional btcOps wallet). Nothing is sent.
+    function adminCalldata() external view {
+        (,, address usdc) = _cfg();
+        string memory j = vm.readFile("config/ordinals-base.json");
+        console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.setAllowedToken, (usdc, true)));
+        console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.setMinBtcConfs, (vm.parseJsonUint(j, ".minBtcConfs"))));
+        address ops = vm.parseJsonAddress(j, ".btcOpsRecipient");
+        if (ops != vm.parseJsonAddress(j, ".feeRecipient")) console.logBytes(abi.encodeCall(MultiSeaOrdinalEscrow.setBtcOpsRecipient, (ops)));
     }
 }

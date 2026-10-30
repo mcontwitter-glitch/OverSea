@@ -24,9 +24,14 @@ contract DeployLocal is Script {
         MockUSDCLocal usdc = new MockUSDCLocal();
         MultiSeaOrdinalEscrow esc = new MultiSeaOrdinalEscrow(owner, feeTo, att, 2);
         bytes32 cid = keccak256("multisea-demo");
-        esc.configureCollection(cid, MultiSeaOrdinalEscrow.CollectionConfig(artist, 500, 444, 0, 1 days, true, 0));
+        esc.configureCollection(cid, MultiSeaOrdinalEscrow.CollectionConfig(artist, 500, 444, 0, uint32(vm.envOr("DELIVERY_WINDOW", uint256(1 days))), true, 0));
+        esc.setAllowedToken(address(usdc), true);           // B12 allowlist
         esc.setTokenPrice(cid, address(usdc), 25e6);
-        esc.setBtcNetwork(2);
+        esc.setInscriptionFeeCap(cid, vm.envOr("INSCRIPTION_FEE_CAP", uint256(25e6))); // B13
+        address ops = vm.envOr("BTC_OPS_RECIPIENT", address(0));
+        if (ops != address(0)) esc.setBtcOpsRecipient(ops);
+        esc.setBtcNetwork(2);                               // regtest hrp + regtest PoW floor
+        esc.setMinBtcConfs(vm.envOr("MIN_BTC_CONFS", uint256(1)));
         usdc.mint(buyer, 1000e6);
         vm.stopBroadcast();
         console.log("USDC", address(usdc));

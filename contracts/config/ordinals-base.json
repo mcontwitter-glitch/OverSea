@@ -1,5 +1,5 @@
 {
-  "_note": "MultiSea Ordinals escrow deploy config (spec §7.9, v0.4.17). DO NOT broadcast without BIG's approval. No keys here.",
+  "_note": "MultiSea Ordinals escrow deploy config (spec \u00a77.9, v0.4.18). DO NOT broadcast without BIG's approval. No keys here.",
   "chainId": 8453,
   "owner": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
   "feeRecipient": "0x25411039F77529A543344603bD8acdd65fABA4d0",
@@ -11,5 +11,21 @@
   "deliveryWindow": 21600,
   "maxPerWallet": 0,
   "btcNetwork": 0,
-  "serviceEnv": { "BTC_NETWORK": "mainnet", "DEADLINE_SAFETY_SECS": "TBD on signet (must be well below 21600, spec B14)", "ATTEST_MODE": "peer" }
+  "serviceEnv": {
+    "BTC_NETWORK": "mainnet",
+    "DELIVERY_WINDOW_SECS": "21600",
+    "DEADLINE_SAFETY_SECS": "7200",
+    "DEADLINE_SAFETY_SECS_NUM": 7200,
+    "DEADLINE_SAFETY_NOTE": "Measured mempool.space blocks 972769-973788 (fetched 2026-10-30): mean interval 577s; time for 3 blocks p50 1546s, p95 3618s, p99 4734s, max 6626s, 0/1017 windows over 7200s.",
+    "MIN_CONFS": "3",
+    "MAX_FEE_RATE": "200",
+    "ATTEST_MODE": "peer"
+  },
+  "allowedTokens": [
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  ],
+  "btcOpsRecipient": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+  "minBtcConfs": 3,
+  "inscriptionFeeCapUsdc6": 25000000,
+  "inscriptionFeeCapNote": "PROPOSED 25 USDC cap per order \u2014 needs BIG's decision"
 }
