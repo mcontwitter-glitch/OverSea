@@ -1,0 +1,35 @@
+{
+  "name": "multisea-delivery-service",
+  "version": "1.0.0",
+  "description": "MultiSea Ordinal delivery + attestation service (UNAUDITED, regtest/signet by default)",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/index.ts run",
+    "once": "tsx src/index.ts once",
+    "attester": "tsx src/index.ts attester",
+    "address": "tsx src/index.ts address",
+    "test": "node --import tsx --test test/unit.test.ts",
+    "test:e2e": "bash test/e2e.sh"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "micro-ordinals": "^0.4.0",
+    "viem": "^2.57.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

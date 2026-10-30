@@ -1,0 +1,15 @@
+{
+  "_note": "MultiSea Ordinals escrow deploy config (spec §7.9, v0.4.17). DO NOT broadcast without BIG's approval. No keys here.",
+  "chainId": 8453,
+  "owner": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+  "feeRecipient": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "usdcSource": "https://developers.circle.com/stablecoins/usdc-contract-addresses (checked 2026-10-30)",
+  "baseSepoliaUsdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "threshold": 1,
+  "feeBps": 50,
+  "deliveryWindow": 21600,
+  "maxPerWallet": 0,
+  "btcNetwork": 0,
+  "serviceEnv": { "BTC_NETWORK": "mainnet", "DEADLINE_SAFETY_SECS": "TBD on signet (must be well below 21600, spec B14)", "ATTEST_MODE": "peer" }
+}
