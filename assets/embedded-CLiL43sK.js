@@ -1,0 +1,1 @@
+export{t as connectSocial,n as logoutSocial,r as restoreSocial}from"./embedded-fOSH-Tl_.js";

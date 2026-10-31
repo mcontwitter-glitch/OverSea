@@ -1,1 +1,0 @@
-export{t as connectSocial,n as logoutSocial,r as restoreSocial}from"./embedded-CF28qn2S.js";
