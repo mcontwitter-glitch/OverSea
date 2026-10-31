@@ -609,3 +609,8 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .card.ordc span.buy{display:block;text-align:center}
 .ai .ordimg{width:40px;height:40px;image-rendering:pixelated;border-radius:6px}
 @media(max-width:640px){.ctools{flex-wrap:wrap;min-width:0}.ctools>*{min-width:0;max-width:100%}.ctools .csearch{flex:1 1 100%}.ctools select{flex:1 1 0}.hchips{max-width:100%;overflow-x:auto}}
+.chip i.soon,.cc i.soon{font-style:normal;font-size:11px;font-weight:700;color:#f7931a;background:#f7931a1c;border:1px solid #f7931a55;border-radius:999px;padding:1px 7px;margin-left:6px}
+.chip.soonchip.on{border-color:#f7931a!important;background:#f7931a14!important}
+.btcsoon{max-width:460px;margin:48px auto 72px;text-align:center;padding:36px 24px;border:1px solid #2a2a2a;border-radius:18px;background:radial-gradient(circle at 50% 0,#f7931a1f,transparent 70%),#0d0d0d}
+.btcsoon h3{font-size:22px;margin:16px 0 8px}.btcsoon p{color:#9a9a9a;line-height:1.5;margin:0 0 20px}
+@media(max-width:640px){.btcsoon{margin:28px 0 48px;padding:28px 18px}.btcsoon h3{font-size:19px}}

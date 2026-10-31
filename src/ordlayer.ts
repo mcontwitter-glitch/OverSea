@@ -4,15 +4,17 @@
 // `demo` lets a collection show MOCKED signet Ordinals with ?demo=1 (clearly labelled DEMO); it never marks real inscriptions.
 import * as D from './btc/data';
 import { demoOn, demoListings, demoHoldings } from './btc/demo';
-export type OrdCfg = { enabled?: boolean; collection?: string; inscriptions?: string[]; demo?: { collection: string } };
+export type OrdCfg = { enabled?: boolean; collection?: string; inscriptions?: string[]; demo?: { collection: string }; comingSoon?: boolean };
 export type OrdItem = { iid: string; num: number | null; name: string; attrs: [string, string][]; owner: string; priceSats: number | null; txid?: string; createdAt?: number };
 export type OrdLayer = { demo: boolean; net: D.Net; collection: string; items: OrdItem[]; btcUsd: number | null };
 const NET = (): D.Net => (D.getNet() === 'mainnet' && !D.mainnetOn() ? 'signet' : D.getNet());
 const attrsOf = (a: any[] = []): [string, string][] => a.filter(x => x?.trait_type).map(x => [String(x.trait_type), String(x.value)]);
 async function meta(id: string) { try { const i = await D.inscription(id); return { num: i.num ?? null, name: i.name, attrs: attrsOf(i.attributes), owner: i.address || '' }; } catch { return null; } }
 export const ordEnabled = (c?: OrdCfg | null) => !!(c && (c.enabled && (c.collection || c.inscriptions?.length)));
-export const ordDemo = (c?: OrdCfg | null) => !!(c?.demo && demoOn(NET()));
+export const ordSoon = (c?: OrdCfg | null) => !!(c?.comingSoon && !ordEnabled(c));
+export const ordDemo = (c?: OrdCfg | null) => !!(c?.demo && !c.comingSoon && demoOn(NET()));
 export async function loadOrdLayer(c: OrdCfg): Promise<OrdLayer | null> {
+  if (ordSoon(c)) return null; // coming soon: no indexer, listing or demo fetches at all
   const demo = !ordEnabled(c) && ordDemo(c); if (!ordEnabled(c) && !demo) return null;
   const net = demo ? NET() : D.getNet(); const btcUsd = await D.btcUsd().catch(() => null);
   if (demo) {

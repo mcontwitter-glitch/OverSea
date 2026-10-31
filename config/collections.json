@@ -159,7 +159,12 @@
           "address": "0xe81DdAB112137112B8FeeB853e22BC4c38F999e5",
           "label": "Abstract vault"
         }
-      ]
+      ],
+      "ordinals": {
+        "_comment": "Bitcoin chip shows 'Coming soon' only: no Ordinals data is fetched and no demo/mock items are shown (even with ?demo=1). LIL FOOTS has no inscriptions. A real collection sets enabled:true + collection and/or inscriptions.",
+        "enabled": false,
+        "comingSoon": true
+      }
     }
   ],
   "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100"

@@ -89,8 +89,13 @@ type OL = import('./ordlayer').OrdLayer; let ORD: OL | null = null; const ordByI
 let ordKit: typeof import('./ordlayer') | null = null; let btcUsdR: number | null = null;
 const isOrd = (id: number) => id < 0;
 const ordCfg = () => (ovr.ordinals ?? (COL as any).ordinals) || null;
+// `ordinals.comingSoon` (and not enabled): a Bitcoin chip labelled Coming soon + an empty state; nothing is fetched or mocked.
+const ordSoon = () => { const c = ordCfg(); return !!(c?.comingSoon && !c.enabled); };
+let soonOn = false;
+const btcSoonChip = () => ordSoon() ? `<button class="chip soonchip ${soonOn ? 'on' : ''}" data-btcsoon>${logo('bitcoin')}Bitcoin <i class="soon">Coming soon</i></button>` : '';
+const btcSoonView = () => `<div class="btcsoon"><img src="/logos/bitcoin.svg" alt="" width="56" height="56"><h3>Bitcoin Ordinals coming soon</h3><p>${esc(COL.name)} on Bitcoin is on the way. When inscriptions go live you'll browse, buy and list them right here, next to every other chain.</p><button class="obtn sm" data-btcsoon>Back to all chains</button></div>`;
 async function loadOrdinals() {
-  const c = ordCfg(); if (!c) return; ordKit ??= await import('./ordlayer');
+  const c = ordCfg(); if (!c || ordSoon()) return; ordKit ??= await import('./ordlayer');
   const L = await ordKit.loadOrdLayer(c).catch(() => null); if (!L || ORD) return; ORD = L; btcUsdR = L.btcUsd;
   chains.bitcoin = { name: 'Bitcoin', chainId: 0, native: 'BTC', openseaSlug: null, explorer: ordKit.D.explorer(L.net), note: L.demo ? 'DEMO' : undefined };
   if (!deployedChains.includes('bitcoin')) deployedChains.push('bitcoin');
@@ -149,7 +154,7 @@ function header() {
       <img class="avatar" src="${avatarSrc}" alt="">
       <div class="hero-txt">
         <h1>${esc(COL.name)} <span class="verified">✓</span></h1>
-        <div class="by">${deployedChains.map(c => logo(c)).join('')}<span>${ORD?.demo ? `${deployedChains.length - 1} chains + Bitcoin (demo)` : `${deployedChains.length} chains`} · ${COL.standard}</span></div>
+        <div class="by">${deployedChains.map(c => logo(c)).join('')}<span>${ordSoon() ? `${deployedChains.length} chains · Bitcoin coming soon` : ORD?.demo ? `${deployedChains.length - 1} chains + Bitcoin (demo)` : `${deployedChains.length} chains`} · ${COL.standard}</span></div>
       </div>
     </div>
     <div class="stats">
@@ -163,7 +168,7 @@ function header() {
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
-  <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}</div>`;
+  <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
 
 const mobMq = matchMedia('(max-width:640px)'); const isMob = () => mobMq.matches;
@@ -282,6 +287,7 @@ function chainsView() {
     <a class="mono" href="${c.explorer}/address/${d.address}" target="_blank" rel="noopener">${d.address}</a>
     ${p?.ok ? `<div class="kv"><span>Held (ownerOf)</span><b>${p.minted}</b><span>In vault/escrow</span><b>${p.inEscrow}</b><span>Live on chain</span><b>${p.live}</b><span>Holders</span><b>${p.holders}</b><span>Transfers indexed</span><b>${p.transfers ?? '-'}${p.historyComplete ? '' : ' (partial)'}</b><span>Seaport sales</span><b>${p.sales}</b></div>` : `<div class="mut">${esc(p?.error || 'no data')}</div>`}
     ${c.openseaSlug ? `<a class="os" target="_blank" rel="noopener" href="https://opensea.io/assets/${c.openseaSlug}/${d.address}">View on OpenSea ↗</a>` : ''}</div></div>`; }).join('')}
+    ${ordSoon() ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) <i class="soon">Coming soon</i></h3><div class="mut">Not live yet. No inscriptions are linked to ${esc(COL.name)}.</div></div></div>` : ''}
     ${ORD ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) ${ORD.demo ? '<i class="need">DEMO · signet mock</i>' : ''}</h3><div class="mut">${ORD.collection ? 'Ordinals collection ' + esc(ORD.collection) : 'Linked inscriptions'} · ${D_net()}</div><div class="kv"><span>Inscriptions</span><b>${ORD.items.length}</b><span>Holders</span><b>${pc.bitcoin?.holders ?? '-'}</b><span>Listed on MultiSea</span><b>${ORD.items.filter(o => o.priceSats != null).length}</b><span>Floor</span><b>${pc.bitcoin?.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) + ' · ' + ordKit!.D.fmtSats(pc.bitcoin.floorSats) : '-'}</b></div><a class="os" href="/btc${ORD.collection ? '/c/' + esc(ORD.collection) : ''}">Open Bitcoin marketplace ↗</a></div></div>` : ''}
     <p class="mut small">Data generated ${summary ? new Date(summary.generatedAt).toLocaleString() : '-'}${ownersLiveAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(ownersLiveAt).toLocaleTimeString()}` : ''}. Vault/escrow addresses excluded: ${COL.escrow.map(e => `${esc(e.label)} ${short(e.address)}`).join(', ')}.</p></div>`;
 }
@@ -313,7 +319,7 @@ function modal(id: number) {
 function render() {
   const y = window.scrollY;
   app.innerHTML = `${navHtml()}
-  ${header()}<div class="content">${st.tab === 'items' ? itemsView() : st.tab === 'activity' ? activityView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
+  ${header()}<div class="content">${st.tab === 'items' ? (soonOn ? btcSoonView() : itemsView()) : st.tab === 'activity' ? activityView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
   window.scrollTo(0, y);
   applyBridgeFlag(); if (st.tab === 'items') fwFill();
   const on = document.querySelector<HTMLElement>('.chips .chip.on'); if (on) { const r = on.parentElement!; r.scrollLeft = on.offsetLeft - r.offsetLeft - 12; }
@@ -323,7 +329,8 @@ function render() {
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
   const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; if (st.tab === 'activity') loadActivity(); render(); return; }
-  const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
+  if (t.closest('[data-btcsoon]')) { soonOn = !soonOn; if (soonOn) st.chains.clear(); render(); return; }
+  const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { soonOn = false; const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
   const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
   const sb = t.closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { e.stopPropagation(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; }
   if (t.closest('.nosell')) { e.stopPropagation(); return; }
