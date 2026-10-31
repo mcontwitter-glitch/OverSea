@@ -16,7 +16,15 @@ async function staticCards() {
   }));
 }
 const tnum = (x?: string) => { const m = (x || '').replace(/[$,]/g, '').match(/[\d.]+/); return m ? +m[0] : -1; };
-let q = '', sort = 'featured', showAll = false; const LIMIT = 10;
+let q = '', sort = 'featured', showAll = false, chain = new URLSearchParams(location.search).get('chain') || ''; const LIMIT = 10;
+// Chain filter. Bitcoin is not an EVM deployment chain in collections.json: its chip shows Ordinals collections (src/btcpage.ts).
+let btcCards: string | null = null;
+const chainChips = () => `<div class="chips hchips" role="group" aria-label="Filter by chain"><button class="chip ${chain ? '' : 'on'}" data-chain="">All chains</button>${Object.entries(chains).map(([k, c]) => `<button class="chip ${chain === k ? 'on' : ''}" data-chain="${k}"><img class="cl" src="/logos/${k}.svg" alt="">${esc(c.name)}</button>`).join('')}<button class="chip btcchip ${chain === 'bitcoin' ? 'on' : ''}" data-chain="bitcoin"><img class="cl" src="/logos/bitcoin.svg" alt="">Bitcoin<em>Ordinals</em></button></div>`;
+async function loadBtc() {
+  const D = await import('./btc/data'); const [l, usd] = await Promise.all([D.featured(), D.btcUsd()]);
+  btcCards = l.map(c => `<a class="ccard2 btcc" href="/btc/c/${esc(c.slug)}"><div class="cc2img">${c.icon ? `<img class="pix" src="${esc(c.icon)}" alt="" loading="lazy" onerror="this.onerror=null;this.outerHTML='&lt;iframe class=&quot;pix&quot; sandbox=&quot;allow-scripts&quot; scrolling=&quot;no&quot; src=&quot;'+this.src.replace('/content/','/preview/')+'&quot;&gt;&lt;/iframe&gt;'">` : ''}<span class="ftag btctag">Ordinals</span></div><div class="cc2body"><div class="ccname">${esc(c.name)}</div><div class="ccchains"><img class="cl" src="/logos/bitcoin.svg" title="Bitcoin" alt=""></div><div class="cc2stats"><div><span>Floor</span><b>${c.floor ? D.fmtBtc(c.floor) : '-'}</b></div><div><span>Floor USD</span><b>${c.floor && usd ? D.fmtUsd(c.floor, usd) : '-'}</b></div><div><span>Supply</span><b>${c.supply.toLocaleString()}</b></div><div><span>Listed</span><b>${c.listed}</b></div></div></div></a>`).join('');
+  regrid();
+}
 function card(c: Card) {
   const img = c.banner ? esc(media(c.banner)) : c.thumb ? `${c.thumb}2396.webp` : esc(media(c.logo));
   return `<a class="ccard2" href="/c/${esc(c.slug)}"><div class="cc2img"><img src="${img}" alt="" loading="lazy" width="384" height="384">${c.featured ? '<span class="ftag">Featured</span>' : ''}</div>
@@ -33,7 +41,9 @@ function visible() {
   return l.map(x => x.c);
 }
 function gridHtml() {
-  const l = visible(); const shown = showAll ? l : l.slice(0, LIMIT);
+  if (chain === 'bitcoin') { if (btcCards == null) { loadBtc().catch(() => { btcCards = '<p class="mut">Could not reach the Ordinals indexer.</p>'; regrid(); }); return '<p class="mut">Loading Bitcoin Ordinals…</p>'; }
+    return `<div class="cgrid2">${btcCards}</div><div class="vall"><a class="obtn" href="/btc">Open Bitcoin Ordinals →</a></div>`; }
+  const l = visible().filter(c => !chain || c.chains.includes(chain)); const shown = showAll ? l : l.slice(0, LIMIT);
   return `<div class="cgrid2">${shown.length ? shown.map(card).join('') : '<p class="mut">No collections match your search.</p>'}</div>${l.length > shown.length ? '<div class="vall"><button class="obtn" data-act="all">View all collections →</button></div>' : ''}`;
 }
 function render() {
@@ -46,10 +56,10 @@ function render() {
    <div class="h2row"><div><h2>Collections</h2><p class="mut">Discover omni chain NFT collections from across all supported networks.</p></div><a class="obtn pill" href="/submit">+ Submit a collection</a></div>
    <div class="ctools"><label class="csearch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="cq" type="search" placeholder="Search collections..." value="${esc(q)}"></label>
     <select id="csort" aria-label="Sort collections">${[['featured', 'Featured'], ['volume', 'Volume'], ['floor', 'Floor'], ['newest', 'Newest']].map(([v, t]) => `<option value="${v}" ${sort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-   <div id="cgridwrap">${gridHtml()}</div>
+   ${chainChips()}<div id="cgridwrap">${gridHtml()}</div>
    ${apiReady ? '' : '<p class="mut small">Community collections will appear here once the MultiSea API is online.</p>'}
   </section>
-  <section class="chains"><p class="sechk">SUPPORTED CHAINS</p><h2 class="sech2">ALL MAJOR NETWORKS</h2><div class="chrow"><div class="chb"><span class="chc"><img src="/logos/abstract.svg" alt="" width="34" height="34"></span><span>Abstract</span></div><div class="chb"><span class="chc"><img src="/logos/ethereum.svg" alt="" width="34" height="34"></span><span>Ethereum</span></div><div class="chb"><span class="chc"><img src="/logos/base.svg" alt="" width="34" height="34"></span><span>Base</span></div><div class="chb"><span class="chc"><img src="/logos/bnb.svg" alt="" width="34" height="34"></span><span>BNB Chain</span></div><div class="chb"><span class="chc"><img src="/logos/apechain.svg" alt="" width="34" height="34"></span><span>ApeChain</span></div><div class="chb"><span class="chc"><img src="/logos/robinhood.svg" alt="" width="34" height="34"></span><span>Robinhood</span></div><a class="chb" href="/submit"><span class="chc more">···</span><span>… and more</span></a></div></section>
+  <section class="chains"><p class="sechk">SUPPORTED CHAINS</p><h2 class="sech2">ALL MAJOR NETWORKS</h2><div class="chrow"><div class="chb"><span class="chc"><img src="/logos/abstract.svg" alt="" width="34" height="34"></span><span>Abstract</span></div><div class="chb"><span class="chc"><img src="/logos/ethereum.svg" alt="" width="34" height="34"></span><span>Ethereum</span></div><div class="chb"><span class="chc"><img src="/logos/base.svg" alt="" width="34" height="34"></span><span>Base</span></div><div class="chb"><span class="chc"><img src="/logos/bnb.svg" alt="" width="34" height="34"></span><span>BNB Chain</span></div><div class="chb"><span class="chc"><img src="/logos/apechain.svg" alt="" width="34" height="34"></span><span>ApeChain</span></div><div class="chb"><span class="chc"><img src="/logos/robinhood.svg" alt="" width="34" height="34"></span><span>Robinhood</span></div><a class="chb" href="/btc"><span class="chc"><img src="/logos/bitcoin.svg" alt="" width="34" height="34"></span><span>Bitcoin</span></a><a class="chb" href="/submit"><span class="chc more">···</span><span>… and more</span></a></div></section>
   <section class="feats2"><div class="feat"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="17"/><ellipse cx="24" cy="24" rx="7.5" ry="17"/><path d="M7 24h34M9.5 15h29M9.5 33h29M24 7v34"/></svg><h3>Omni Chain</h3><p>Access collections across all major blockchains in one place.</p></div><div class="feat"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 8 41 17 24 26 7 17Z"/><path d="M7 24l17 9 17-9"/><path d="M7 31l17 9 17-9"/></svg><h3>All Collections</h3><p>Browse, search and trade from multiple collections without leaving the platform.</p></div><div class="feat"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M27 5 11 27h12l-3 16 17-23H25Z"/></svg><h3>Fast &amp; Simple</h3><p>A seamless cross chain trading experience designed for collectors and traders.</p></div><div class="feat"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 39 11v11c0 10-6.5 17-15 21C15.5 39 9 32 9 22V11Z"/></svg><h3>Secure</h3><p>Powered by trusted blockchain technology and smart contracts across all supported networks.</p></div></section>
   <footer class="foot2"><a class="fbrand" href="/"><img src="${AV['brand/icon-64.webp']}" width="40" height="40" alt=""><span><b>Multi<i>Sea</i></b><small>multichain NFT collections</small></span></a><nav class="flinks"><a href="/#collections">Collections</a><a href="/submit">Submit</a></nav></footer>`;
   bindHome();
@@ -58,6 +68,7 @@ function regrid() { const w = document.getElementById('cgridwrap'); if (w) w.inn
 function bindHome() {
   const qi = document.getElementById('cq') as HTMLInputElement | null; qi?.addEventListener('input', () => { q = qi.value; regrid(); });
   const so = document.getElementById('csort') as HTMLSelectElement | null; so?.addEventListener('change', () => { sort = so.value; regrid(); });
+  app.querySelectorAll('.hchips [data-chain]').forEach(b => b.addEventListener('click', () => { chain = (b as HTMLElement).dataset.chain!; app.querySelectorAll('.hchips .chip').forEach(x => x.classList.toggle('on', x === b)); const u = new URL(location.href); chain ? u.searchParams.set('chain', chain) : u.searchParams.delete('chain'); history.replaceState(null, '', u); regrid(); }));
   app.querySelector('.home2')?.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="all"]')) { showAll = true; regrid(); } });
   app.querySelector('[data-act="explore"]')?.addEventListener('click', e => { e.preventDefault(); document.getElementById('collections')?.scrollIntoView({ behavior: 'smooth' }); });
 }

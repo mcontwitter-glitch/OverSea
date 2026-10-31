@@ -1,0 +1,21 @@
+// PREVIEW DEMO DATA (enabled with ?demo=1, signet/testnet only). No public signet ord indexer exists, so the connected
+// wallet's signet inscription UTXOs, payment UTXOs and two seller listings are MOCKED here. Artwork/metadata are real
+// mainnet NodeMonkes (read-only) shown as if they were on signet. The seller listings are real SIGHASH_SINGLE|ANYONECANPAY
+// PSBTs signed with throwaway test keys (sha256 fill 0x51/0x52) on signet params: no real funds.
+import type { Held, Utxo, Listing, Net } from './data';
+const DK = 'multisea-btc-demo';
+if (new URLSearchParams(location.search).get('demo') === '1') sessionStorage.setItem(DK, '1');
+if (new URLSearchParams(location.search).get('demo') === '0') sessionStorage.removeItem(DK);
+export const demoOn = (n: Net) => n !== 'mainnet' && sessionStorage.getItem(DK) === '1';
+const SELLERS = [{"inscriptionId":"02be9befaf2c023b82b2bbb16b99a5091950b0f9d60a291234f2e79ac3fdbfcfi0","txid":"686099cff30e42b0226996d79f58aa3d5b9d3d5cf0572225b42330eed4c72f4a","vout":0,"value":546,"seller":"tb1pg0wpfgxfja4ec4r6cfk3mlhf9f9fv7mnxrje62perrf89r8v4y3qz272rz","payout":"tb1qnjsff3vafh2v7u6ty5h9l7knqpsgv8ahnn3hwl","priceSats":150000,"psbt":"cHNidP8BAFICAAAAAUovx9TuMCO0JSJX8Fw9nVs9qlif15ZpIrBCDvPPmWBoAAAAAAD/////AfBJAgAAAAAAFgAUnKCUxZ1N1M9zSyUuX/rTAGCGH7cAAAAAAAEBKyICAAAAAAAAIlEgQ9wUoMmXa5xUesJtHf7pKkqWe3Mw5Z0oORjScozsqSIBAwSDAAAAARNBihapwtmdUNT//cfWcH47Pbk3+DP90whm7IiSSlHtuK/PVIf8cwiNCwSqLmGXy8Kzxz3KTF1lfLgLI8Kx9lY4G4MBFyC692icCjVY+2BFiQNqjR5LaF2Qn24OLGAYoUBJrmTsJgAA"}, {"inscriptionId":"51c7a3f35823e9d6a192612b890ca1f2f46e1450cc82a9a3ad0fc5e0ba930064i0","txid":"6ca6911aea72c65925af7f1a1c92692c97912b721d8396ee590f3243d5b5d930","vout":0,"value":546,"seller":"tb1pg0wpfgxfja4ec4r6cfk3mlhf9f9fv7mnxrje62perrf89r8v4y3qz272rz","payout":"tb1qnjsff3vafh2v7u6ty5h9l7knqpsgv8ahnn3hwl","priceSats":210000,"psbt":"cHNidP8BAFICAAAAATDZtdVDMg9Z7paDHXIrkZcsaZIcGn+vJVnGcuoakaZsAAAAAAD/////AVA0AwAAAAAAFgAUnKCUxZ1N1M9zSyUuX/rTAGCGH7cAAAAAAAEBKyICAAAAAAAAIlEgQ9wUoMmXa5xUesJtHf7pKkqWe3Mw5Z0oORjScozsqSIBAwSDAAAAARNBnL1NYgtvtTD3GE8QOUkaWTR3k6a6uQcPpRuBP4+GQAdt9Y0CSW0kohd4FXvHhobk07WCxuwnudMVCS7cCH78/IMBFyC692icCjVY+2BFiQNqjR5LaF2Qn24OLGAYoUBJrmTsJgAA"}];
+export const demoListings = (n: Net): Listing[] => SELLERS.map((s, i) => ({ ...s, net: n, createdAt: Date.UTC(2026, 9, 29, 15 + i), collection: 'nodemonkes', name: i ? 'nodemonke 3688' : 'nodemonke 2238' } as Listing));
+const HELD = [['411db620602ff29313c34cb77b8c9ee71cb9cef1f4f0420ed1f231445898ab9ei0', 'nodemonke 1537', 88301], ['51f5c803c2bf536c897e0aa172d994b663475a9e8160ac0e5ff6ff66c26bb426i0', 'nodemonke 1363', 88144], ['eea8471351d3c9e4798cfe32b5505529211441ef66be7804458ee53e6178aec3i0', 'nodemonke 2225', 88331]] as const;
+const hx = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))), b => b.toString(16).padStart(2, '0')).join('');
+export async function demoHoldings(ord: string): Promise<{ balance: number; items: (Held & { txid: string; vout: number })[] }> {
+  return { balance: 331_200, items: await Promise.all(HELD.map(async ([id, name, num]) => { const txid = await hx('demo-held:' + ord + id); return { id, num, name, contentType: 'image/png', outpoint: txid + ':0', txid, vout: 0, offset: 0, value: 546, collection: 'NodeMonkes' }; })) };
+}
+export async function demoPayUtxos(pay: string): Promise<Utxo[]> {
+  const t = (k: string) => hx('demo-pay:' + pay + k);
+  return [{ txid: await t('d1'), vout: 0, value: 600 }, { txid: await t('d2'), vout: 1, value: 600 }, { txid: await t('a'), vout: 0, value: 250_000 }, { txid: await t('b'), vout: 2, value: 80_000 }];
+}
+export const demoBanner = '<div class="btcdemo"><b>DEMO DATA</b> Signet preview: wallet UTXOs, balances and listings below are mocked (no public signet Ordinals indexer is configured). Artwork and traits are real mainnet data. Nothing is broadcast.</div>';

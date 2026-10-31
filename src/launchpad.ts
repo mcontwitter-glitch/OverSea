@@ -21,7 +21,7 @@ let rates: UsdRates = { ETH: null, APE: null, BNB: null };
 // Worker drops (once the launchpad Worker routes are deployed). Prices arrive in wei; per-chain minted counts would come
 // from each drop contract's totalMinted() (not wired in this preview: shows 0 until contracts exist).
 let remote: Drop[] = [];
-const fromApi = (d: any): Drop => ({ mode: d.mode === 'multichain' ? 'multichain' : 'single', slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
+const fromApi = (d: any): Drop => ({ mode: d.mode === 'multichain' ? 'multichain' : d.mode === 'ordinals' ? 'ordinals' : 'single', ordinals: d.ordinals, slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
   // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
   deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
   chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
@@ -214,6 +214,22 @@ function moveModal(d: Drop) {
    <button class="bbtn" data-act="domove">Move to ${esc(chains[moveDst].name)} · demo (no transaction)</button>
    ${moveMsg ? `<div class="okbox small">${moveMsg}</div>` : ''}</div></div>`;
 }
+// Bitcoin Ordinals drops: order lifecycle paid -> inscribing -> delivered (or refunded in USDC after the delivery window).
+// Orders come from the Worker (/launchpad/:slug/orders?buyer=) once deployed; preview shows this browser's demo orders (labeled).
+type OrdOrder = { id: string; qty: number; usdc: number; btcAddr: string; paidAt: number; status: 'paid' | 'inscribing' | 'delivered' | 'refunded'; inscriptions?: string[]; refundTx?: string };
+function ordOrders(d: Drop): OrdOrder[] {
+  try { const l = JSON.parse(localStorage.getItem('multisea-ord-orders:' + d.slug) || 'null'); if (l) return l; } catch {}
+  const now = Date.now(), p = +(d.ordinals?.priceUsdc || 0);
+  return [{ id: 'ord-0003', qty: 2, usdc: p * 2, btcAddr: 'bc1p…demo', paidAt: now - 9 * 60e3, status: 'paid' }, { id: 'ord-0002', qty: 1, usdc: p, btcAddr: 'bc1p…demo', paidAt: now - 2.2 * 3600e3, status: 'inscribing' }, { id: 'ord-0001', qty: 3, usdc: p * 3, btcAddr: 'bc1p…demo', paidAt: now - 26 * 3600e3, status: 'delivered', inscriptions: ['i0', 'i1', 'i2'] }];
+}
+function ordBox(d: Drop) {
+  const o = d.ordinals || { priceUsdc: 0, orderLimit: 50, deliveryHours: 6, feeBps: 50 }; const H = o.deliveryHours || 6;
+  const stepI = (s: OrdOrder['status']) => ({ paid: 0, inscribing: 1, delivered: 2, refunded: 2 }[s]);
+  const rows = ordOrders(d).map(r => { const i = stepI(r.status), due = r.paidAt + H * 3600e3; const steps = ['Paid (USDC)', 'Inscribing', r.status === 'refunded' ? 'Refunded' : 'Delivered'];
+    return `<div class="ordrow"><div class="ordh"><b>${esc(r.id)}</b><span class="mut small">${r.qty} × · ${r.usdc.toFixed(2)} USDC</span><span class="ordst ${r.status}">${r.status}</span></div><ol class="ordsteps">${steps.map((s, j) => `<li class="${j < i || (j === i && (r.status === 'paid' || r.status === 'delivered')) ? 'ok' : j === i ? (r.status === 'refunded' ? 'bad' : 'on') : ''}">${s}</li>`).join('')}</ol><div class="mut small">${r.status === 'delivered' ? `Delivered to <span class="mono">${esc(r.btcAddr)}</span>` : r.status === 'refunded' ? 'Refunded in USDC on Base' : `Delivery by ${new Date(due).toLocaleString([], { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })} or automatic USDC refund`}</div></div>`; }).join('');
+  return `<div class="fcard ldordbox"><div class="gh"><img class="cl" src="/logos/bitcoin.svg" alt=""> Bitcoin Ordinals drop</div><div class="kv small"><span>Price</span><b>${esc(String(o.priceUsdc))} USDC on Base</b><span>Inscription fee</span><b>Paid by buyer (mempool rate at checkout)</b><span>Delivery</span><b>To your taproot address within ${H}h, else refund</b><span>Order limit</span><b>${o.orderLimit} per wallet</b><span>MultiSea fee</span><b>${(o.feeBps || 50) / 100}%</b></div>
+   <div class="gh" style="margin-top:12px">Your orders <span class="ldtag xp">Preview data</span></div>${rows}</div>`;
+}
 function dropPage(d: Drop) {
   document.title = `${d.name} · Launchpad · MultiSea`;
   // Multichain: pre-select Base (the hub: instant and the cheapest chain to mint on).
@@ -230,7 +246,7 @@ function dropPage(d: Drop) {
     ${isMulti(d) ? sharedBar(d) : `<div class="ldprog big"><div class="ldprogh"><b>${pct(minted(d), d.maxSupply).toFixed(1)}% minted</b><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div>
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
-   <aside class="ldside">${mintBox(d)}${soon ? '' : alBox(d)}
+   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${mintBox(d)}${soon ? '' : alBox(d)}
     <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;

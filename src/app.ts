@@ -7,6 +7,7 @@ const q = new URLSearchParams(location.search);
 if (path === '/' && (q.get('item') || q.get('tab') || q.get('c'))) { const s = q.get('c') || CFG.default; q.delete('c'); location.replace(`/c/${s}${q.toString() ? '?' + q : ''}`); }
 const m = path.match(/^\/c\/([a-z0-9-]+)$/);
 if (path === '/') import('./home');
+else if (path === '/btc' || /^\/btc\/(c\/[A-Za-z0-9_-]+|i\/[0-9a-f]{64}i\d+|me)$/.test(path)) import('./btcpage');
 else if (path === '/submit') import('./submit');
 else if (path === '/list-collection') import('./listpage');
 else if (path === '/bridge') import('./bridgepage');

@@ -7,7 +7,8 @@ export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number;
 // minted: multichain = ids whose minter picked this chain (Active here at mint; escrow copies exist on every other chain).
 export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides public phase price)
 export type Drop = {
-  mode?: 'single' | 'multichain'; // multichain = one shared supply, escrow + LayerZero (MultiSeaOmniDrop)
+  mode?: 'single' | 'multichain' | 'ordinals'; // ordinals = paid in USDC on Base, inscribed on Bitcoin and delivered to the buyer's taproot address
+  ordinals?: { priceUsdc: number | string; orderLimit: number; deliveryHours: number; feeBps: number; buyerPaysInscriptionFee?: boolean }; // multichain = one shared supply, escrow + LayerZero (MultiSeaOmniDrop)
   // multichain escrow copies: 'batched' (default) = Base queues them and sends one message per chain every batchK ids or
   // batchTMin minutes; 'at-mint' = sent with every mint. queue = demo state of the current batch on the Base hub.
   copyMode?: 'batched' | 'at-mint'; batchK?: number; batchTMin?: number; queue?: { ids: number; ageMin: number; batch: number };
