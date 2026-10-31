@@ -602,3 +602,10 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 @media (max-width:480px){.navl a.navlp{display:none}.navl{min-width:0;margin-left:8px!important}.navr{flex:0 0 auto;gap:6px}nav.top{gap:6px}.navr .wbtn:not(.btcw){padding:7px 10px;font-size:13px}}
 @media (max-width:380px){.navl>a:first-child{display:inline!important}.navr .cartbtn{width:32px;height:32px}.navr .wbtn:not(.btcw){padding:7px 9px;font-size:12.5px}}
 .bkv.fees{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)!important}.bkv.fees>span{white-space:normal}
+.chip .chfl{font-size:11.5px;color:#f7931a;font-weight:600;margin-left:4px}
+.card.ordc{color:inherit;text-decoration:none;display:block}
+.card.ordc .ci{background:#111}.card.ordc .ordimg{width:100%;height:100%;object-fit:cover;image-rendering:pixelated;aspect-ratio:1}
+.card.ordc .rank.demo{background:#f7931a;color:#000;font-weight:800}
+.card.ordc span.buy{display:block;text-align:center}
+.ai .ordimg{width:40px;height:40px;image-rendering:pixelated;border-radius:6px}
+@media(max-width:640px){.ctools{flex-wrap:wrap;min-width:0}.ctools>*{min-width:0;max-width:100%}.ctools .csearch{flex:1 1 100%}.ctools select{flex:1 1 0}.hchips{max-width:100%;overflow-x:auto}}
