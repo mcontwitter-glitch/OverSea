@@ -159,16 +159,7 @@
           "address": "0xe81DdAB112137112B8FeeB853e22BC4c38F999e5",
           "label": "Abstract vault"
         }
-      ],
-      "ordinals": {
-        "_comment": "Bitcoin Ordinals as one more chain on this page. LIL FOOTS has NO real inscriptions: enabled stays false. A real collection sets enabled:true + collection (ord collection slug) and/or inscriptions:[ids]; the Bitcoin Ordinals launchpad drop or an admin can also set it via the Worker collection override. 'demo' only shows MOCKED signet Ordinals with ?demo=1, labelled DEMO.",
-        "enabled": false,
-        "collection": "",
-        "inscriptions": [],
-        "demo": {
-          "collection": "nodemonkes"
-        }
-      }
+      ]
     }
   ],
   "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100"
