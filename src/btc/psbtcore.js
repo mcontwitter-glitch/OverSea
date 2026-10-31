@@ -40,7 +40,20 @@ export function makeBtc(bitcoin, ecc) {
   const isAddr = (addr, n) => { try { spkOf(addr, n); return true; } catch { return false; } };
   const xonly = pk => { const b = Buffer.from(pk, 'hex'); return b.length === 33 ? b.subarray(1) : b; };
   const vsize = (ins, outs) => Math.ceil(10.5 + ins.reduce((a, t) => a + (VB_IN[t] ?? 68), 0) + outs.reduce((a, t) => a + (VB_OUT[t] ?? 43), 0));
-  const marketFee = (price, bps) => (bps <= 0 || price <= 0 ? 0 : Math.max(DUST, Math.ceil((price * bps) / 10000)));
+  // Never more than bps of the price (floor). If that is below the dust limit the fee output is dropped: no fee on that sale.
+  const marketFee = (price, bps) => { if (bps <= 0 || price <= 0) return 0; const f = Math.floor((price * bps) / 10000); return f >= DUST ? f : 0; };
+  const feeWaived = (price, bps) => bps > 0 && price > 0 && marketFee(price, bps) === 0;
+  // Checks the marketplace fee output of a purchase PSBT/tx against the policy: exactly marketFee() at output 5 to feeAddress,
+  // or no output to feeAddress at all when the fee is waived (below dust).
+  function checkPurchaseFee(b64, network, { feeAddress, feeBps }) {
+    const p = Psbt.fromBase64(b64, { network: net(network) }); const o = p.txOutputs; const price = o[2]?.value;
+    if (!(price > 0)) return { ok: false, err: 'missing seller output' };
+    const want = marketFee(price, feeBps); const toFee = feeAddress ? o.map((x, i) => [x, i]).filter(([x]) => x.address === feeAddress) : [];
+    if (!want) return toFee.length ? { ok: false, err: 'fee is waived below dust: purchase must not include a fee output' } : { ok: true, price, fee: 0, waived: true };
+    if (!feeAddress) return { ok: false, err: 'BTC fee address not configured' };
+    if (toFee.length !== 1 || toFee[0][1] !== 5 || toFee[0][0].value !== want) return { ok: false, err: `fee output must be ${want} sats at output 5` };
+    return { ok: true, price, fee: want, waived: false };
+  }
 
   // u = { txid, vout, value, address, pubkey? (hex; needed for p2tr internal key and p2sh-p2wpkh redeem script) }
   function inputOf(u, n) {
@@ -89,7 +102,7 @@ export function makeBtc(bitcoin, ecc) {
   // ---- purchase ----
   // buyer = { ordAddress, payAddress, payPubkey }, dummies = 2 UTXOs (546..1000 sats, no inscriptions), payUtxos = spendable
   function buildPurchase({ network, listingPsbt, buyer, dummies, payUtxos, feeRate, feeAddress, feeBps, quoteOnly }) {
-    if (!quoteOnly && !feeAddress && feeBps > 0) throw new Error('BTC fee address not configured (config/btc.json feeAddress): buying is disabled');
+    if (!quoteOnly && !feeAddress && marketFee(Psbt.fromBase64(listingPsbt, { network: net(network) }).txOutputs[0]?.value || 0, feeBps) > 0) throw new Error('BTC fee address not configured (config/btc.json feeAddress): buying is disabled');
     if (!(dummies?.length >= 2)) throw new Error('need 2 padding (dummy) UTXOs: run "Prepare wallet" first');
     const L = Psbt.fromBase64(listingPsbt, { network: net(network) });
     const v = validateListing(listingPsbt, network, {}); if (!v.ok) throw new Error('invalid listing: ' + v.errs.join('; '));
@@ -111,7 +124,7 @@ export function makeBtc(bitcoin, ecc) {
     }
     if (change < 0 || sum < need0 + fee) throw new Error(`insufficient funds: need ${need0 + fee} sats from the payment address`);
     const nOut = fixedOuts.length + (change ? 1 : 0), nIn = 3 + chosen.length;
-    const bd = { price, marketFee: mfee, feeBps, networkFee: fee, feeRate, newDummies: 2 * DUMMY, total: price + mfee + fee + 2 * DUMMY, totalSpent: price + mfee + fee, change, inscriptionValue: insVal, inputs: nIn, outputs: nOut };
+    const bd = { price, marketFee: mfee, feeWaived: feeWaived(price, feeBps), feeBps, networkFee: fee, feeRate, newDummies: 2 * DUMMY, total: price + mfee + fee + 2 * DUMMY, totalSpent: price + mfee + fee, change, inscriptionValue: insVal, inputs: nIn, outputs: nOut };
     if (quoteOnly) return { psbt: null, signIndexes: [], breakdown: bd, quote: true }; // fee preview without a fee address (Buy stays disabled)
     const p = new Psbt({ network: net(network) }); p.setVersion(2); p.setLocktime(0);
     p.addInput(inputOf({ ...d[0], ...pay, txid: d[0].txid, vout: d[0].vout, value: d[0].value }, network));
@@ -186,7 +199,7 @@ export function makeBtc(bitcoin, ecc) {
       return false; // p2sh-p2wpkh / legacy: not accepted for sign-in (use the taproot or native segwit address)
     } catch { return false; }
   }
-  return { net, scriptType, addrType, isAddr, spkOf, vsize, marketFee, inputOf, createListing, validateListing, buildPurchase, finalizePurchase, buildPadding, buildCancel, bip322ToSign, bip322ToSpend, verifyBip322, Psbt, bitcoin };
+  return { net, scriptType, addrType, isAddr, spkOf, vsize, marketFee, feeWaived, checkPurchaseFee, inputOf, createListing, validateListing, buildPurchase, finalizePurchase, buildPadding, buildCancel, bip322ToSign, bip322ToSpend, verifyBip322, Psbt, bitcoin };
 }
 // Inscription location check: satpoint "txid:vout:offset" from the indexer.
 export function parseSatpoint(sp) { const m = /^([0-9a-f]{64}):(\d+):(\d+)$/.exec(sp || ''); return m ? { txid: m[1], vout: +m[2], offset: +m[3] } : null; }

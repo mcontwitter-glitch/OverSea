@@ -14,7 +14,7 @@ const kv = () => { const m = new Map(); return { get: async (k, t) => { const v 
 const env = { COLLECTIONS: kv(), NONCES: kv(), ORD_TESTNET_URL: 'https://ord.test', ORD_SIGNET_URL: 'https://ord.signet' };
 let spent = false, offset = 0;
 globalThis.fetch = async u => { u = String(u);
-  if (u.includes('/r/inscription/')) return Response.json({ satpoint: `${S.txid}:${S.vout}:${offset}`, address: 'tb1pseller' });
+  if (u.includes('/r/inscription/')) { const X = SELLERS.find(x => u.endsWith(x.inscriptionId)) || S; return Response.json({ satpoint: `${X.txid}:${X.vout}:${offset}`, address: 'tb1pseller' }); }
   if (u.includes('/outspend/')) return Response.json({ spent, txid: spent ? 'ab'.repeat(32) : undefined });
   return new Response('nope', { status: 404 }); };
 const bad = (m, s = 400) => { const e = new Error(m); e.status = s; throw e; };
@@ -37,4 +37,17 @@ r = await call('POST', '/btc/auth/nonce'); ok(/^[0-9a-f]{24}$/.test(r.nonce), 'n
 const r2 = await call('POST', '/btc/auth/verify', { address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', message: r.message, signature: 'AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=', net: 'testnet' });
 ok(r2.status === 401, 'bip322 wrong-message signature rejected');
 r = await call('POST', '/btc/auth/verify', { address: 'x', message: r.message, signature: 'AA==', net: 'signet' }); ok(r.status === 400, 'bad address rejected');
+// ---- dust fee policy (0.5% of 109,199 sats < 546 -> no fee output) ----
+{ const bitcoin = await import('bitcoinjs-lib'); const ecc = await import('@bitcoinerlab/secp256k1'); const { makeBtc } = await import('../../src/btc/psbtcore.js');
+  bitcoin.initEccLib(ecc); const PB = makeBtc(bitcoin, ecc); const W = SELLERS[2]; ok(W.priceSats < 109_200, 'waived demo listing');
+  spent = false; r = await call('POST', `/btc/${n}/listings`, { inscriptionId: W.inscriptionId, psbt: W.psbt }); ok(r.ok && r.listing.fee.waived === true && r.listing.fee.sats === 0, 'listing stores fee waived');
+  const buyer = { ordAddress: S.seller, payAddress: S.payout, payPubkey: '02' + '11'.repeat(32) };
+  const d = [{ txid: 'cd'.repeat(32), vout: 0, value: 600 }, { txid: 'cd'.repeat(32), vout: 1, value: 600 }], pay = [{ txid: 'ef'.repeat(32), vout: 0, value: 500000 }];
+  const mk = (L, fa) => PB.buildPurchase({ network: n, listingPsbt: L.psbt, buyer, dummies: d, payUtxos: pay, feeRate: 2, feeAddress: fa, feeBps: 50 }).psbt;
+  const pw = mk(W, null); r = await call('POST', `/btc/${n}/listings/${W.inscriptionId}/purchase-check`, { psbt: pw }); ok(r.ok && r.waived && r.fee === 0, 'waived purchase without fee output accepted: ' + JSON.stringify(r));
+  const pf = mk(W, 'tb1qnjsff3vafh2v7u6ty5h9l7knqpsgv8ahnn3hwl'); r = await call('POST', `/btc/${n}/listings/${S.inscriptionId}/purchase-check`, { psbt: pf }); ok(r.status === 400, 'purchase price must match the listing');
+  r = await call('POST', `/btc/${n}/listings`, { inscriptionId: S.inscriptionId, psbt: S.psbt }); ok(r.ok && r.listing.fee.sats === 750 && !r.listing.fee.waived, 'above-threshold listing fee 750');
+  const ps = PB.buildPurchase({ network: n, listingPsbt: S.psbt, buyer, dummies: d, payUtxos: pay, feeRate: 2, feeAddress: null, feeBps: 50, quoteOnly: true }); ok(ps.breakdown.marketFee === 750, 'quote 750');
+  r = await call('POST', `/btc/${n}/listings/${S.inscriptionId}/purchase-check`, { psbt: pw }); ok(r.status === 400, 'seller output mismatch rejected');
+  r = await call('POST', `/btc/mainnet/listings/${W.inscriptionId}/purchase-check`, { psbt: pw }); ok(r.status === 403, 'mainnet purchase-check off'); }
 console.log(`worker btc: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

@@ -82,7 +82,23 @@ t('buy: tampering output 1 (inscription receiver) is caught', () => {
   const r = B.buildPurchase({ network: NET, listingPsbt: signedListing(), buyer, dummies, payUtxos: pays, feeRate: 5, feeAddress: FEE_ADDR, feeBps: 50 });
   throws(() => B.finalizePurchase(r.psbt, NET, { ordAddress: p2tr(key(9)) }), /output 1/);
 });
-t('fee: 0.5% with dust floor', () => { eq(B.marketFee(150000, 50), 750); eq(B.marketFee(20000, 50), 546); eq(B.marketFee(1e8, 50), 500000); eq(B.marketFee(1000, 0), 0); });
+t('fee: 0.5% floor, never above 0.5%', () => { eq(B.marketFee(150000, 50), 750); eq(B.marketFee(150199, 50), 750); eq(B.marketFee(1e8, 50), 500000); eq(B.marketFee(1000, 0), 0); });
+t('fee: threshold 109,200 sats -> exactly 546 (dust) is charged', () => { eq(B.marketFee(109_200, 50), 546); eq(B.feeWaived(109_200, 50), false); eq(B.marketFee(109_201, 50), 546); });
+t('fee: just below threshold (109,199) -> waived, 0', () => { eq(B.marketFee(109_199, 50), 0); eq(B.feeWaived(109_199, 50), true); eq(B.marketFee(20_000, 50), 0); });
+function buildAt(price, feeAddress = FEE_ADDR) { const buyer = { ordAddress: p2tr(buyerOrd), payAddress: p2wpkh(buyerPay), payPubkey: Buffer.from(buyerPay.publicKey).toString('hex') };
+  const r = B.buildPurchase({ network: NET, listingPsbt: signedListing(price), buyer, dummies, payUtxos: pays, feeRate: 12, feeAddress, feeBps: 50 }); return { r, outs: bitcoin.Psbt.fromBase64(r.psbt, { network: N }).txOutputs }; }
+t('buy at 109,199: no fee output, breakdown waived, policy check ok', () => { const { r, outs } = buildAt(109_199);
+  eq(r.breakdown.feeWaived, true); eq(r.breakdown.marketFee, 0); eq(outs.some(o => o.address === FEE_ADDR), false, 'fee output present'); eq(outs.length, 6, 'outs (no fee, + change)');
+  eq(B.checkPurchaseFee(r.psbt, NET, { feeAddress: FEE_ADDR, feeBps: 50 }).ok, true); });
+t('buy at 109,199 works with no fee address configured', () => { const { r } = buildAt(109_199, null); eq(r.breakdown.feeWaived, true); if (!r.psbt) throw new Error('no psbt'); });
+t('buy at 109,200: 546-sat fee output at index 5, policy check ok', () => { const { r, outs } = buildAt(109_200);
+  eq(r.breakdown.feeWaived, false); eq(outs[5].address, FEE_ADDR); eq(outs[5].value, 546); eq(B.checkPurchaseFee(r.psbt, NET, { feeAddress: FEE_ADDR, feeBps: 50 }).ok, true); });
+t('buy at 109,200 still needs a fee address', () => { throws(() => buildAt(109_200, null), /fee address/); });
+t('policy check rejects a fee output on a waived sale and a wrong fee', () => {
+  const a = buildAt(109_200).r.psbt; const p = bitcoin.Psbt.fromBase64(a, { network: N }); p.data.globalMap.unsignedTx.tx.outs[2].value = 109_199;
+  eq(B.checkPurchaseFee(p.toBase64(), NET, { feeAddress: FEE_ADDR, feeBps: 50 }).ok, false, 'waived+fee');
+  const q = bitcoin.Psbt.fromBase64(a, { network: N }); q.data.globalMap.unsignedTx.tx.outs[5].value = 600;
+  eq(B.checkPurchaseFee(q.toBase64(), NET, { feeAddress: FEE_ADDR, feeBps: 50 }).ok, false, 'wrong fee'); });
 t('padding tx: 2x600 + change, finalizes', () => {
   const r = B.buildPadding({ network: NET, payAddress: p2wpkh(buyerPay), payPubkey: Buffer.from(buyerPay.publicKey).toString('hex'), payUtxos: pays, feeRate: 3 });
   const p = bitcoin.Psbt.fromBase64(r.psbt, { network: N }); r.signIndexes.forEach(i => p.signInput(i, buyerPay)); p.finalizeAllInputs(); const tx = p.extractTransaction(); eq(tx.outs[0].value, 600); eq(tx.outs[1].value, 600);

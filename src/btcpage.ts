@@ -179,15 +179,16 @@ async function buyFlow(ins: D.Ins, L: D.Listing) {
       const u = await payUtxos(a); const dummies = u.filter(x => x.value >= 546 && x.value <= 1000).slice(0, 2); const pay = u.filter(x => !dummies.includes(x) && x.value > 1000);
       const fa = D.feeAddress(n); const buyer = { ordAddress: a.ordAddress, payAddress: a.payAddress, payPubkey: a.payPubkey };
       if (dummies.length < 2) { q.innerHTML = `<p class="soon small">Your payment address needs two small padding UTXOs (600 sats each) so the inscription lands at offset 0. One-time.</p><button class="bbtn" data-pad>Prepare wallet</button>`; q.querySelector('[data-pad]')!.addEventListener('click', () => padFlow(a)); return; }
-      const r = B.buildPurchase({ network: n, listingPsbt: L.psbt, buyer, dummies, payUtxos: pay, feeRate: rate, feeAddress: fa, feeBps: D.feeBps(), quoteOnly: !fa });
+      const r = B.buildPurchase({ network: n, listingPsbt: L.psbt, buyer, dummies, payUtxos: pay, feeRate: rate, feeAddress: fa, feeBps: D.feeBps(), quoteOnly: !fa && !B.feeWaived(L.priceSats, D.feeBps()) });
+      const okBuy = !!fa || r.breakdown.feeWaived;
       const b = r.breakdown; const row = (k: string, s: number, note = '') => `<span>${k}${note ? ` <em class="mut">${note}</em>` : ''}</span><b>${D.fmtBtc(s)} <small class="mut">${D.fmtSats(s)}${usd ? ' · ' + D.fmtUsd(s, usd) : ''}</small></b>`;
       q.innerHTML = `<div class="frates">${(['economyFee', 'hourFee', 'halfHourFee', 'fastestFee'] as const).map(k => fee ? `<button class="chip ${fee[k] === rate ? 'on' : ''}" data-rate="${fee[k]}">${{ economyFee: 'Economy', hourFee: '~1 h', halfHourFee: '~30 min', fastestFee: 'Fast' }[k]} <em>${fee[k]} sat/vB</em></button>` : '').join('')}</div>
-       <div class="bkv fees">${row('Price (to seller)', b.price)}${row('Marketplace fee', b.marketFee, `${b.feeBps / 100}%${b.marketFee === 546 && b.price * b.feeBps / 1e4 < 546 ? ', dust minimum' : ''}`)}${row('Network fee', b.networkFee, `${b.feeRate} sat/vB · ${b.inputs} in / ${b.outputs} out`)}
+       <div class="bkv fees">${row('Price (to seller)', b.price)}${b.feeWaived ? `<span>Marketplace fee <em class="mut">${b.feeBps / 100}% is under the 546-sat dust limit</em></span><b class="waived">Fee waived (below dust) <small class="mut">0 sats</small></b>` : row('Marketplace fee', b.marketFee, `${b.feeBps / 100}%`)}${row('Network fee', b.networkFee, `${b.feeRate} sat/vB · ${b.inputs} in / ${b.outputs} out`)}
         <span class="tot">Total</span><b class="tot">${D.fmtBtc(b.totalSpent)} <small class="mut">${D.fmtSats(b.totalSpent)}${usd ? ' · ' + D.fmtUsd(b.totalSpent, usd) : ''}</small></b></div>
        <p class="mut small">Also moves ${D.fmtSats(b.newDummies)} into two new padding UTXOs in your own wallet (not a cost). The inscription (${b.inscriptionValue} sats) goes to <span class="mono">${esc(D.short(a.ordAddress))}</span> at offset 0.</p>
        ${ladder([['ok', 'Listing signature valid (SIGHASH_SINGLE|ANYONECANPAY) ✓'], ['ok', demo() ? 'UTXO unspent (demo: mocked) ✓' : 'Seller UTXO unspent + matches indexer ✓'], ['ok', 'Inscription at offset 0 ✓']])}
-       ${fa ? '' : '<p class="err small"><b>Buying disabled:</b> no BTC fee address configured yet (config/btc.json → feeAddress, TODO). The fee output above is a preview; MultiSea never sends fees to a placeholder.</p>'}
-       <button class="bbtn" data-buy ${fa && D.canTrade(n) ? '' : 'disabled'}>Sign &amp; buy</button><div class="bmsg"></div>`;
+       ${okBuy ? '' : '<p class="err small"><b>Buying disabled:</b> no BTC fee address configured yet (config/btc.json → feeAddress, TODO). The fee output above is a preview; MultiSea never sends fees to a placeholder.</p>'}
+       <button class="bbtn" data-buy ${okBuy && D.canTrade(n) ? '' : 'disabled'}>Sign &amp; buy</button><div class="bmsg"></div>`;
       q.querySelectorAll('[data-rate]').forEach(c => c.addEventListener('click', () => { rate = +(c as HTMLElement).dataset.rate!; draw(); }));
       q.querySelector('[data-buy]')?.addEventListener('click', async () => {
         const o = q.querySelector('.bmsg')!; try { o.innerHTML = spin('Confirm in ' + prov(a.wallet).name + '…');

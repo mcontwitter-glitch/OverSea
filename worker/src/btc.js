@@ -78,9 +78,20 @@ export function makeBtcRoutes({ bad }) {
       const os = await outspend(n, v.txid, v.vout); if (os.spent) bad('that UTXO is already spent');
       const seller = ins.address; const idx = (await readIdx(env, n)).filter(l => l.inscriptionId !== id);
       if (idx.length >= MAX_LISTINGS) bad('listing book full', 503);
-      const L = { inscriptionId: id, net: n, psbt: b.psbt, priceSats: v.priceSats, seller, payout: v.payout, txid: v.txid, vout: v.vout, value: v.value, createdAt: Date.now(), name: String(b.name || '').slice(0, 80), collection: String(b.collection || '').slice(0, 60) };
+      const L = { inscriptionId: id, net: n, psbt: b.psbt, priceSats: v.priceSats, seller, payout: v.payout, txid: v.txid, vout: v.vout, value: v.value, fee: { bps: BTC.marketplaceFeeBps, sats: B.marketFee(v.priceSats, BTC.marketplaceFeeBps), waived: B.feeWaived(v.priceSats, BTC.marketplaceFeeBps) }, createdAt: Date.now(), name: String(b.name || '').slice(0, 80), collection: String(b.collection || '').slice(0, 60) };
       await env.COLLECTIONS.put(kL(n, id), JSON.stringify(L)); idx.push({ inscriptionId: id, collection: L.collection, priceSats: L.priceSats }); await writeIdx(env, n, idx);
       return { ok: true, listing: L };
+    }
+    // Fee policy check for a buyer's purchase PSBT: exactly 0.5% (floor) at output 5, or NO fee output when that is below dust.
+    if (M === 'POST' && p.length === 5 && p[4] === 'purchase-check' && ID.test(p[3])) {
+      if (!tradeOk(n)) bad('mainnet trading is disabled', 403);
+      const { psbt } = await body(); if (typeof psbt !== 'string' || psbt.length > 40000) bad('invalid input');
+      const L = await env.COLLECTIONS.get(kL(n, p[3]), 'json'); if (!L) bad('listing not found', 404);
+      const fa = (BTC.feeAddress?.[n] || '').trim() || null; let r;
+      try { r = B.checkPurchaseFee(psbt, n, { feeAddress: fa, feeBps: BTC.marketplaceFeeBps }); } catch { bad('invalid psbt'); }
+      if (!r.ok) bad('purchase rejected: ' + r.err);
+      if (r.price !== L.priceSats) bad('purchase rejected: seller output does not match the listing');
+      return { ok: true, fee: r.fee, waived: r.waived };
     }
     if (M === 'POST' && p.length === 5 && p[4] === 'delete' && ID.test(p[3])) {
       const id = p[3]; const { token, reason } = await body(); const L = await env.COLLECTIONS.get(kL(n, id), 'json'); if (!L) return { ok: true };

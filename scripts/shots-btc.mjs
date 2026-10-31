@@ -26,6 +26,7 @@ async function wallet(method, params) {
     return { result: { psbt: p.toBase64() } }; }
   return { error: { message: 'unsupported ' + method } };
 }
+const WAIVED_ID = 'c56f716386df4b47d2f2b79b2614b932e858521a59b8036e25d2343bfd179fe6i0'; // demo listing at 100,000 sats
 const sizes = [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]];
 const br = await chromium.launch();
 for (const [tag, vp] of sizes) {
@@ -49,6 +50,10 @@ for (const [tag, vp] of sizes) {
   // 6. buy confirm with fee breakdown
   await pg.click('[data-act="buy"]'); await pg.waitForSelector('.bkv.fees', { timeout: 20000 }).catch(() => {}); await shot('06-buy-confirm-fees');
   await pg.keyboard.press('Escape');
+  // 6b. buy confirm on a 100,000-sat listing: 0.5% = 500 sats < 546 dust -> no fee output, "Fee waived (below dust)"
+  await pg.goto(BASE + '/btc/i/' + WAIVED_ID); await idle(); await pg.waitForSelector('[data-act="buy"]', { timeout: 20000 }).catch(() => {});
+  await pg.click('[data-act="buy"]'); await pg.waitForSelector('.bkv.fees', { timeout: 20000 }).catch(() => {}); await shot('06b-buy-confirm-fee-waived');
+  await pg.keyboard.press('Escape');
   // 5. list for sale (held demo inscription): sign & list
   await pg.goto(BASE + '/btc/i/' + HELD_ID); await idle(); await pg.waitForSelector('[data-act="list"]', { timeout: 20000 }).catch(() => {});
   await pg.click('[data-act="list"]'); await pg.waitForSelector('.btcflow'); await shot('05a-list-for-sale');
@@ -59,8 +64,8 @@ for (const [tag, vp] of sizes) {
   const draft = { step: 2, mode: 'ordinals', name: 'Signet Monkes', symbol: 'SMONK', slug: 'signet-monkes', description: 'Pixel monkes inscribed on Bitcoin.', total: '1000', ordPrice: '25', ordLimit: '50', chains: { base: '' } };
   await pg.goto(BASE + '/launchpad'); await pg.evaluate(d => sessionStorage.setItem('multisea-lp-draft', JSON.stringify(d)), draft);
   await pg.goto(BASE + '/launchpad/create'); await idle(); await pg.waitForSelector('.ldord', { timeout: 15000 }).catch(() => {}); await pg.locator('.ldmode').scrollIntoViewIfNeeded(); await shot('08a-create-bitcoin-ordinals');
-  await pg.evaluate(d => sessionStorage.setItem('multisea-lp-draft', JSON.stringify({ ...JSON.parse(sessionStorage.getItem('multisea-lp-draft')), step: 5 })), draft);
-  await pg.reload(); await idle(); await shot('08b-create-review-ordinals');
+  await pg.evaluate(d => sessionStorage.setItem('multisea-lp-draft', JSON.stringify((x => ({ ...x, step: 5, phases: [{ name: 'Allowlist', kind: 'allowlist', start: '2026-11-02T18:00', end: '2026-11-03T18:00', price: '20', maxPerWallet: '2', allowlist: '' }, { name: 'Public', kind: 'public', start: '2026-11-03T18:00', end: '', price: '25', maxPerWallet: '10', allowlist: '' }] }))(JSON.parse(sessionStorage.getItem('multisea-lp-draft'))))), draft);
+  await pg.reload(); await idle(); await shot('08b-create-review-ordinals', true);
   await ctx.close();
 }
 await br.close();
