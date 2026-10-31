@@ -546,3 +546,15 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 @keyframes fwspin{to{transform:rotate(360deg)}}
 .ldst.soon{color:#fbbf24;background:#2a2208;border:1px solid #fbbf2455;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
 .ldph.soon{opacity:.85}
+
+/* Launchpad create: NFT type picker */
+.ldopts.three{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.ldnft b{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ldtag.xp{background:#2a1608;color:#fb923c;border:1px solid #fb923c55;text-transform:none}
+.ldagent{margin-top:10px;display:grid;gap:8px}.ldtogs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}
+.page label.ldtog{display:flex!important;flex-direction:row;gap:10px;align-items:flex-start;background:#141414;border:1px solid #262626;border-radius:12px;padding:10px 12px;margin:0;cursor:pointer}
+.ldtog>span:last-child{display:grid;gap:3px}.ldtog.on{border-color:#45bdfa;background:#0a1018}.ldtog>input{display:none!important}
+.ldtog .sw{flex:none;width:32px;height:18px;border-radius:999px;background:#333;position:relative;margin-top:2px;transition:.15s}.ldtog .sw:after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#bbb;transition:.15s}
+.ldtog.on .sw{background:#45bdfa}.ldtog.on .sw:after{left:16px;background:#000}
+.ldwarn{color:#fbbf24}.ldinl label{margin:4px 0 0;max-width:160px}
+.ldchips{display:grid;gap:6px}.ldchrow2{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#111;border:1px solid #222;border-radius:10px;padding:7px 10px}.ldchrow2 b{min-width:90px;font-size:13px}.ldchrow2.off{opacity:.5}
+.ldchip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}.ldchip.ok{background:#0b1f17;color:#5eead4}.ldchip.no{background:#2a0a0a;color:#ff8a8a}
