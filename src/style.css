@@ -614,3 +614,7 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .btcsoon{max-width:460px;margin:48px auto 72px;text-align:center;padding:36px 24px;border:1px solid #2a2a2a;border-radius:18px;background:radial-gradient(circle at 50% 0,#f7931a1f,transparent 70%),#0d0d0d}
 .btcsoon h3{font-size:22px;margin:16px 0 8px}.btcsoon p{color:#9a9a9a;line-height:1.5;margin:0 0 20px}
 @media(max-width:640px){.btcsoon{margin:28px 0 48px;padding:28px 18px}.btcsoon h3{font-size:19px}}
+
+.card.ordc.bridged .ci{position:relative;display:block;aspect-ratio:1;overflow:hidden}.card.ordc.bridged .ordframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;background:transparent}
+.card.ordc.bridged .own{margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card.ordc.bridged a.buy{text-decoration:none;color:inherit}
+.card .onbtc{position:absolute;left:8px;bottom:8px;background:#f7931a;color:#000;font-size:11px;font-weight:800;padding:2px 6px;border-radius:6px}

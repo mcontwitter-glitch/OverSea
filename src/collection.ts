@@ -90,18 +90,23 @@ let ordKit: typeof import('./ordlayer') | null = null; let btcUsdR: number | nul
 const isOrd = (id: number) => id < 0;
 const ordCfg = () => (ovr.ordinals ?? (COL as any).ordinals) || null;
 // `ordinals.comingSoon` (and not enabled): a Bitcoin chip labelled Coming soon + an empty state; nothing is fetched or mocked.
-const ordSoon = () => { const c = ordCfg(); return !!(c?.comingSoon && !c.enabled); };
+// A `bridge` source turns the chip on by itself once the delivery Worker lists >= 1 delivered inscription.
+let bridgedN = 0; const onBtc = new Map<number, import('./ordlayer').OrdItem>(); // EVM token id -> its Ordinal
+const ordSoon = () => { const c = ordCfg(); return !!(c?.comingSoon && !c.enabled && !bridgedN); };
 let soonOn = false;
 const btcSoonChip = () => ordSoon() ? `<button class="chip soonchip ${soonOn ? 'on' : ''}" data-btcsoon>${logo('bitcoin')}Bitcoin <i class="soon">Coming soon</i></button>` : '';
 const btcSoonView = () => `<div class="btcsoon"><img src="/logos/bitcoin.svg" alt="" width="56" height="56"><h3>Bitcoin Ordinals coming soon</h3><p>${esc(COL.name)} on Bitcoin is on the way. When inscriptions go live you'll browse, buy and list them right here, next to every other chain.</p><button class="obtn sm" data-btcsoon>Back to all chains</button></div>`;
 async function loadOrdinals() {
-  const c = ordCfg(); if (!c || ordSoon()) return; ordKit ??= await import('./ordlayer');
-  const L = await ordKit.loadOrdLayer(c).catch(() => null); if (!L || ORD) return; ORD = L; btcUsdR = L.btcUsd;
+  const c = ordCfg(); if (!c || (ordSoon() && !c.bridge)) return; ordKit ??= await import('./ordlayer');
+  const br = c.bridge && !c.enabled ? await ordKit.loadBridged(c.bridge) : [];
+  if (!br.length && ordSoon()) return; bridgedN = br.length;
+  const L = await ordKit.loadOrdLayer(c, br).catch(() => null); if (!L || ORD) return; ORD = L; btcUsdR = L.btcUsd;
   chains.bitcoin = { name: 'Bitcoin', chainId: 0, native: 'BTC', openseaSlug: null, explorer: ordKit.D.explorer(L.net), note: L.demo ? 'DEMO' : undefined };
   if (!deployedChains.includes('bitcoin')) deployedChains.push('bitcoin');
   const tr = traits.traits as Record<string, { value: string; count: number; pct: number }[]>;
   L.items.forEach((o, k) => { const id = -(k + 1); ordById.set(id, o);
-    items.push({ id, name: o.name, image: '', attrs: o.attrs, score: 0, rank: o.num ?? 0, color: '#111' });
+    if (o.tokenId) { const t = +o.tokenId; onBtc.set(t, o); const evm = items.find(x => x.id === t); if (evm) { o.name = evm.name; if (!o.attrs.length) o.attrs = evm.attrs; (o as any).rank = evm.rank; } }
+    items.push({ id, name: o.name, image: '', attrs: o.attrs, score: 0, rank: (o as any).rank ?? o.num ?? 0, color: '#111' });
     owners[id] = { chain: 'bitcoin', owner: o.owner };
     for (const [t, v] of o.attrs) { const a = (tr[t] ??= []); const e = a.find(x => x.value === v); e ? e.count++ : a.push({ value: v, count: 1, pct: 0 }); }
     if (o.priceSats != null) addOrdListing(id, o); });
@@ -250,13 +255,15 @@ async function fwFill() {
 }
 function card(it: Item, idx = 99) {
   if (isOrd(it.id)) return ordCard(it);
-  const loc = owners[it.id]; const l = listMap.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}</div>
+  const loc = owners[it.id]; const l = listMap.get(it.id); const ob = onBtc.get(it.id);
+  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}</div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function ordCard(it: Item) {
   const o = ordById.get(it.id)!; const l = listMap.get(it.id); const sats = o.priceSats;
+  if (o.tokenId) return `<div class="card ordc bridged" data-ord="${it.id}"><a class="ci" href="${ordHref(it.id)}">${ordKit!.ordFrame(o.iid, thumbUrl(+o.tokenId), esc(it.name))}<span class="badge btcb" title="Bitcoin Ordinal">${logo('bitcoin')}</span><span class="rank">Ordinal</span></a>
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="own mut small" title="${esc(o.owner)}">Owner <a class="mono" href="https://ordinals.com/address/${esc(o.owner)}" target="_blank" rel="noopener">${esc(short(o.owner))}</a></div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : '<span class="mut">Not listed</span>'}</div><a class="buy ghost" href="https://ordinals.com/inscription/${esc(o.iid)}" target="_blank" rel="noopener">ordinals.com ↗</a></div></div>`;
   return `<a class="card ordc" data-ord="${it.id}" href="${ordHref(it.id)}"><div class="ci">${ordKit!.ordThumb(o.iid, esc(it.name))}<span class="badge btcb" title="Bitcoin Ordinals${ORD?.demo ? ' (DEMO)' : ''}">${logo('bitcoin')}</span>${ORD?.demo ? '<span class="rank demo">DEMO</span>' : o.num ? `<span class="rank">#${o.num.toLocaleString()}</span>` : ''}</div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : '<span class="mut">Not listed</span>'}</div><span class="buy ${l ? '' : 'ghost'}">${l ? 'Buy with BTC' : 'View / List'}</span></div></a>`;
 }
@@ -288,7 +295,7 @@ function chainsView() {
     ${p?.ok ? `<div class="kv"><span>Held (ownerOf)</span><b>${p.minted}</b><span>In vault/escrow</span><b>${p.inEscrow}</b><span>Live on chain</span><b>${p.live}</b><span>Holders</span><b>${p.holders}</b><span>Transfers indexed</span><b>${p.transfers ?? '-'}${p.historyComplete ? '' : ' (partial)'}</b><span>Seaport sales</span><b>${p.sales}</b></div>` : `<div class="mut">${esc(p?.error || 'no data')}</div>`}
     ${c.openseaSlug ? `<a class="os" target="_blank" rel="noopener" href="https://opensea.io/assets/${c.openseaSlug}/${d.address}">View on OpenSea ↗</a>` : ''}</div></div>`; }).join('')}
     ${ordSoon() ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) <i class="soon">Coming soon</i></h3><div class="mut">Not live yet. No inscriptions are linked to ${esc(COL.name)}.</div></div></div>` : ''}
-    ${ORD ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) ${ORD.demo ? '<i class="need">DEMO · signet mock</i>' : ''}</h3><div class="mut">${ORD.collection ? 'Ordinals collection ' + esc(ORD.collection) : 'Linked inscriptions'} · ${D_net()}</div><div class="kv"><span>Inscriptions</span><b>${ORD.items.length}</b><span>Holders</span><b>${pc.bitcoin?.holders ?? '-'}</b><span>Listed on MultiSea</span><b>${ORD.items.filter(o => o.priceSats != null).length}</b><span>Floor</span><b>${pc.bitcoin?.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) + ' · ' + ordKit!.D.fmtSats(pc.bitcoin.floorSats) : '-'}</b></div><a class="os" href="/btc${ORD.collection ? '/c/' + esc(ORD.collection) : ''}">Open Bitcoin marketplace ↗</a></div></div>` : ''}
+    ${ORD ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) ${ORD.demo ? '<i class="need">DEMO · signet mock</i>' : ''}</h3><div class="mut">${ORD.collection ? 'Ordinals collection ' + esc(ORD.collection) : bridgedN ? 'Bridged from Abstract (each foot stays locked in the Abstract vault)' : 'Linked inscriptions'} · ${D_net()}</div><div class="kv"><span>Inscriptions</span><b>${ORD.items.length}</b><span>Holders</span><b>${pc.bitcoin?.holders ?? '-'}</b><span>Listed on MultiSea</span><b>${ORD.items.filter(o => o.priceSats != null).length}</b><span>Floor</span><b>${pc.bitcoin?.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) + ' · ' + ordKit!.D.fmtSats(pc.bitcoin.floorSats) : '-'}</b></div><a class="os" href="/btc${ORD.collection ? '/c/' + esc(ORD.collection) : ''}">Open Bitcoin marketplace ↗</a></div></div>` : ''}
     <p class="mut small">Data generated ${summary ? new Date(summary.generatedAt).toLocaleString() : '-'}${ownersLiveAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(ownersLiveAt).toLocaleTimeString()}` : ''}. Vault/escrow addresses excluded: ${COL.escrow.map(e => `${esc(e.label)} ${short(e.address)}`).join(', ')}.</p></div>`;
 }
 

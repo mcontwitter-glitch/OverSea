@@ -161,9 +161,10 @@
         }
       ],
       "ordinals": {
-        "_comment": "Bitcoin chip shows 'Coming soon' only: no Ordinals data is fetched and no demo/mock items are shown (even with ?demo=1). LIL FOOTS has no inscriptions. A real collection sets enabled:true + collection and/or inscriptions.",
+        "_comment": "Bitcoin chip shows 'Coming soon' until the bridge delivery Worker lists >= 1 delivered inscription for this collection; then the chip is live with real Ordinals (no demo/mock). enabled stays false: the bridge listing is the source.",
         "enabled": false,
-        "comingSoon": true
+        "comingSoon": true,
+        "bridge": { "url": "https://ordinals.bigfoot404.biz", "collection": "lil-foots" }
       }
     }
   ],
