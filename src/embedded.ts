@@ -76,4 +76,30 @@ export async function restoreSocial() {
   const account = await c.wallet.autoConnect({ client: c.client }).catch(() => null);
   return account ? { address: account.address as string, provider: provider(c), name: 'Embedded wallet' } : null;
 }
+/**
+ * Private-key export for the X/Google in-app wallet, using thirdweb's own export UI: the same hidden-key
+ * iframe (embedded-wallet.thirdweb.com/.../export-private-key) that thirdweb's React ConnectButton
+ * "Manage wallet > Export private key" screen uses. The key is decrypted and shown ONLY inside that
+ * cross-origin iframe; MultiSea never receives it. We only answer the iframe's ready event with the
+ * user's existing thirdweb session token, posted to thirdweb's origin only (exactly like the SDK does).
+ */
+export const EXPORT_ORIGIN = 'https://embedded-wallet.thirdweb.com';
+export function mountKeyExport(host: HTMLElement, onError: (m: string) => void) {
+  const id = 'tw-export-' + Math.random().toString(36).slice(2);
+  const f = document.createElement('iframe');
+  f.id = id; f.title = 'Export in-app wallet (thirdweb)'; f.allow = 'clipboard-read; clipboard-write';
+  f.referrerPolicy = 'no-referrer';
+  f.src = `${EXPORT_ORIGIN}/sdk/2022-08-12/embedded-wallet/export-private-key?clientId=${encodeURIComponent(THIRDWEB_CLIENT_ID)}&theme=dark`;
+  f.style.cssText = 'width:100%;height:250px;border:0;border-radius:12px;background:#0b0b0b';
+  const onMsg = (e: MessageEvent) => {
+    if (e.origin !== EXPORT_ORIGIN || e.source !== f.contentWindow || typeof e.data !== 'object' || e.data?.eventType !== 'exportPrivateKeyIframeLoaded') return;
+    const token = localStorage.getItem(`walletToken-${THIRDWEB_CLIENT_ID}`); // thirdweb's session token (not the key)
+    if (!token) { onError('Your sign-in session has expired. Sign out and sign in with X/Google again, then retry.'); return; }
+    f.contentWindow!.postMessage({ authToken: token, eventType: 'initExportPrivateKey' }, EXPORT_ORIGIN);
+  };
+  window.addEventListener('message', onMsg);
+  f.addEventListener('error', () => onError('Could not load thirdweb\'s export window. Check your connection or blockers.'));
+  host.appendChild(f);
+  return () => window.removeEventListener('message', onMsg);
+}
 export async function logoutSocial() { try { await ctx?.wallet.disconnect(); } catch {} }

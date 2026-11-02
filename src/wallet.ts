@@ -123,6 +123,37 @@ export function openConnect() {
     }));
   }, 150);
 }
+/** Connected-wallet menu: address, export key (social in-app wallets only), disconnect. */
+export function openWalletMenu(onDisconnect?: () => void) {
+  if (!wallet.address) return openConnect();
+  const social = !!wallet.provider?.isMultiSeaEmbedded;
+  const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all">${esc(wallet.address)}</p>
+    <div style="display:grid;gap:10px;margin-top:14px">
+      <button class="bbtn ghost" data-wm="copy">Copy address</button>
+      ${social ? '<button class="bbtn" data-wm="export">🔑 Export private key</button>' : ''}
+      <button class="bbtn ghost" data-wm="out">Disconnect</button></div>`);
+  m.querySelector('[data-wm=copy]')!.addEventListener('click', e => { navigator.clipboard?.writeText(wallet.address!); (e.target as HTMLElement).textContent = 'Copied ✓'; });
+  m.querySelector('[data-wm=out]')!.addEventListener('click', () => { m.remove(); disconnect(); onDisconnect?.(); });
+  m.querySelector('[data-wm=export]')?.addEventListener('click', () => openKeyExport());
+}
+function openKeyExport() {
+  if (!wallet.provider?.isMultiSeaEmbedded) return;
+  const m = overlay(`<h3>Export private key</h3>
+    <div class="err" style="background:#2a0f0f;border:1px solid #6b1d1d;border-radius:12px;padding:12px;line-height:1.45">
+      <b>⚠️ Warning: anyone with this key fully controls your wallet and everything in it.</b><br>
+      Never share it, paste it into a website, or send it to anyone, including MultiSea support. MultiSea will never ask for it.
+      The key is shown only inside thirdweb's secure window below; MultiSea never sees or stores it.</div>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:14px 0"><input type="checkbox" data-wm="ok"> <span>I understand. I'm in a private place and will store the key safely.</span></label>
+    <button class="bbtn" data-wm="reveal" disabled>Continue to reveal</button><div data-wm="host" style="margin-top:12px"></div>`);
+  const ok = m.querySelector('[data-wm=ok]') as HTMLInputElement, btn = m.querySelector('[data-wm=reveal]') as HTMLButtonElement, host = m.querySelector('[data-wm=host]') as HTMLElement;
+  ok.addEventListener('change', () => { btn.disabled = !ok.checked; });
+  btn.addEventListener('click', () => {
+    btn.remove(); ok.disabled = true; host.innerHTML = '<div class="mut"><span class="spin"></span> Opening thirdweb export…</div>';
+    import('./embedded').then(e => { host.innerHTML = ''; const off = e.mountKeyExport(host, msg => { host.innerHTML = `<p class="err">${esc(msg)}</p>`; });
+      new MutationObserver((_, o) => { if (!m.isConnected) { off(); o.disconnect(); } }).observe(document.body, { childList: true }); })
+      .catch(err => { host.innerHTML = `<p class="err">Could not open export: ${esc(err?.message || String(err))}</p>`; });
+  });
+}
 export function disconnect() { if (localStorage.getItem(LAST) === 'embedded') import('./embedded').then(m => m.logoutSocial()); localStorage.removeItem(LAST); wallet.address = null; wallet.provider = null; emit(); }
 export const walletLabel = () => (wallet.address ? short(wallet.address) : 'Connect wallet');
 

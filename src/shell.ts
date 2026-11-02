@@ -2,7 +2,7 @@ import { applyBridgeFlag } from './bridgeflag';
 import AV from './assetv.json';
 import APP from '../config/app.json';
 // Shared MultiSea chrome: top bar, wallet button, helpers.
-import { wallet, openConnect, disconnect, walletLabel, API, apiReady, onWallet } from './wallet';
+import { wallet, openConnect, openWalletMenu, walletLabel, API, apiReady, onWallet } from './wallet';
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const media = (u?: string | null) => (!u ? '' : u.startsWith('/media/') ? API + u : u);
 // Admin nav: shown only to the admin wallets / fee wallet (mirrors worker ADMIN_ADDRESSES + FEE_WALLET). UI hint only:
@@ -53,7 +53,7 @@ export function bindNav(onDisconnect?: () => void) {
   document.addEventListener('click', e => {
     const b = (e.target as HTMLElement).closest('[data-act="wallet"]'); if (!b) return;
     e.preventDefault(); e.stopPropagation();
-    if (wallet.address) { if (confirm('Disconnect ' + wallet.address + '?')) { disconnect(); onDisconnect?.(); } } else openConnect();
+    if (wallet.address) openWalletMenu(onDisconnect); else openConnect();
   }, true);
 }
 export const soon = (what = 'This') => `<div class="soon">${esc(what)} couldn't reach the MultiSea API. Check ad-blockers or privacy extensions (allow api.multisea.io) and your connection. <a href="" onclick="location.reload();return false">Retry</a></div>`;
