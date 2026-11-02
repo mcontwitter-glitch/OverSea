@@ -618,3 +618,13 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .card.ordc.bridged .ci{position:relative;display:block;aspect-ratio:1;overflow:hidden}.card.ordc.bridged .ordframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;background:transparent}
 .card.ordc.bridged .own{margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card.ordc.bridged a.buy{text-decoration:none;color:inherit}
 .card .onbtc{position:absolute;left:8px;bottom:8px;background:#f7931a;color:#000;font-size:11px;font-weight:800;padding:2px 6px;border-radius:6px}
+/* names + holders + addons */
+.ensav{width:16px;height:16px;border-radius:50%;vertical-align:-3px;margin-right:5px;object-fit:cover}
+.wbtn .ensav{width:14px;height:14px}
+.hold .acth,.hold .actr{grid-template-columns:44px 2fr 80px 80px 1fr}
+@media (max-width:700px){.hold .acth{display:none}.hold .actr{grid-template-columns:30px 1fr auto auto;grid-template-areas:none}.hold .actr>span{grid-area:auto!important;display:block!important}.hold .actr>span:nth-child(5){display:none!important}}
+.gate{max-width:820px;margin:28px auto;padding:0 16px}.gate .perks{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:16px}.gate .perk{border:1px solid #222;border-radius:12px;padding:14px;background:#0d0d0d}.gate .lock{border:1px dashed #333;border-radius:14px;padding:26px;text-align:center}.gate .chk{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.gate .chk span{border:1px solid #222;border-radius:999px;padding:4px 10px;font-size:13px}
+.wact{max-width:1000px;margin:24px auto;padding:0 16px}.wact .pills{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.wact .pills button{border:1px solid #2a2a2a;background:#111;color:#ddd;border-radius:999px;padding:6px 12px;cursor:pointer}.wact .pills button.on{background:#fff;color:#000}
+.wact .r{display:grid;grid-template-columns:110px 110px 1.4fr 1.4fr 140px 60px;gap:10px;padding:10px 4px;border-bottom:1px solid #1a1a1a;align-items:center;font-size:14px}.wact .h{color:#777;font-size:12px}
+@media (max-width:700px){.wact .h{display:none}.wact .r{grid-template-columns:1fr auto;font-size:13px}.wact .r>span:nth-child(3),.wact .r>span:nth-child(4){grid-column:1/-1;color:#999}}
+.tag{display:inline-block;border-radius:6px;padding:2px 7px;font-size:12px;background:#1d1d1d}.tag.mint{background:#163a24;color:#7ee2a0}.tag.buy{background:#13314a;color:#8cc8ff}.tag.sale{background:#432a12;color:#ffc685}.tag.in{background:#222}.tag.out{background:#2a1a1a}

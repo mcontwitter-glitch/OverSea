@@ -127,8 +127,9 @@ export function openConnect() {
 export function openWalletMenu(onDisconnect?: () => void) {
   if (!wallet.address) return openConnect();
   const social = !!wallet.provider?.isMultiSeaEmbedded;
-  const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all">${esc(wallet.address)}</p>
+  const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all"><span data-addr="${esc(wallet.address)}">${esc(wallet.address)}</span></p>
     <div style="display:grid;gap:10px;margin-top:14px">
+      <a class="bbtn ghost" href="/me">My activity</a><a class="bbtn ghost" href="/holders">Holder area</a>
       <button class="bbtn ghost" data-wm="copy">Copy address</button>
       ${social ? '<button class="bbtn" data-wm="export">🔑 Export private key</button>' : ''}
       <button class="bbtn ghost" data-wm="out">Disconnect</button></div>`);
@@ -155,7 +156,7 @@ function openKeyExport() {
   });
 }
 export function disconnect() { if (localStorage.getItem(LAST) === 'embedded') import('./embedded').then(m => m.logoutSocial()); localStorage.removeItem(LAST); wallet.address = null; wallet.provider = null; emit(); }
-export const walletLabel = () => (wallet.address ? short(wallet.address) : 'Connect wallet');
+export const walletLabel = () => (wallet.address ? `<span data-addr="${wallet.address}">${short(wallet.address)}</span>` : 'Connect wallet');
 
 // ---- chains ----
 const byOs: Record<string, string> = {}; Object.entries(chains).forEach(([k, c]) => { if (c.openseaSlug) byOs[c.openseaSlug] = k; });

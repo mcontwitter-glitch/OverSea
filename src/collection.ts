@@ -4,6 +4,9 @@ import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
 import { openEdit, linksHtml } from './edit';
+import { addrHtml } from './names';
+import { collectionTransfers, insightOn } from './insight';
+const perf: Record<string, number> = ((window as any).__msPerf ??= {}); const t0 = performance.now();
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number; color?: string };
@@ -52,7 +55,7 @@ const owners = ownersMin ? decodeOwners(ownersMin) : await j<Record<string, Loc>
 let ownersLiveAt: number | null = null;
 async function loadLiveOwners() {
   try {
-    const r = await (await import('./liveowners')).liveOwners(COL as any, owners);
+    const tl = performance.now(); const r = await (await import('./liveowners')).liveOwners(COL as any, owners); perf.liveOwnersMs = performance.now() - tl; perf.liveOwnersSinceLoadMs = performance.now() - t0;
     if (r) {
       for (const k of Object.keys(owners)) if (+k >= 0) delete owners[k]; Object.assign(owners, r.owners); ownersLiveAt = r.at;
       if (summary?.perChain) for (const c of deployedChains) { if (c === 'bitcoin' || r.failed.includes(c) || !summary.perChain[c]) continue;
@@ -65,7 +68,22 @@ async function loadLiveOwners() {
   document.documentElement.dataset.ownersLive = ownersLiveAt ? '1' : '0';
 }
 let activity: any[] = []; let activityLoaded = false;
-async function loadActivity() { if (activityLoaded) return; activityLoaded = true; activity = [...await j<any[]>('activity.json', []), ...ordActivity()]; render(); }
+// Activity: the build-time snapshot paints first (instant, but frozen at build); thirdweb Insight then merges the latest
+// mints / transfers / sales from every Insight-covered chain (Robinhood isn't covered: snapshot only there).
+let activitySrc = 'snapshot';
+async function loadActivity() {
+  if (activityLoaded) return; activityLoaded = true; const t = performance.now();
+  activity = [...await j<any[]>('activity.json', []), ...ordActivity()]; perf.activitySnapshotMs = performance.now() - t; render();
+  const deps = COL.deployments.filter(d => insightOn(d.chain)); if (!deps.length) return;
+  const seen = new Set(activity.map(a => `${a.chain}:${a.tx}:${a.id}`)); let n = 0;
+  await Promise.all(deps.map(d => collectionTransfers(d.chain, d.address, 200).then(xs => {
+    const add = xs.filter(x => !COL.escrow.some(e => e.chain === x.chain && [x.from, x.to].some(a => a.toLowerCase() === e.address.toLowerCase())) || x.type === 'mint')
+      .filter(x => !seen.has(`${x.chain}:${x.tx}:${x.id}`)).map(x => ({ type: x.type === 'burn' ? 'transfer' : x.type, chain: x.chain, id: x.id, from: x.from, to: x.to, tx: x.tx, block: x.block, ts: x.ts, price: null, currency: '' }));
+    add.forEach(a => seen.add(`${a.chain}:${a.tx}:${a.id}`)); activity.push(...add); n++; perf.activityAdded = (perf.activityAdded || 0) + add.length; (perf as any)['added_' + d.chain] = add.length;
+    if (perf.activityInsightFirstMs == null) perf.activityInsightFirstMs = performance.now() - t; activitySrc = 'insight'; if (st.tab === 'activity') render();
+  }).catch(e => console.warn('[insight activity]', d.chain, e?.message))));
+  perf.activityInsightAllMs = performance.now() - t; perf.activityInsightChains = n; perf.newestTs = Math.max(...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activityInsight = String(n);
+}
 const listMap = new Map<number, Listing>();
 const fillMap = (ls: Listing[]) => { listMap.clear(); ls.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); }); };
 fillMap(listings);
@@ -172,7 +190,7 @@ function header() {
     </div>
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
-  <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
+  <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${st.tab === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
 
@@ -281,13 +299,20 @@ function itemsView() {
    <div class="grid">${arr.slice(0, st.limit).map((it, k) => card(it, k)).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
 }
 
+function holdersView() {
+  const by = new Map<string, { n: number; chains: Set<string> }>();
+  for (const l of Object.values(owners)) for (const x of [l, ...(l.also || [])]) { if (st.chains.size && !st.chains.has(x.chain)) continue; const k = x.owner.toLowerCase(); const h = by.get(k) || { n: 0, chains: new Set() }; h.n++; h.chains.add(x.chain); by.set(k, h); }
+  const rows = [...by.entries()].sort((a, b) => b[1].n - a[1].n); const tot = rows.reduce((s, r) => s + r[1].n, 0) || 1;
+  return `<div class="act hold"><div class="mut small" style="margin:0 0 8px">${rows.length.toLocaleString()} holders · ${ownersLiveAt ? 'live on-chain ownership' : 'snapshot'} · names via ENS / Basenames</div><div class="acth"><span>#</span><span>Holder</span><span>Owned</span><span>Share</span><span>Chains</span></div>
+   ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrHtml(a)}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
+}
 function activityView() {
   const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const byId = new Map(items.map(i => [i.id, i]));
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
    ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'list' ? 'List' : 'Transfer'}</b></span>
      <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}${a.ids?.length > 1 ? ` +${a.ids.length - 1}` : ''}</span></span>
-     <span>${a.type === 'sale' || a.type === 'list' ? `${fmt(a.price)} ${esc(a.currency.startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span class="mono">${short(a.from)}</span><span class="mono">${short(a.to)}</span>
+     <span>${(a.type === 'sale' || a.type === 'list') && a.price != null ? `${fmt(a.price)} ${esc(a.currency.startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrHtml(a.from)}</span><span>${addrHtml(a.to)}</span>
      <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || '<div class="empty">No activity found</div>'}</div>`;
 }
 
@@ -305,7 +330,7 @@ function chainsView() {
 const D_net = () => (ORD ? ordKit!.D.netLabel(ORD.net) : '');
 function mrowHtml(id: number) {
   const it = items.find(i => i.id === id)!; const loc = owners[id];
-  return `<div class="mrow" data-mrow="${id}"><span>Owned by <b class="mono">${short(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + short(a.owner)).join(', ')}</div>` : ''}`;
+  return `<div class="mrow" data-mrow="${id}"><span>Owned by <b>${addrHtml(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + addrHtml(a.owner)).join(', ')}</div>` : ''}`;
 }
 function modal(id: number) {
   if (isOrd(id)) { location.href = ordHref(id); return; }
@@ -329,7 +354,7 @@ function modal(id: number) {
 function render() {
   const y = window.scrollY;
   app.innerHTML = `${navHtml()}
-  ${header()}<div class="content">${st.tab === 'items' ? (soonOn ? btcSoonView() : itemsView()) : st.tab === 'activity' ? activityView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
+  ${header()}<div class="content">${st.tab === 'items' ? (soonOn ? btcSoonView() : itemsView()) : st.tab === 'activity' ? activityView() : st.tab === 'holders' ? holdersView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
   window.scrollTo(0, y);
   applyBridgeFlag(); if (st.tab === 'items') fwFill();
   const on = document.querySelector<HTMLElement>('.chips .chip.on'); if (on) { const r = on.parentElement!; r.scrollLeft = on.offsetLeft - r.offsetLeft - 12; }

@@ -34,7 +34,14 @@ export async function liveOwners(col: Col, snap: Record<string, Loc>): Promise<{
   const origin = (col.deployments.find(d => d.original) || col.deployments.find(d => (col.escrow || []).some(e => e.chain === d.chain)) || col.deployments[0]).chain;
   const sats = col.deployments.filter(d => d.chain !== origin);
   const failed: string[] = []; const read: Record<string, Map<number, string>> = {};
-  await Promise.all(sats.map(async d => { try { read[d.chain] = await ownersOn(d.chain, d.address, ids, 1100); } catch { failed.push(d.chain); } }));
+  // Satellites: race the RPC ownerOf sweep against thirdweb Insight's owner index (where covered); first good answer wins.
+  const src: Record<string, string> = {}; const { insightOn, collectionOwners } = await import('./insight');
+  await Promise.all(sats.map(async d => {
+    const rpc = ownersOn(d.chain, d.address, ids, 1100).then(m => { src[d.chain] ??= 'rpc'; return m; });
+    const ins = insightOn(d.chain) ? collectionOwners(d.chain, d.address, 2).then(m => { if (!m.size) throw new Error('empty'); src[d.chain] ??= 'insight'; return m; }) : Promise.reject(new Error('n/a'));
+    try { read[d.chain] = await Promise.any([rpc, ins]); } catch { failed.push(d.chain); }
+  }));
+  ((window as any).__msPerf ??= {}).ownerSources = src;
   if (failed.length === sats.length) return null;
   // Origin chain: re-read only ids whose satellite picture differs from the snapshot (bridged out, or came back).
   const recheck = ids.filter(id => { const s = snap[id]; const onSat = sats.some(d => read[d.chain]?.has(id));

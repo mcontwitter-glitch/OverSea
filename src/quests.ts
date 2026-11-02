@@ -19,7 +19,7 @@ function draw() {
   const q = st.q;
   if (prof) {
     const p = st.prof;
-    el.innerHTML = `<div class="ghero prof"><div class="pava">${esc(prof.slice(2, 4).toUpperCase())}</div><div><h1 class="mono">${short(prof)}</h1><p class="mut small mono">${esc(prof)}</p></div></div>
+    el.innerHTML = `<div class="ghero prof"><div class="pava">${esc(prof.slice(2, 4).toUpperCase())}</div><div><h1><span data-addr="${esc(prof)}">${short(prof)}</span></h1><p class="mut small mono">${esc(prof)}</p><p class="small"><a href="/me?as=${esc(prof)}">NFT activity across chains →</a></p></div></div>
       ${st.err ? `<p class="err">${esc(st.err)}</p>` : !p ? '<div class="spin"></div>' : `
       <div class="fcard"><div class="gh">Chain badges <span class="mut small">${q.count}/${q.total}</span></div>${badgeRow(q)}${q.eligible ? '<p class="ok small">✓ All 5 badges: eligible for the rare Chain Voyager mint.</p>' : ''}<a class="obtn sm" href="/quests">Go to quests →</a></div>
       <div class="gstats"><div class="gstat"><b>${p.referrals.friends}</b><span>Friends referred</span></div><div class="gstat"><b>${p.referrals.earnings?.sales || 0}</b><span>Referred sales</span></div><div class="gstat"><b>${p.bundles.length}</b><span>Bundles listed</span></div></div>

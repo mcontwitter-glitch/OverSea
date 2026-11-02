@@ -1,0 +1,16 @@
+{
+  "_note": "Holder areas (token-gated pages). Cosmetic gating only: content is in the public JS bundle; real perks need a server check. Perk text below is PLACEHOLDER until the owner picks real perks.",
+  "gates": {
+    "lil-foots": {
+      "title": "LIL FOOTS holder area",
+      "minBalance": 1,
+      "lockedText": "Hold a LIL FOOT to unlock",
+      "perks": [
+        { "title": "Holder chat (placeholder)", "body": "Link to a private holder channel goes here." },
+        { "title": "Early launchpad access (placeholder)", "body": "Allowlist spot on upcoming MultiSea launchpad drops." },
+        { "title": "Downloads (placeholder)", "body": "Hi-res art / wallpapers for your feet." },
+        { "title": "Fee discount (placeholder)", "body": "Reduced MultiSea fee for holders (not live)." }
+      ]
+    }
+  }
+}

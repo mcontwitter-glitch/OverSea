@@ -18,6 +18,8 @@ else if (/^\/r\/[0-9a-fA-F]{8}$/.test(path)) { const code = path.slice(3).toLowe
 else if (path === '/referrals') import('./referrals');
 else if (path === '/revenue-share') import('./revshare');
 else if (path === '/cart') import('./cartpage');
+else if (path === '/holders' || /^\/holders\/[a-z0-9-]+$/.test(path)) import('./holders');
+else if (path === '/me') import('./me');
 else if (path === '/bundles') import('./bundles');
 else if (/^\/w\/\d{1,5}$/.test(path)) import('./footwallet');
 else if (path === '/quests' || /^\/u\/0x[0-9a-fA-F]{40}$/.test(path)) import('./quests');

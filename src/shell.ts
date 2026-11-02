@@ -46,7 +46,7 @@ async function refPrompt() {
   });
 }
 export function bindNav(onDisconnect?: () => void) {
-  applyBridgeFlag(); syncAdminNav();
+  applyBridgeFlag(); syncAdminNav(); import('./names').then(n => n.autoNames());
   if (bound) return; bound = true;
   onWallet(() => { refPrompt(); }); setTimeout(refPrompt, 800);
   document.addEventListener('click', e => { const d = document.querySelector('details.navmore[open]'); if (d && !d.contains(e.target as Node)) d.removeAttribute('open'); });
