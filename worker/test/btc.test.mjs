@@ -1,3 +1,4 @@
+import BTCCFG from '../../config/btc.json' with { type: 'json' };
 // Worker /btc routes against an in-memory KV and a mocked indexer/mempool (no network). Run: node worker/test/btc.test.mjs
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -23,7 +24,7 @@ const call = async (M, path, b) => { const url = new URL('https://w' + path); co
   try { return await R.handle(null, env, url, p, M, async () => b); } catch (e) { return { err: e.message, status: e.status }; } };
 const n = 'signet';
 let r = await call('GET', `/btc/${n}/listings`); ok(r.listings.length === 0, 'empty book');
-r = await call('POST', '/btc/mainnet/listings', { inscriptionId: S.inscriptionId, psbt: S.psbt }); ok(r.status === 403, 'mainnet trading off');
+r = await call('POST', '/btc/mainnet/listings', { inscriptionId: S.inscriptionId, psbt: S.psbt }); ok(BTCCFG.mainnetTrading ? r.status !== 403 : r.status === 403, 'mainnet trading gate matches config');
 offset = 5; r = await call('POST', `/btc/${n}/listings`, { inscriptionId: S.inscriptionId, psbt: S.psbt }); ok(/offset/.test(r.err || ''), 'offset != 0 rejected'); offset = 0;
 r = await call('POST', `/btc/${n}/listings`, { inscriptionId: S.inscriptionId, psbt: 'cHNidP8BAA==' }); ok(r.err, 'garbage psbt rejected');
 r = await call('POST', `/btc/${n}/listings`, { inscriptionId: S.inscriptionId, psbt: S.psbt, collection: 'nodemonkes' }); ok(r.ok && r.listing.priceSats === S.priceSats, 'valid listing stored: ' + JSON.stringify(r).slice(0, 200));
@@ -49,5 +50,5 @@ r = await call('POST', '/btc/auth/verify', { address: 'x', message: r.message, s
   r = await call('POST', `/btc/${n}/listings`, { inscriptionId: S.inscriptionId, psbt: S.psbt }); ok(r.ok && r.listing.fee.sats === 750 && !r.listing.fee.waived, 'above-threshold listing fee 750');
   const ps = PB.buildPurchase({ network: n, listingPsbt: S.psbt, buyer, dummies: d, payUtxos: pay, feeRate: 2, feeAddress: null, feeBps: 50, quoteOnly: true }); ok(ps.breakdown.marketFee === 750, 'quote 750');
   r = await call('POST', `/btc/${n}/listings/${S.inscriptionId}/purchase-check`, { psbt: pw }); ok(r.status === 400, 'seller output mismatch rejected');
-  r = await call('POST', `/btc/mainnet/listings/${W.inscriptionId}/purchase-check`, { psbt: pw }); ok(r.status === 403, 'mainnet purchase-check off'); }
+  r = await call('POST', `/btc/mainnet/listings/${W.inscriptionId}/purchase-check`, { psbt: pw }); ok(BTCCFG.mainnetTrading ? r.status !== 403 : r.status === 403, 'mainnet purchase-check gate matches config'); }
 console.log(`worker btc: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
