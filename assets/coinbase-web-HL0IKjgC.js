@@ -1,1 +1,0 @@
-export{t as autoConnectCoinbaseWalletSDK,n as connectCoinbaseWalletSDK}from"./coinbase-web-DAAHyVA9.js";

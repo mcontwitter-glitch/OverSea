@@ -1,1 +1,0 @@
-export{t as getDefaultGasOverrides,n as getGasOverridesForTransaction}from"./fee-data-BuG-6lkv.js";

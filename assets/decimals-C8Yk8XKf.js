@@ -1,0 +1,1 @@
+import{t as e}from"./read-contract-W-84uJi4.js";var t=`0x313ce567`,n=[],r=[{type:`uint8`}];async function i(i){return e({contract:i.contract,method:[t,n,r],params:[]})}export{i as t};

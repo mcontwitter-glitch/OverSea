@@ -1,1 +1,0 @@
-export{t as decimals}from"./decimals-DiDInSZH.js";

@@ -1,0 +1,1 @@
+export{t as autoConnectBaseAccountSDK,n as connectBaseAccountSDK}from"./base-account-web-CLtqzUJ3.js";

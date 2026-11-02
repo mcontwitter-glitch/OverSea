@@ -1,0 +1,1 @@
+import{a as e}from"./utils-D2MuULGi.js";var t=e({blockExplorers:[{name:`Etherscan`,url:`https://etherscan.io`}],id:1,name:`Ethereum`,nativeCurrency:{decimals:18,name:`Ether`,symbol:`ETH`}}),n=t;export{n,t};
