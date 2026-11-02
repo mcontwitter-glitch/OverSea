@@ -1,0 +1,1 @@
+import{r as e}from"./hex-COJyibU4.js";async function t(t,n){let r=await t({method:`eth_estimateGas`,params:[n]});return e(r)}export{t};

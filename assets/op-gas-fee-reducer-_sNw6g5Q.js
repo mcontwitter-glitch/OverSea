@@ -1,0 +1,1 @@
+function e(e){if(e===0n||(e&e-1n)==0n)return e;let t=1n;for(;e>0n;)e>>=1n,t<<=1n;return t}export{e as t};

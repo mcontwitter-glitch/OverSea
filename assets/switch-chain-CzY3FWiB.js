@@ -1,0 +1,1 @@
+import{a as e}from"./utils-D2MuULGi.js";import{a as t}from"./hex-COJyibU4.js";async function n(n){let{wallet:r,params:i}=n;return r.getChain()?.id===t(i[0].chainId)||await r.switchChain(e(t(i[0].chainId))),`0x1`}export{n as t};

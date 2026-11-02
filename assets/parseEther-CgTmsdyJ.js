@@ -1,0 +1,1 @@
+import{Ot as e}from"./localBatchGatewayRequest-BMj2rJQ6.js";function t(t,n=`wei`){return e(t,n)}export{t};

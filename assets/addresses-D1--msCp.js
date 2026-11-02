@@ -1,0 +1,1 @@
+var e=`0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`;function t(t){return t.toLowerCase()===e}var n=`0x0000000000000000000000000000000000000000`;export{n,t as r,e as t};

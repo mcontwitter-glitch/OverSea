@@ -1,0 +1,1 @@
+var e={eip1559:1,eip2930:2,eip4844:3,eip7702:4,legacy:0};function t(e,t){return t&&(e.__preparedMethod=t.preparedMethod,e.__contract=t.contract),e}export{t as n,e as t};
