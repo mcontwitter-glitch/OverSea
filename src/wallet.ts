@@ -63,7 +63,14 @@ export function setWallet(address: string, provider: any, name: string, rdns: st
   wallet.address = address; wallet.provider = provider; wallet.name = name; localStorage.setItem(LAST, rdns);
   provider.on?.('accountsChanged', (a: string[]) => { wallet.address = a[0] || null; emit(); }); emit();
 }
-if (embeddedConfigured && localStorage.getItem(LAST) === 'embedded') import('./embedded').then(m => m.restoreSocial()).then(r => { if (r && !wallet.address) setWallet(r.address, r.provider, r.name, 'embedded'); }).catch(() => {});
+// Embedded (social) wallet: restore if that's what the user signed in with last time, or if thirdweb
+// just redirected back with a login result (mobile). Failures after a redirect are shown, not swallowed.
+if (embeddedConfigured && (localStorage.getItem(LAST) === 'embedded' || /[?&#]authResult=|[?&]authCookie=/.test(location.search + location.hash))) {
+  const back = /[?&#]authResult=|[?&]authCookie=/.test(location.search + location.hash);
+  import('./embedded').then(m => m.restoreSocial())
+    .then(r => { if (r) { if (!wallet.address) setWallet(r.address, r.provider, r.name, 'embedded'); } else if (back) throw new Error('Sign-in did not complete. Please try again.'); })
+    .catch(e => { console.error('[social sign-in]', e); if (back) { localStorage.removeItem(LAST); overlay(`<h3>Sign-in failed</h3><p class="err">${esc(e?.message || String(e))}</p><button class="bbtn mx">Close</button>`); } });
+}
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 function providers(): P6963[] {
   const list = [...found.values()];

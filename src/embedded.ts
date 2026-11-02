@@ -57,9 +57,22 @@ export async function connectSocial(strategy: Social) {
   const account = await c.wallet.connect({ client: c.client, strategy });
   return { address: account.address as string, provider: provider(c), name: strategy === 'x' ? 'X account (embedded)' : 'Google (embedded)' };
 }
-/** Silent restore after a page navigation (thirdweb keeps the session in localStorage). */
+/** True when thirdweb just redirected back here with a login result (mobile redirect mode). */
+export const hasAuthReturn = () => /[?&#]authResult=|[?&]authCookie=/.test(location.search + location.hash);
+/**
+ * Restore after a page navigation. After a mobile *redirect* login the session only exists in the
+ * URL (authResult + walletId + state): wallet.autoConnect() ignores it, so it must go through
+ * thirdweb's top-level autoConnect, which reads the URL token, checks the one-time state, logs in
+ * and strips the params. Normal reloads use the stored session via wallet.autoConnect().
+ */
 export async function restoreSocial() {
   const c = await load();
+  if (hasAuthReturn()) {
+    const ok = await c.w.autoConnect({ client: c.client, wallets: [c.wallet], timeout: 30000 });
+    const a = c.wallet.getAccount();
+    if (!ok || !a) throw new Error('Sign-in did not complete: the login result from thirdweb could not be used (it may have expired). Please try again.');
+    return { address: a.address as string, provider: provider(c), name: 'Embedded wallet' };
+  }
   const account = await c.wallet.autoConnect({ client: c.client }).catch(() => null);
   return account ? { address: account.address as string, provider: provider(c), name: 'Embedded wallet' } : null;
 }
