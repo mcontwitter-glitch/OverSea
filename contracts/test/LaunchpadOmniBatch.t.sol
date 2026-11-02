@@ -52,7 +52,7 @@ contract LaunchpadOmniBatchTest is TestHelperOz5 {
         p.name = "LIL FOOTS"; p.symbol = "FOOT"; p.owner = creator; p.payout = creator; p.maxSupply = SUPPLY;
         p.royaltyReceiver = creator; p.royaltyBps = 500; p.baseURI = "ipfs://bafyFINAL/";
         p.phases = new MultiSeaDrop.Phase[](1);
-        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), 0, 0, 0, bytes32(0));
+        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), 0, 0, 0, 0, bytes32(0));
         p.eids = new uint32[](4); p.eids[0] = A; p.eids[1] = B; p.eids[2] = C; p.eids[3] = D; p.hubEid = A;
         p.prices = new uint128[](4); p.prices[0] = 0.003 ether; p.prices[1] = 12 ether; p.prices[2] = 0.012 ether; p.prices[3] = 0.003 ether;
         p.copyMode = 0; p.batchK = K; p.batchT = T; // BATCHED (default)
@@ -330,6 +330,6 @@ contract LaunchpadOmniBatchTest is TestHelperOz5 {
     /// Cross-check vector for worker/test/launchpad.test.mjs (viem omniConfigHash must equal this). BATCHED, K=10, T=30 min.
     function test_omniConfigHashVector() public {
         bytes32 h = cfg(params()); emit log_named_bytes32("omniConfigHash", h);
-        assertEq(h, 0x6115664fee8498b1e1533fc5c415bc3861629814e6238bf7074b227638197050);
+        assertEq(h, 0x068ab953ecedf908bd1fb28662c5717ef80c2450ad1b1566d170ae8b437ed827);
     }
 }

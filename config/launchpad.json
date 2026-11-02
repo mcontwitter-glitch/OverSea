@@ -19,6 +19,7 @@
   "maxRoyaltyBps": 1000,
   "maxPhases": 8,
   "maxAllowlist": 2000,
+  "maxPerTx": 50,
   "approvalTtlSec": 604800,
   "mintGasUnits": {
     "first": 90000,
@@ -110,5 +111,103 @@
     "minTMin": 5,
     "maxTMin": 1440,
     "shareBufferBps": 2000
+  },
+  "mainnet": {
+    "_note": "MAINNET deploy structure (PREVIEW, NOT deployed). Addresses stay null until the signed deploy lands. Plan: node scripts/lp-mainnet-plan.mjs --i-will-sign-myself --deployer 0x... (unsigned, no key). approver/admin given as 0xb19F00e095B1387061D73751c772bBA848D196b1 has an INVALID EIP-55 checksum: stored lowercase, confirm before signing.",
+    "approver": "0xb19f00e095b1387061d73751c772bba848d196b1",
+    "timelockProposer": "0xb19f00e095b1387061d73751c772bba848d196b1",
+    "timelockExecutor": "0xb19f00e095b1387061d73751c772bba848d196b1",
+    "timelockDelaySec": 172800,
+    "feeWallet": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+    "platformFeeBps": 50,
+    "maxPerTx": 50,
+    "dvnPolicy": "2-of-2 required (LayerZero Labs + Horizen), 0 optional; send confirmations = LZ default of the source chain",
+    "chains": {
+      "base": {
+        "chainId": 8453,
+        "eid": 30184,
+        "endpoint": "0x1a44076050125825900e736c501f859c50fE728c",
+        "native": "ETH",
+        "confirmations": 10,
+        "moveFeeWei": "100000000000000",
+        "requiredDVNs": [
+          "0x9e059a54699a285714207b43b055483e78faac25",
+          "0xa7b5189bca84cd304d8553977c7c614329750d99"
+        ],
+        "timelock": null,
+        "dropImpl": null,
+        "omniDropImpl": null,
+        "omniEscrow": null,
+        "factory": null
+      },
+      "ethereum": {
+        "chainId": 1,
+        "eid": 30101,
+        "endpoint": "0x1a44076050125825900e736c501f859c50fE728c",
+        "native": "ETH",
+        "confirmations": 15,
+        "moveFeeWei": "100000000000000",
+        "requiredDVNs": [
+          "0x589dedbd617e0cbcb916a9223f4d1300c294236b",
+          "0x380275805876ff19055ea900cdb2b46a94ecf20d"
+        ],
+        "timelock": null,
+        "dropImpl": null,
+        "omniDropImpl": null,
+        "omniEscrow": null,
+        "factory": null
+      },
+      "apechain": {
+        "chainId": 33139,
+        "eid": 30312,
+        "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B",
+        "native": "APE",
+        "confirmations": 20,
+        "moveFeeWei": "300000000000000000",
+        "requiredDVNs": [
+          "0x6788f52439aca6bff597d3eec2dc9a44b8fee842",
+          "0xdd7b5e1db4aafd5c8ec3b764efb8ed265aa5445b"
+        ],
+        "timelock": null,
+        "dropImpl": null,
+        "omniDropImpl": null,
+        "omniEscrow": null,
+        "factory": null
+      },
+      "bnb": {
+        "chainId": 56,
+        "eid": 30102,
+        "endpoint": "0x1a44076050125825900e736c501f859c50fE728c",
+        "native": "BNB",
+        "confirmations": 20,
+        "moveFeeWei": "500000000000000",
+        "requiredDVNs": [
+          "0xfd6865c841c2d64565562fcc7e05e619a30615f0",
+          "0x247624e2143504730aec22912ed41f092498bef2"
+        ],
+        "timelock": null,
+        "dropImpl": null,
+        "omniDropImpl": null,
+        "omniEscrow": null,
+        "factory": null
+      },
+      "robinhood": {
+        "chainId": 4663,
+        "eid": 30416,
+        "endpoint": "0x6F475642a6e85809B1c36Fa62763669b1b48DD5B",
+        "native": "ETH",
+        "confirmations": 5,
+        "moveFeeWei": "100000000000000",
+        "requiredDVNs": [
+          "0xd01ae6905d48315f7be10c7330aecf8360ef5b12",
+          "0x1258a278519c7f4bd997a9c3bfd4aa802a028d89"
+        ],
+        "timelock": null,
+        "dropImpl": null,
+        "omniDropImpl": null,
+        "omniEscrow": null,
+        "factory": null
+      }
+    }
   }
 }

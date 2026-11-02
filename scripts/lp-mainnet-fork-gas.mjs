@@ -7,7 +7,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { MAIN } from './lp-mainnet-lz-check.mjs';
 const art = n => { const j = JSON.parse(fs.readFileSync(`contracts/out/${n}.sol/${n}.json`, 'utf8')); return { abi: j.abi, bytecode: j.bytecode.object }; };
 const TL = art('MultiSeaTimelock'), DR = art('MultiSeaDrop'), OD = art('MultiSeaOmniDrop'), ES = art('MultiSeaOmniEscrow'), FA = art('MultiSeaLaunchpadFactory');
-const ADMIN = '0xca89ae48a5c61d13e78236daa4ac29ee588ea475', FEE = '0x25411039F77529A543344603bD8acdd65fABA4d0', DELAY = 172800n;
+const ADMIN = '0xb19f00e095b1387061d73751c772bba848d196b1' /* mainnet timelock proposer/executor + drop approver (impersonated on the fork). NOTE: the mixed-case form given has an INVALID EIP-55 checksum; confirm the address before mainnet */, FEE = '0x25411039F77529A543344603bD8acdd65fABA4d0', DELAY = 172800n;
 const EP = parseAbi(['function setConfig(address oapp, address lib, (uint32 eid, uint32 configType, bytes config)[] params)', 'function getConfig(address,address,uint32,uint32) view returns (bytes)', 'function defaultSendLibrary(uint32) view returns (address)', 'function defaultReceiveLibrary(uint32) view returns (address)']);
 const MOVEFEE = { base: 10n ** 14n, ethereum: 10n ** 14n, robinhood: 10n ** 14n, bnb: 5n * 10n ** 14n, apechain: 3n * 10n ** 17n }; // ≈ $0.30
 // Pinned DVN set (2-of-2 required): LayerZero Labs + Horizen — the only providers with all 20 directed pathways live.
@@ -51,7 +51,7 @@ async function run(k, port) {
   await S('timelock execute(acceptOwnership) [admin]', WA, tl, TL.abi, 'execute', [fa, 0n, acc, pred, salt]);
   if ((await pub.readContract({ address: fa, abi: FA.abi, functionName: 'owner' })).toLowerCase() !== tl.toLowerCase()) throw new Error('handoff failed');
   // (c) per-drop creator deploys (creator = deployer here; approver signs the factory digest)
-  const now = BigInt((await pub.getBlock()).timestamp); const ph = [{ start: now - 60n, end: 0n, price: 10n ** 15n, maxPerWallet: 0, merkleRoot: pred }];
+  const now = BigInt((await pub.getBlock()).timestamp); const ph = [{ start: now - 60n, end: 0n, price: 10n ** 15n, maxPerWallet: 0, maxSupply: 0, merkleRoot: pred }];
   const sp = { name: 'Estimate Drop', symbol: 'EST', owner: dep.address, payout: dep.address, feeWallet: Z, platformFeeBps: 0, maxSupply: 4404, creatorReserve: 0, royaltyReceiver: dep.address, royaltyBps: 500n, baseURI: 'ipfs://bafy/', preRevealURI: '', phases: ph };
   const dl = now + 86400n; const salt1 = keccak256(toHex('drop-' + k));
   const dg = await pub.readContract({ address: fa, abi: FA.abi, functionName: 'approvalDigest', args: [dep.address, await pub.readContract({ address: fa, abi: FA.abi, functionName: 'configHash', args: [sp] }), salt1, dl] });
@@ -64,7 +64,8 @@ async function run(k, port) {
   // mints (+ flush on the hub). Escrow is now timelock-owned; the destination gas defaults are the mainnet ones.
   const qm = async q => pub.readContract({ address: drop, abi: OD.abi, functionName: 'quoteMint', args: [0n, BigInt(q), dep.address, 0n] });
   if (k === 'base') {
-    for (const q of [1, 20, 20, 8]) { const [pr, lz] = await qm(q); (extra.hubShare ??= {})[q] = lz.toString(); await S(`hub mint x${q}`, W, drop, OD.abi, 'mint', [dep.address, 0n, BigInt(q), [], 0n], pr + lz); }
+    { const [, lz50] = await qm(50); extra.hubShare50 = lz50.toString(); } // per-tx cap 50: quote must succeed with the mainnet executor
+    for (const q of [1, 40, 8]) { const [pr, lz] = await qm(q); (extra.hubShare ??= {})[q] = lz.toString(); await S(`hub mint x${q}`, W, drop, OD.abi, 'mint', [dep.address, 0n, BigInt(q), [], 0n], pr + lz); }
     const [ids, fees] = await pub.readContract({ address: es, abi: ES.abi, functionName: 'quoteFlush', args: [cid] }); extra.flushIds = Number(ids); extra.flushLzWei = fees.toString();
     extra.poolWei = (await pub.readContract({ address: es, abi: ES.abi, functionName: 'poolOf', args: [cid] })).toString();
     await pub.request({ method: 'evm_increaseTime', params: [1801] }); await pub.request({ method: 'evm_mine', params: [] });
@@ -77,7 +78,7 @@ async function run(k, port) {
     extra.batchShare50Wei = (await pub.readContract({ address: es, abi: ES.abi, functionName: 'quoteBatchShare', args: [cid, 50n] })).toString();
   } else {
     const hubValue = BigInt(process.env.HUBVALUE || '30000000000000'); // CONFIRM + share dropped on Base (from the Base run)
-    for (const q of [1, 3]) { const [pr, lz] = await pub.readContract({ address: drop, abi: OD.abi, functionName: 'quoteMint', args: [0n, BigInt(q), dep.address, hubValue] }); (extra.remoteLz ??= {})[q] = lz.toString(); await S(`remote mint x${q} (REQUEST -> Base)`, W, drop, OD.abi, 'mint', [dep.address, 0n, BigInt(q), [], hubValue], pr + lz); }
+    for (const q of [1, 3, 50]) { const [pr, lz] = await pub.readContract({ address: drop, abi: OD.abi, functionName: 'quoteMint', args: [0n, BigInt(q), dep.address, hubValue] }); (extra.remoteLz ??= {})[q] = lz.toString(); await S(`remote mint x${q} (REQUEST -> Base)`, W, drop, OD.abi, 'mint', [dep.address, 0n, BigInt(q), [], hubValue], pr + lz); }
   }
   p.kill(); fs.writeFileSync(`/tmp/est/fork-${k}.json`, JSON.stringify({ chain: k, gas, extra }, null, 1)); console.log(k, JSON.stringify(gas));
 }

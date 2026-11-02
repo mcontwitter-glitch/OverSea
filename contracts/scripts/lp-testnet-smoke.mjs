@@ -14,7 +14,7 @@ const cid = sm.cid ??= collectionIdOf(slug, acct.address);
 const PRICE = 10_000_000_000_000n; // 0.00001 per NFT on every chain
 const params = () => ({ name: 'MultiSea Smoke', symbol: 'MSMOKE', owner: acct.address, payout: acct.address, feeWallet: ZERO, platformFeeBps: 0, maxSupply: 20,
   royaltyReceiver: acct.address, royaltyBps: 500, baseURI: 'ipfs://bafysmoke/', preRevealURI: '',
-  phases: [{ start: BigInt(sm.start), end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: '0x' + '0'.repeat(64) }],
+  phases: [{ start: BigInt(sm.start), end: 0n, price: 0n, maxPerWallet: 0, maxSupply: 0, merkleRoot: '0x' + '0'.repeat(64) }],
   eids: CH.map(k => T.chains[k].eid), hubEid: T.chains[HUB].eid, prices: CH.map(() => PRICE), copyMode: 0, batchK: 10, batchT: 300 });
 const log = (what, k, hash) => { (sm.txs ??= []).push({ what, chain: k, hash }); save(s); console.log(`  ${what} [${k}] ${T.chains[k].explorer}/tx/${hash}  lz: https://testnet.layerzeroscan.com/tx/${hash}`); };
 const dropOn = k => s.chains[k].drops?.[cid];

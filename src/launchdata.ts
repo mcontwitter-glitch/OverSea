@@ -18,6 +18,7 @@ export type Drop = {
 };
 export const FEE_BPS: number = LP.platformFeeBps; // 0.5% of primary sales, paid from creator proceeds by withdraw()
 export const LP_CHAINS: string[] = LP.chains;
+export const MAX_PER_TX: number = LP.maxPerTx; // = MultiSeaDrop/MultiSeaOmniDrop MAX_QTY (enforced on-chain)
 export const GAS_UNITS = (qty: number) => BigInt(LP.mintGasUnits.first + LP.mintGasUnits.perExtra * Math.max(0, qty - 1));
 const H = 3600_000, D = 24 * H;
 const img = (id: number) => `/img/lil-foots/m/${id}.webp`;

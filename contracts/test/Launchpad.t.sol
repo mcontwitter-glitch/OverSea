@@ -37,8 +37,8 @@ contract LaunchpadTest is Test {
         p.maxSupply = 4404; p.creatorReserve = 4; p.royaltyReceiver = creator; p.royaltyBps = 500;
         p.preRevealURI = "ipfs://placeholder.json";
         p.phases = new MultiSeaDrop.Phase[](2);
-        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), uint64(block.timestamp + 1 days), 0.002 ether, 2, root);
-        p.phases[1] = MultiSeaDrop.Phase(uint64(block.timestamp + 1 days), 0, 0.003 ether, 5, bytes32(0));
+        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), uint64(block.timestamp + 1 days), 0.002 ether, 2, 0, root);
+        p.phases[1] = MultiSeaDrop.Phase(uint64(block.timestamp + 1 days), 0, 0.003 ether, 5, 0, bytes32(0));
     }
 
     function sign(address who, MultiSeaDrop.InitParams memory p, bytes32 salt, uint256 dl) internal view returns (bytes memory) {
@@ -154,6 +154,32 @@ contract LaunchpadTest is Test {
         vm.prank(timelock); f.setFee(250); assertEq(d.platformFeeBps(), 50); // existing drops unaffected
     }
 
+    function testPerTxCap50() public {
+        MultiSeaDrop.InitParams memory p = params(); p.phases[1].maxPerWallet = 0; p.phases[1].price = 0;
+        bytes32 salt = keccak256("cap50"); uint256 dl = block.timestamp + 1 hours; bytes memory sig = sign(creator, p, salt, dl);
+        vm.prank(creator); MultiSeaDrop d = MultiSeaDrop(f.createDrop(p, salt, dl, sig));
+        vm.warp(block.timestamp + 1 days); assertEq(d.MAX_QTY(), 50);
+        vm.prank(carol); vm.expectRevert(MultiSeaDrop.BadParams.selector); d.mint(carol, 1, 51, new bytes32[](0));
+        vm.prank(carol); d.mint(carol, 1, 50, new bytes32[](0)); assertEq(d.totalMinted(), 50);
+    }
+
+    function testPhaseMaxSupply() public {
+        MultiSeaDrop.InitParams memory p = params(); p.phases[1].maxPerWallet = 0; p.phases[1].maxSupply = 5; p.phases[0].maxSupply = 1;
+        bytes32 salt = keccak256("phasecap"); uint256 dl = block.timestamp + 1 hours; bytes memory sig = sign(creator, p, salt, dl);
+        vm.prank(creator); MultiSeaDrop d = MultiSeaDrop(f.createDrop(p, salt, dl, sig));
+        vm.deal(alice, 1 ether); vm.deal(bob, 1 ether); vm.deal(carol, 1 ether);
+        vm.prank(alice); d.mint{ value: 0.002 ether }(alice, 0, 1, proofA);
+        vm.prank(bob); vm.expectRevert(abi.encodeWithSelector(MultiSeaDrop.PhaseSoldOut.selector, 0)); d.mint{ value: 0.002 ether }(bob, 0, 1, proofB);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(carol); d.mint{ value: 0.009 ether }(carol, 1, 3, new bytes32[](0));
+        vm.prank(bob); vm.expectRevert(abi.encodeWithSelector(MultiSeaDrop.PhaseSoldOut.selector, 2)); d.mint{ value: 0.009 ether }(bob, 1, 3, new bytes32[](0));
+        vm.prank(bob); d.mint{ value: 0.006 ether }(bob, 1, 2, new bytes32[](0));
+        assertEq(d.phaseMinted(0), 1); assertEq(d.phaseMinted(1), 5); assertEq(d.totalMinted(), 6);
+        // phase cap above the total supply is rejected at init and in setPhases
+        MultiSeaDrop.Phase[] memory ph = d.phases(); ph[1].maxSupply = 4405;
+        vm.prank(creator); vm.expectRevert(MultiSeaDrop.BadParams.selector); d.setPhases(ph);
+    }
+
     function testOwnershipTwoStep() public {
         MultiSeaDrop d = deploy();
         vm.prank(creator); d.transferOwnership(alice); assertEq(d.owner(), creator);
@@ -171,11 +197,11 @@ contract LaunchpadHashVector is Test {
         p.maxSupply = 4404; p.creatorReserve = 4; p.royaltyReceiver = address(0xC0FFEE); p.royaltyBps = 500;
         p.baseURI = ""; p.preRevealURI = "ipfs://placeholder.json";
         p.phases = new MultiSeaDrop.Phase[](2);
-        p.phases[0] = MultiSeaDrop.Phase(1800000000, 1800086400, 0.002 ether, 2, bytes32(uint256(0x1234)));
-        p.phases[1] = MultiSeaDrop.Phase(1800086400, 0, 0.003 ether, 5, bytes32(0));
+        p.phases[0] = MultiSeaDrop.Phase(1800000000, 1800086400, 0.002 ether, 2, 0, bytes32(uint256(0x1234)));
+        p.phases[1] = MultiSeaDrop.Phase(1800086400, 0, 0.003 ether, 5, 0, bytes32(0));
         bytes32 h = this.hashOf(f, p);
         emit log_named_bytes32("configHash", h);
-        assertEq(h, 0x82b8279731e21087b8c73de97a07d66a0fc9ba869eaded0078005130b068ccef);
+        assertEq(h, 0xfc8c74bbfa70ed04370cd57335455f3e8cf1a05cfc2eca561f366324e19823e5);
     }
     function hashOf(MultiSeaLaunchpadFactory f, MultiSeaDrop.InitParams calldata p) external pure returns (bytes32) { return f.configHash(p); }
 }

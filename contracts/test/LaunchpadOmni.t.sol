@@ -47,7 +47,7 @@ contract LaunchpadOmniTest is TestHelperOz5 {
         p.name = "LIL FOOTS"; p.symbol = "FOOT"; p.owner = creator; p.payout = creator; p.maxSupply = SUPPLY;
         p.royaltyReceiver = creator; p.royaltyBps = 500; p.baseURI = "ipfs://bafyFINAL/";
         p.phases = new MultiSeaDrop.Phase[](1);
-        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), 0, 0, 0, bytes32(0));
+        p.phases[0] = MultiSeaDrop.Phase(uint64(block.timestamp), 0, 0, 0, 0, bytes32(0));
         p.eids = new uint32[](4); p.eids[0] = A; p.eids[1] = B; p.eids[2] = C; p.eids[3] = D; p.hubEid = A;
         p.prices = new uint128[](4); p.prices[0] = 0.003 ether; p.prices[1] = 12 ether; p.prices[2] = 0.012 ether; p.prices[3] = 0.003 ether;
         p.copyMode = 1; // this suite covers the AT_MINT alternative (copies sent at each mint); BATCHED: LaunchpadOmniBatch.t.sol
@@ -285,8 +285,59 @@ contract LaunchpadOmniTest is TestHelperOz5 {
         assertEq(a0 - alice.balance, pf + mv);
     }
 
+    // ---------------------------------------------------------------- per-tx cap 50 + per-phase max supply
+    function deployAll(MultiSeaOmniDrop.OmniInit memory p, bytes32 cid) internal returns (MultiSeaOmniDrop[4] memory d) {
+        for (uint256 i; i < N; ++i) {
+            uint256 dl = block.timestamp + 1 days;
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(apk, fac[E[i]].omniDigest(p.owner, cfg(p), cid, dl));
+            d[i] = MultiSeaOmniDrop(fac[E[i]].createOmniDrop(p, cid, dl, abi.encodePacked(r, s, v)));
+        }
+    }
+    function mintOn(MultiSeaOmniDrop[4] memory d, uint256 i, bytes32 cid, address who, uint256 q) internal {
+        uint128 hv = i == 0 ? 0 : uint128(esc[A].quoteFanout(cid, E[i], q) * 11 / 10);
+        (uint256 pr, uint256 lz) = d[i].quoteMint(0, q, who, hv);
+        vm.prank(who); d[i].mint{ value: pr + lz }(who, 0, q, new bytes32[](0), hv);
+    }
+
+    /// 50 per tx on the hub and from a remote chain; the mock executor runs lzReceive with exactly the option gas, so the
+    /// REQUEST (hub assign + 50 escrow mints + 3 sends), CONFIRM x50 and COPY x50 legs all fit the default gas table.
+    function test_perTxCap50_fitsDestinationGas() public {
+        MultiSeaOmniDrop.OmniInit memory p = params(); p.maxSupply = 200; bytes32 cid = keccak256("cap50");
+        MultiSeaOmniDrop[4] memory d = deployAll(p, cid);
+        assertEq(d[0].MAX_QTY(), 50);
+        vm.prank(alice); vm.expectRevert(MultiSeaOmniDrop.BadParams.selector); d[0].mint{ value: 1 ether }(alice, 0, 51, new bytes32[](0), 0);
+        vm.prank(alice); vm.expectRevert(MultiSeaOmniDrop.BadParams.selector); d[1].mint{ value: 1000 ether }(alice, 0, 51, new bytes32[](0), 1);
+        mintOn(d, 1, cid, bob, 50); // REQUEST from B
+        deliverAll();
+        assertEq(d[1].ownerOf(1), bob); assertEq(d[1].ownerOf(50), bob); assertEq(d[0].ownerOf(50), address(esc[A]));
+        assertEq(d[2].ownerOf(50), address(esc[C])); assertEq(d[3].ownerOf(50), address(esc[D])); assertEq(d[1].held(), 0);
+        mintOn(d, 0, cid, alice, 50); // hub mint, AT_MINT fan-out
+        deliverAll();
+        assertEq(d[0].ownerOf(100), alice); assertEq(d[1].ownerOf(100), address(esc[B])); assertEq(d[3].ownerOf(51), address(esc[D]));
+        assertEq(d[0].totalAssigned(), 100);
+    }
+
+    function test_phaseMaxSupply_enforcedGloballyOnHub() public {
+        MultiSeaOmniDrop.OmniInit memory p = params(); p.maxSupply = 10; p.phases[0].maxSupply = 3; bytes32 cid = keccak256("phasecap");
+        MultiSeaOmniDrop[4] memory d = deployAll(p, cid);
+        mintOn(d, 1, cid, bob, 2); mintOn(d, 2, cid, carol, 2); // 2 + 2 > 3: the second request is rejected and refunded
+        deliverAll();
+        assertEq(d[0].phaseMinted(0), 2); assertEq(d[1].ownerOf(1), bob);
+        (, , , , MultiSeaOmniDrop.Req st, ) = d[2].requests(1); assertEq(uint8(st), uint8(MultiSeaOmniDrop.Req.Refunded));
+        assertEq(d[2].held(), 0);
+        vm.prank(alice); vm.expectRevert(MultiSeaOmniDrop.PhaseSoldOut.selector); d[0].mint{ value: 1 ether }(alice, 0, 2, new bytes32[](0), 0);
+        mintOn(d, 0, cid, alice, 1); assertEq(d[0].phaseMinted(0), 3);
+    }
+
+    function test_phaseMaxSupplyAboveTotalRejected() public {
+        MultiSeaOmniDrop.OmniInit memory p = params(); p.phases[0].maxSupply = SUPPLY + 1;
+        uint256 dl = block.timestamp + 1 days; bytes32 cid = keccak256("phasebad");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(apk, fac[A].omniDigest(p.owner, cfg(p), cid, dl));
+        vm.expectRevert(); fac[A].createOmniDrop(p, cid, dl, abi.encodePacked(r, s, v));
+    }
+
     /// AT_MINT config hash (the Worker cross-check vector for the default BATCHED config is in LaunchpadOmniBatch.t.sol).
     function test_omniConfigHashVector_atMint() public view {
-        assertEq(cfg(params()), 0x38f6cc814ab373dcc1bee2df016bc9bb1a4add76f2737607739e3f8ef8fb937f);
+        assertEq(cfg(params()), 0x4c31c5dd698336f9695ba38af9afeafff9761b90da8bb8a5ea2beee4e538e7c0);
     }
 }

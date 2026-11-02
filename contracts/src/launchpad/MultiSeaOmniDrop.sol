@@ -59,10 +59,11 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     struct Request { address to; address payer; uint32 qty; uint32 start; Req status; uint128 paid; }
 
     uint16 public constant MAX_ROYALTY_BPS = 1000;
-    uint256 public constant MAX_QTY = 20; // per mint tx (bounds destination gas)
+    uint256 public constant MAX_QTY = 50; // per mint tx (bounds destination gas; REQUEST/COPY/CONFIRM lzReceive gas scales with it)
     uint8 public constant R_SOLD_OUT = 1;
     uint8 public constant R_WALLET_LIMIT = 2;
     uint8 public constant R_PAUSED = 3;
+    uint8 public constant R_PHASE_SOLD_OUT = 4;
     uint8 public constant MODE_BATCHED = 0;
     uint8 public constant MODE_AT_MINT = 1;
     uint16 public constant MIN_K = 10;
@@ -100,6 +101,7 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     mapping(uint256 => Request) public requests;
     mapping(address => uint256) public refundOf;
     mapping(uint256 => mapping(address => uint256)) public mintedInPhase; // hub: GLOBAL per-wallet count (all chains)
+    mapping(uint256 => uint256) public phaseMinted; // hub: GLOBAL per-phase count (all chains), checked against Phase.maxSupply
 
     event Minted(address indexed to, uint256 indexed phaseId, uint256 firstId, uint256 qty, uint256 paid);
     event MintRequested(uint256 indexed rid, address indexed to, uint256 qty, uint256 paid);
@@ -118,6 +120,7 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     error PhaseNotActive();
     error NotAllowlisted();
     error WalletLimit();
+    error PhaseSoldOut();
     error SoldOut(uint256 left);
     error WrongPayment(uint256 required);
     error BadParams();
@@ -151,7 +154,10 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
             _eids.push(p.eids[i]);
         }
         if (!found || !hubIn) revert BadParams();
-        for (uint256 i; i < np; ++i) { if (p.phases[i].end != 0 && p.phases[i].end <= p.phases[i].start) revert BadParams(); _phases.push(p.phases[i]); }
+        for (uint256 i; i < np; ++i) {
+            if ((p.phases[i].end != 0 && p.phases[i].end <= p.phases[i].start) || p.phases[i].maxSupply > p.maxSupply) revert BadParams();
+            _phases.push(p.phases[i]);
+        }
         for (uint256 i; i < p.prices.length; ++i) _prices.push(p.prices[i]);
         emit OwnershipTransferred(address(0), p.owner);
     }
@@ -190,6 +196,7 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
             (uint256 start, uint8 reason) = _assign(localEid, to, qty, phaseId);
             if (reason == R_SOLD_OUT) revert SoldOut(maxSupply + 1 - nextId);
             if (reason == R_WALLET_LIMIT) revert WalletLimit();
+            if (reason == R_PHASE_SOLD_OUT) revert PhaseSoldOut();
             for (uint256 k; k < qty; ++k) _mint(to, start + k); // Active here, no receiver callback
             mintedHere += uint32(qty);
             if (copyMode == MODE_BATCHED) escrow.queueCopies{ value: msg.value - cost }(collectionId, start, qty, msg.sender); // pool share
@@ -210,7 +217,9 @@ contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
         MultiSeaDrop.Phase memory ph = _phases[phaseId];
         uint256 already = mintedInPhase[phaseId][to];
         if (ph.maxPerWallet != 0 && already + qty > ph.maxPerWallet) return (0, R_WALLET_LIMIT);
-        mintedInPhase[phaseId][to] = already + qty;
+        uint256 inPhase = phaseMinted[phaseId];
+        if (ph.maxSupply != 0 && inPhase + qty > ph.maxSupply) return (0, R_PHASE_SOLD_OUT);
+        mintedInPhase[phaseId][to] = already + qty; phaseMinted[phaseId] = inPhase + qty;
         start = nextId; nextId += uint32(qty);
         emit Assigned(originEid, to, start, qty);
     }

@@ -22,6 +22,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
         uint64 end;            // unix seconds (0 = open-ended)
         uint128 price;         // wei per token, native currency of the chain
         uint32 maxPerWallet;   // 0 = unlimited (still bounded by maxSupply)
+        uint32 maxSupply;      // tokens mintable in this phase, all wallets together; 0 = no phase cap (still bounded by maxSupply)
         bytes32 merkleRoot;    // 0x0 = public phase
     }
 
@@ -42,6 +43,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     }
 
     uint16 public constant MAX_ROYALTY_BPS = 1000; // 10%
+    uint256 public constant MAX_QTY = 50; // per mint tx (same cap as MultiSeaOmniDrop)
 
     address public owner;
     address public pendingOwner;
@@ -58,6 +60,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     string public preRevealURI;
     Phase[] private _phases;
     mapping(uint256 => mapping(address => uint256)) public mintedInPhase; // phaseId => wallet => count
+    mapping(uint256 => uint256) public phaseMinted; // phaseId => tokens minted in that phase (all wallets)
 
     event Minted(address indexed to, uint256 indexed phaseId, uint256 qty, uint256 paid);
     event Withdrawn(uint256 toCreator, uint256 toPlatform);
@@ -75,6 +78,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     error NotAllowlisted();
     error WalletLimit();
     error SoldOut();
+    error PhaseSoldOut(uint256 left);
     error WrongPayment(uint256 required);
     error Frozen();
     error BadParams();
@@ -103,7 +107,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     ///         the per-wallet cap so a Relay solver / smart wallet can mint on behalf of the buyer.
     function mint(address to, uint256 phaseId, uint256 qty, bytes32[] calldata proof) external payable nonReentrant {
         if (paused) revert IsPaused();
-        if (qty == 0 || phaseId >= _phases.length) revert BadParams();
+        if (qty == 0 || qty > MAX_QTY || phaseId >= _phases.length) revert BadParams();
         Phase memory ph = _phases[phaseId];
         if (block.timestamp < ph.start || (ph.end != 0 && block.timestamp >= ph.end)) revert PhaseNotActive();
         if (ph.merkleRoot != bytes32(0)) {
@@ -112,11 +116,14 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
         }
         uint256 already = mintedInPhase[phaseId][to];
         if (ph.maxPerWallet != 0 && already + qty > ph.maxPerWallet) revert WalletLimit();
+        uint256 inPhase = phaseMinted[phaseId];
+        if (ph.maxSupply != 0 && inPhase + qty > ph.maxSupply) revert PhaseSoldOut(ph.maxSupply - inPhase);
         // public supply excludes the part of the creator reserve not yet minted
         if (_totalMinted() + qty + (creatorReserve - reserveMinted) > maxSupply) revert SoldOut();
         uint256 cost = uint256(ph.price) * qty;
         if (msg.value != cost) revert WrongPayment(cost);
         mintedInPhase[phaseId][to] = already + qty; // effects before interaction
+        phaseMinted[phaseId] = inPhase + qty;
         _mint(to, qty); // _mint (not _safeMint): no receiver callback, so no reentrancy surface during mint
         emit Minted(to, phaseId, qty, cost);
     }
@@ -182,6 +189,7 @@ contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
         if (ph.length == 0 || ph.length > 8) revert BadParams();
         for (uint256 i; i < ph.length; ++i) {
             if (ph[i].end != 0 && ph[i].end <= ph[i].start) revert BadParams();
+            if (ph[i].maxSupply > maxSupply) revert BadParams();
             _phases.push(ph[i]);
         }
         emit PhasesSet(ph.length);

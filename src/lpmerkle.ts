@@ -24,10 +24,10 @@ export function parseAllowlist(text: string): { ok: string[]; bad: string[] } {
   for (const c of cells) { if (/^0x[0-9a-fA-F]{40}$/.test(c)) ok.add(c.toLowerCase()); else if (/^0x/i.test(c)) bad.push(c); }
   return { ok: [...ok].sort(), bad };
 }
-export const PHASE_T = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }] as const;
+export const PHASE_T = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'maxSupply', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }] as const;
 const SET_PHASES = [{ type: 'function', name: 'setPhases', stateMutability: 'nonpayable', inputs: [{ name: 'ph', type: 'tuple[]', components: PHASE_T }], outputs: [] }] as const;
 export type RuleIn = { name: string; start: number; end: number; price: string; maxPerWallet: number; maxSupply: number; allowlist?: string[] };
-export const onchainPhases = (rs: RuleIn[]) => rs.map(r => ({ start: BigInt(r.start), end: BigInt(r.end), price: parseEther(r.price || '0'), maxPerWallet: r.maxPerWallet, merkleRoot: r.allowlist?.length ? merkle(r.allowlist).root : ZH }));
+export const onchainPhases = (rs: RuleIn[]) => rs.map(r => ({ start: BigInt(r.start), end: BigInt(r.end), price: parseEther(r.price || '0'), maxPerWallet: r.maxPerWallet, maxSupply: r.maxSupply || 0, merkleRoot: r.allowlist?.length ? merkle(r.allowlist).root : ZH }));
 /** MultiSeaDrop.setPhases(Phase[]) calldata (owner-only on the deployed drop). */
 export const setPhasesCalldata = (rs: RuleIn[]) => encodeFunctionData({ abi: SET_PHASES, functionName: 'setPhases', args: [onchainPhases(rs)] });
 /** Same rules as thirdweb DropERC721 claim conditions (setClaimConditions input). Allowlist phases there need thirdweb's

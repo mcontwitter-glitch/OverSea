@@ -30,8 +30,8 @@ const drop = (o = {}) => ({ slug: 'lil-foots-drop', name: 'LIL FOOTS', symbol: '
 test('configHash matches the Solidity vector (contracts/test/Launchpad.t.sol)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = configHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 77, maxSupply: 4404, creatorReserve: 4, royaltyReceiver: C, royaltyBps: 500n, baseURI: '', preRevealURI: 'ipfs://placeholder.json',
-    phases: [{ start: 1800000000n, end: 1800086400n, price: 2000000000000000n, maxPerWallet: 2, merkleRoot: '0x' + '0'.repeat(60) + '1234' }, { start: 1800086400n, end: 0n, price: 3000000000000000n, maxPerWallet: 5, merkleRoot: '0x' + '0'.repeat(64) }] });
-  assert.equal(h, '0x82b8279731e21087b8c73de97a07d66a0fc9ba869eaded0078005130b068ccef');
+    phases: [{ start: 1800000000n, end: 1800086400n, price: 2000000000000000n, maxPerWallet: 2, maxSupply: 0, merkleRoot: '0x' + '0'.repeat(60) + '1234' }, { start: 1800086400n, end: 0n, price: 3000000000000000n, maxPerWallet: 5, maxSupply: 0, merkleRoot: '0x' + '0'.repeat(64) }] });
+  assert.equal(h, '0xfc8c74bbfa70ed04370cd57335455f3e8cf1a05cfc2eca561f366324e19823e5');
 });
 
 test('merkle proofs verify (OZ sorted-pair) and reject outsiders', () => {
@@ -47,6 +47,7 @@ test('submit validates input', async () => {
   await assert.rejects(call('POST', '/launchpad/submit', drop({ reveal: 'instant', baseURI: '' })), /instant reveal/);
   await assert.rejects(call('POST', '/launchpad/submit', drop({ phases: [{ kind: 'allowlist', start: 1, price: '1', allowlist: ['nope'] }] })), /allowlist/);
   await assert.rejects(call('POST', '/launchpad/submit', drop({ preRevealURI: 'javascript:alert(1)' })), /ipfs/);
+  await assert.rejects(call('POST', '/launchpad/submit', drop({ phases: [{ kind: 'public', start: 1800000000, price: '1', maxSupply: 5000 }] })), /max supply/);
   await assert.rejects(call('POST', '/launchpad/submit', drop({ chains: ['base', 'bnb'], allocations: { base: 4000, bnb: 300 } })), /add up/);
   const ok = await call('POST', '/launchpad/submit', drop({ slug: 'multi-chain', chains: ['base', 'bnb'], allocations: { base: 3404, bnb: 1000 } })); assert.equal(ok.status, 'pending');
 });
@@ -94,9 +95,9 @@ test('reject stores reason and clears queue', async () => {
 test('omniConfigHash matches the Solidity vector (contracts/test/LaunchpadOmniBatch.t.sol)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = omniConfigHash({ name: 'LIL FOOTS', symbol: 'FOOT', owner: C, payout: C, feeWallet: '0x000000000000000000000000000000000000dEaD', platformFeeBps: 50, maxSupply: 30, royaltyReceiver: C, royaltyBps: 500n,
-    baseURI: 'ipfs://bafyFINAL/', preRevealURI: '', phases: [{ start: 1800000000n, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: '0x' + '0'.repeat(64) }],
+    baseURI: 'ipfs://bafyFINAL/', preRevealURI: '', phases: [{ start: 1800000000n, end: 0n, price: 0n, maxPerWallet: 0, maxSupply: 0, merkleRoot: '0x' + '0'.repeat(64) }],
     eids: [1, 2, 3, 4], hubEid: 1, prices: [3000000000000000n, 12000000000000000000n, 12000000000000000n, 3000000000000000n], copyMode: 0, batchK: 10, batchT: 1800 });
-  assert.equal(h, '0x6115664fee8498b1e1533fc5c415bc3861629814e6238bf7074b227638197050');
+  assert.equal(h, '0x068ab953ecedf908bd1fb28662c5717ef80c2450ad1b1566d170ae8b437ed827');
 });
 
 test('multichain drop: validation, shared supply via the Base hub, omni approval, escrow excluded on auto-list', async () => {
@@ -126,3 +127,4 @@ test('multichain drop: validation, shared supply via the Base hub, omni approval
   const col = await env.COLLECTIONS.get('col:omni-foots', 'json');
   assert.equal(col.deployments.length, 2); assert.deepEqual(col.escrow.map(e => e.chain), ['base', 'bnb']); assert.equal(col.escrow[0].address, ESC);
 });
+

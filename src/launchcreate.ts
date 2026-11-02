@@ -158,7 +158,7 @@ function txBox() {
     const per = ks.map(k => { const r2 = rs.map((r, i) => ({ ...r, price: priceOn(st.phases[i], k) || '0' })); return { k, data: isMc() ? encodeAbiParameters([{ type: 'tuple[]', components: PHASE_T }], [onchainPhases(r2)]) : setPhasesCalldata(r2), tw: thirdwebClaimConditions(r2, chains[k].native) }; });
     const capped = rs.some(r => r.maxSupply);
     body = `<p class="mut small">${isMc() ? 'Multichain drops take these phases in the factory init (Phase[] below, ABI-encoded); the Worker builds the deploy after approval.' : 'After deploy, the drop owner can (re)apply these rules with <code>MultiSeaDrop.setPhases(Phase[])</code>. Calldata below, per chain. Nothing is sent from this page.'}</p>
-    ${capped ? '<p class="small err">Per-phase max supply is stored with the submission, but the current MultiSeaDrop contract has no per-phase cap: it is NOT enforced on-chain (only total supply is). thirdweb claim conditions do enforce it.</p>' : ''}
+    ${capped ? '<p class="small mut">Per-phase max supply is enforced on-chain: a mint that would push a phase past its cap reverts (multichain: counted globally on the Base hub; remote mints over the cap are refunded).</p>' : ''}
     ${per.map(x => `<details class="small"><summary>${esc(chains[x.k].name)} · ${isMc() ? 'Phase[] (init)' : 'setPhases calldata'} · ${(x.data.length - 2) / 2} bytes</summary><textarea readonly rows="3" class="mono" data-txdata="${x.k}">${x.data}</textarea>
       <div class="mut">thirdweb Drop equivalent (claim conditions):</div><textarea readonly rows="5" class="mono" data-twcc="${x.k}">${esc(JSON.stringify(x.tw, null, 1))}</textarea></details>`).join('')}`;
   } catch (e: any) { body = `<p class="err small">Can't build: ${esc(e.message)}</p>`; }
