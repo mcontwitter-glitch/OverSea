@@ -173,15 +173,18 @@ function header() {
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
-  <div class="chips">${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] ? ` <em>${pc[c].live}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
+  <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
 
 const mobMq = matchMedia('(max-width:640px)'); const isMob = () => mobMq.matches;
 mobMq.addEventListener('change', () => render());
+// One predicate for both the chip counts and the grid: an item is on a chain if its primary or any `also` location is there.
+const onChain = (loc: Loc | undefined, cs: Set<string>) => !!loc && (cs.has(loc.chain) || !!loc.also?.some(a => cs.has(a.chain)));
+const chipCount = (c: string) => items.reduce((n, it) => n + (onChain(owners[it.id], new Set([c])) ? 1 : 0), 0);
 function filtered() {
   let arr = items.filter(it => {
     const loc = owners[it.id];
-    if (st.chains.size && !(loc && st.chains.has(loc.chain))) return false;
+    if (st.chains.size && !onChain(loc, st.chains)) return false;
     if (st.status === 'listed' && !listMap.has(it.id)) return false;
     if (st.status === 'mine') { const me = wallet.address?.toLowerCase(); if (!me || !(loc && (loc.owner.toLowerCase() === me || loc.also?.some(a => a.owner.toLowerCase() === me)))) return false; }
     if (st.q && !(it.name.toLowerCase().includes(st.q) || String(it.id) === st.q || it.attrs.some(a => String(a[1]).toLowerCase().includes(st.q)))) return false;
@@ -337,7 +340,9 @@ app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
   const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; if (st.tab === 'activity') loadActivity(); render(); return; }
   if (t.closest('[data-btcsoon]')) { soonOn = !soonOn; if (soonOn) st.chains.clear(); render(); return; }
-  const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { soonOn = false; const c = chip.dataset.chain!; st.chains.has(c) ? st.chains.delete(c) : st.chains.add(c); render(); return; }
+  const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { soonOn = false; const c = chip.dataset.chain!;
+    // Chips are single-select (one chain, or All); multi-chain picks stay in the sidebar checkboxes. A union of BNB + Bitcoin read as a leak on mobile.
+    const only = st.chains.size === 1 && st.chains.has(c); st.chains.clear(); if (c && !only) st.chains.add(c); render(); return; }
   const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
   const sb = t.closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { e.stopPropagation(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; }
   if (t.closest('.nosell')) { e.stopPropagation(); return; }
