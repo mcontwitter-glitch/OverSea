@@ -187,11 +187,12 @@ export async function buyNative(it: SellItem, orderHash: string, onSold: (id: nu
     const enough = pre.enough;
     body.innerHTML = `<div class="kv bkv"><span>Price</span><b>${fmt(value)} ${esc(c.native)}</b><span>Includes fees</span><b>${fmt(fees)} ${esc(c.native)}</b><span>Seller receives</span><b>${fmt(value - fees)} ${esc(c.native)}</b>
       <span>Chain</span><b><img class="cl" src="/logos/${it.chain}.svg" alt=""> ${esc(c.name)}</b><span>Network gas (est.)</span><b>~${fmt(pre.costWei)} ${esc(c.native)}</b><span>Your balance</span><b class="${enough ? '' : 'errc'}">${fmt(bal)} ${esc(c.native)}</b></div>
-      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fmt(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fmt(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>`}
+      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fmt(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fmt(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>${(await import('./cardpay')).cardButton()}`}
       <p class="mut small">MultiSea listing, filled directly through Seaport 1.6 (fulfillOrder). You'll confirm in ${esc(wallet.name || 'your wallet')}.</p>
       <button class="bbtn go" ${enough ? '' : 'disabled'}>Confirm purchase</button>`;
     await Promise.race([new Promise<void>((res, rej) => {
       body.querySelector('.go')!.addEventListener('click', () => res());
+      body.querySelector('.cardpay')?.addEventListener('click', () => { m.remove(); import('./cardpay').then(x => x.openCardPay({ chain: it.chain, receiver: me, shortWei: pre.short, title: it.name, img: it.img, restart: () => buyNative(it, orderHash, onSold, onGone) })); rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
       body.querySelector('.xpay')?.addEventListener('click', () => { m.remove(); import('./xpay').then(x => x.openXPay({ it, price: value, currency: c.native, tx: { value: value.toString() }, orders: [{ parameters: prm, signature: o.signature }], onSold, restart: () => buyNative(it, orderHash, onSold, onGone) })); rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
     }), closed(m)]);
     body.innerHTML = '<div class="spin"></div> Confirm in your wallet…'; await ensureChain(it.chain);

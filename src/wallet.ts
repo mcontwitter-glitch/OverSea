@@ -230,11 +230,12 @@ export async function startBuy(it: BuyItem, onSold: (id: number) => void, onGone
       <span>You pay now</span><b>${fn(value)} ${esc(c.native)} + gas</b>
       <span>Network gas (est.)</span><b>~${fn(pre.costWei)} ${esc(c.native)}</b>
       <span>Your balance</span><b class="${enough ? '' : 'errc'}">${fn(bal)} ${esc(c.native)}</b></div>
-      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fn(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fn(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>`}
+      ${enough ? '' : `<p class="err">Not enough ${esc(c.native)} on ${esc(c.name)}: you need about ${fn(value + pre.costWei)} ${esc(c.native)} (price + gas), short ${fn(pre.short)}.</p><button class="bbtn ghost xpay">Pay with ${esc(c.native)} from another chain</button>${(await import('./cardpay')).cardButton()}`}
       <p class="mut small">Fulfilled through OpenSea's Seaport 1.6 contract. You'll confirm in ${esc(wallet.name || 'your wallet')}.</p>
       <button class="bbtn go" ${enough ? '' : 'disabled'}>Confirm purchase</button>`;
     await new Promise<void>((res, rej) => {
       body.querySelector('.go')!.addEventListener('click', () => res());
+      body.querySelector('.cardpay')?.addEventListener('click', () => { m.remove(); import('./cardpay').then(x => x.openCardPay({ chain: it.chain, receiver: wallet.address as string, shortWei: pre.short, title: it.name, img: it.img, restart: () => startBuy(it, onSold, onGone) })); rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
       body.querySelector('.xpay')?.addEventListener('click', () => { m.remove(); import('./xpay').then(x => x.openXPay({ it, price, currency: cur, tx, orders: fj.orders, onSold, restart: () => startBuy(it, onSold, onGone) })); rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
       m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) rej(Object.assign(new Error('closed'), { kind: 'closed' })); });
     });
