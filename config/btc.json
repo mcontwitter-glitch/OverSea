@@ -1,7 +1,7 @@
 {
-  "_comment": "Bitcoin / Ordinals marketplace config. PREVIEW: not deployed. Trading defaults to signet; mainnet trading stays OFF until mainnetTrading is set true by BIG.",
-  "mainnetTrading": false,
-  "defaultNetwork": "signet",
+  "_comment": "Bitcoin / Ordinals marketplace config. Mainnet trading turned ON by BIG on 2026-11-02 (0.5% fee to feeAddress.mainnet).",
+  "mainnetTrading": true,
+  "defaultNetwork": "mainnet",
   "networks": [
     "signet",
     "testnet",
