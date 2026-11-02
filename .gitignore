@@ -23,3 +23,6 @@ worker/.relay-key
 
 # staging UI build (testnets) - never commit
 dist-staging
+
+# local env overrides (thirdweb client id etc.)
+.env*.local

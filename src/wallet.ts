@@ -96,12 +96,14 @@ export function openConnect() {
       <div class="gh">Or connect a wallet</div>
       ${list.length ? list.map(p => `<button class="wopt" data-uuid="${esc(p.info.uuid)}">${p.info.icon ? `<img src="${esc(p.info.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(p.info.name)}</button>`).join('') : `<p class="mut">No browser wallet detected${isMobile() ? '. Open this page in your wallet app:' : '. Install MetaMask, Rabby, Coinbase Wallet or OKX.'}</p>`}
       ${isMobile() || !list.length ? deep : ''}`);
+    if (embeddedConfigured) import('./embedded').then(x => x.preloadSocial());
     m.querySelectorAll('[data-social]').forEach(b => b.addEventListener('click', async () => {
       const s = (b as HTMLElement).dataset.social as 'x' | 'google'; m.querySelector('.err')?.remove();
       if (!embeddedConfigured) { (m.querySelector('.socials') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">Social sign-in isn't enabled yet. Admin: create a thirdweb project, enable X + Google auth and set VITE_THIRDWEB_CLIENT_ID.</p>`); return; }
       (b as HTMLElement).innerHTML = '<span class="spin"></span> Opening ' + (s === 'x' ? 'X' : 'Google') + '…';
+      localStorage.setItem(LAST, 'embedded'); // so a mobile redirect round-trip restores the session
       try { const r = await (await import('./embedded')).connectSocial(s); m.remove(); setWallet(r.address, r.provider, r.name, 'embedded'); }
-      catch (e: any) { (m.querySelector('.socials') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">${esc(e?.message || e)}</p>`); (b as HTMLElement).textContent = s === 'x' ? 'Sign in with X' : 'Sign in with Google'; }
+      catch (e: any) { localStorage.removeItem(LAST); (m.querySelector('.socials') as HTMLElement).insertAdjacentHTML('afterend', `<p class="err">${esc(e?.message || e)}</p>`); (b as HTMLElement).textContent = s === 'x' ? 'Sign in with X' : 'Sign in with Google'; }
     }));
     m.querySelectorAll('[data-uuid]').forEach(b => b.addEventListener('click', async () => {
       const p = list.find(x => x.info.uuid === (b as HTMLElement).dataset.uuid)!;

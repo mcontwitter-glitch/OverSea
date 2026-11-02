@@ -14,7 +14,10 @@ async function load() {
   if (!embeddedConfigured) throw Object.assign(new Error('Social sign-in needs setup: the site admin must add VITE_THIRDWEB_CLIENT_ID.'), { kind: 'setup' });
   const [tw, w] = await Promise.all([import('thirdweb'), import('thirdweb/wallets')]);
   const client = tw.createThirdwebClient({ clientId: THIRDWEB_CLIENT_ID });
-  const wallet = w.inAppWallet({ auth: { options: ['google', 'x'], mode: 'popup' }, metadata: { name: 'MultiSea' } as any });
+  // Mobile browsers block popups opened after an await, so use a full-page redirect there (restored by restoreSocial on return).
+  const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const auth = mobile ? { options: ['google', 'x'], mode: 'redirect', redirectUrl: location.href.split('#')[0] } : { options: ['google', 'x'], mode: 'popup' };
+  const wallet = w.inAppWallet({ auth: auth as any, metadata: { name: 'MultiSea' } as any });
   return (ctx = { tw, w, client, wallet });
 }
 
@@ -47,6 +50,8 @@ function provider(c: NonNullable<typeof ctx>) {
   };
 }
 
+/** Warm the SDK when the modal opens so the popup opens within the click's user activation. */
+export function preloadSocial() { load().catch(() => {}); }
 export async function connectSocial(strategy: Social) {
   const c = await load();
   const account = await c.wallet.connect({ client: c.client, strategy });
