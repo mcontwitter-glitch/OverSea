@@ -105,7 +105,7 @@ function nftTypeBox() {
     <p class="mut small">Holder freeze is always available (kill switch). Transfers reset rules, AI permissions and freeze, and lock the wallet for 300 blocks.</p>
     <div class="gh pad">Extensions</div><div class="ldtogs">
      ${tog('brain', 'AI brain (ORA)', a.brain ? 'On. Each holder starts with permissions <b>none / record-only</b> and an AI daily cap of <b>0</b>; they can grant toggle / tune / trigger later.' : 'Lets an ORA AI oracle suggest actions; it can only do what the holder permits, within the caps.', '', 'Base only')}
-     ${tog('breeding', 'Breeding / spawn', 'Two agents breed a child with heritable genes; parents burn. Needs Chainlink VRF v2.5 (you fund a subscription).', '', ape ? 'ApeChain unsupported (no VRF)' : '')}
+     ${tog('breeding', 'Breeding / spawn', 'Two agents breed a child with heritable genes. Parents stay alive and keep their wallets; the child starts empty and is their heir. 1-day cooldown per parent. Needs Chainlink VRF v2.5 (you fund a subscription).', '', ape ? 'ApeChain unsupported (no VRF)' : '')}
      ${tog('market', 'Service market', 'Agents sell services to other agents.')}
      ${tog('leaderboard', 'Leaderboard', 'Public ranking by performance score on the drop page.')}
     </div>
