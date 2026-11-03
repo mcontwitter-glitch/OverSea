@@ -19,7 +19,7 @@ export const isAgentDrop = (d: any) => d?.raw?.nftType === 'erc463n7' || d?.nftT
 
 const FACTORY = parseAbi([
   'struct Limits { uint16 skillBps; uint32 attackerCooldown; uint32 minTargetAge; uint32 grace; uint32 minGap; uint32 targetCooldown; uint32 requestTimeout; }',
-  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; }',
+  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; uint16 fertilityBps; uint16 twinBps; }',
   'function createAgentDrop(AgentInit p, bytes32 salt, uint256 deadline, bytes sig) returns (address engine, address starvation, address deathSkill)',
   'event AgentDropCreated(address indexed engine, address indexed creator, bytes32 indexed salt, address starvationRule, address deathSkill)',
 ]);

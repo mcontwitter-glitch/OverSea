@@ -38,7 +38,7 @@ const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repea
 // Merkle tree compatible with OpenZeppelin MerkleProof (sorted pairs, double-hashed abi.encode(address) leaves).
 // ERC-463N7 agent drops (AgentDropFactory in the ERC-463N7 repo). Mirrors AgentDropFactory.AgentInit exactly.
 export const LIMITS_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'attackerCooldown', type: 'uint32' }, { name: 'minTargetAge', type: 'uint32' }, { name: 'grace', type: 'uint32' }, { name: 'minGap', type: 'uint32' }, { name: 'targetCooldown', type: 'uint32' }, { name: 'requestTimeout', type: 'uint32' }];
-export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }] }];
+export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }] }];
 export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
 export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
@@ -153,7 +153,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   }
 
   const agentParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, treasury: d.payout, mintPrice: BigInt(d.phases[0].price), maxSupply: d.maxSupply, maxPerWallet: d.phases[0].maxPerWallet,
-    royaltyBps: d.royaltyBps, starvationPeriod: d.agent.starveDays * 86400, deathSkill: d.agent.deathSkill, modelId: BigInt(d.agent.modelId), limits: d.agent.limits });
+    royaltyBps: d.royaltyBps, starvationPeriod: d.agent.starveDays * 86400, deathSkill: d.agent.deathSkill, modelId: BigInt(d.agent.modelId), limits: d.agent.limits,
+    fertilityBps: (d.agent.fertPct || 0) * 100, twinBps: (d.agent.twinPct ?? 20) * 100 });
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',

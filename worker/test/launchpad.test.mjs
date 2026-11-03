@@ -164,8 +164,22 @@ const agentDrop = (o = {}) => ({ slug: 'agents-one', name: 'Agents', symbol: 'ag
 test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding (cast vector)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
-    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 } });
-  assert.equal(h, '0x804e9361bd5963d6d01b9b1338015a49490647d4c7f90f6c67ef0e9dcfe2cb7f');
+    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000 });
+  assert.equal(h, '0x13203ff8f8b00754c1bbda422a9cbddbbab140dd02da95044f2b2532f76a4c8b'); // = AgentDropFactory.t.sol VECTOR
+});
+
+test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, fertility: true, fertPct: 10, twinPct: 51 } })), /Twin chance/);
+  await call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, deathSkill: true, skillPct: 5, fertility: true, fertPct: 10, twinPct: 35 } }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.fertilityBps, 1000); assert.equal(a.params.twinBps, 3500);
+  const P = { ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId) };
+  assert.equal(a.configHash, agentConfigHash(P));
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, twinBps: 2000 }), 'twin chance is bound by the signature');
 });
 
 test('agent drops are OFF by default (config flag) and rejected at submit', async () => {
