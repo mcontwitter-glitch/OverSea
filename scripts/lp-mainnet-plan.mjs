@@ -2,7 +2,7 @@
 // Only read-only RPC calls (nonce, default LZ libraries, executor config). Output: an ordered list of transactions
 // { step, chain, from, to, value, data, note } per chain that YOU sign and send in order (wallet / hardware / Safe).
 // Usage (explicit flag required):
-//   node scripts/lp-mainnet-plan.mjs --i-will-sign-myself --deployer 0xYourDeployer [--nonce N] [--out /tmp/lp-mainnet-plan.json] [chain...]
+//   node scripts/lp-mainnet-plan.mjs --i-will-sign-myself --deployer 0xYourDeployer [--nonce N] [--nonce-<chain> N] [--out /tmp/lp-mainnet-plan.json] [chain...]
 // Contract addresses are predicted from (deployer, nonce): send each chain's txs in order from the same deployer with
 // no other txs in between, or the predicted escrow peers will be wrong. Requires `forge build` (contracts/out).
 import fs from 'node:fs';
@@ -26,7 +26,7 @@ for (const k of Object.keys(M.chains)) {
   const c = M.chains[k]; if (MAIN[k].eid !== c.eid || MAIN[k].endpoint.toLowerCase() !== c.endpoint.toLowerCase()) throw new Error(`${k}: config/launchpad.json mainnet EID/endpoint disagree with lp-mainnet-lz-check.mjs`);
   const pub = createPublicClient({ transport: http(MAIN[k].rpc, { retryCount: 3 }) });
   if (await pub.getChainId() !== c.chainId) throw new Error(`${k}: RPC chainId mismatch`);
-  const n0 = opt('--nonce') != null ? BigInt(opt('--nonce')) : BigInt(await pub.getTransactionCount({ address: deployer }));
+  const n0 = opt('--nonce-' + k) != null ? BigInt(opt('--nonce-' + k)) : opt('--nonce') != null ? BigInt(opt('--nonce')) : BigInt(await pub.getTransactionCount({ address: deployer })); // --nonce-<chain> N: pin an already-deployed chain's start nonce
   const at = i => getContractAddress({ from: deployer, nonce: n0 + BigInt(i) });
   pred[k] = { pub, n0, timelock: at(0), dropImpl: at(1), omniDropImpl: at(2), omniEscrow: at(3), factory: at(4) };
 }
