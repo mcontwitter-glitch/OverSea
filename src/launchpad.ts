@@ -257,18 +257,26 @@ function ordBox(d: Drop) {
   return `<div class="fcard ldordbox"><div class="gh"><img class="cl" src="/logos/bitcoin.svg" alt=""> Bitcoin Ordinals drop</div><div class="kv small"><span>Price</span><b>${esc(String(o.priceUsdc))} USDC on Base</b><span>Inscription fee</span><b>Paid by buyer (mempool rate at checkout)</b><span>Delivery</span><b>To your taproot address within ${H}h, else refund</b><span>Order limit</span><b>${o.orderLimit} per wallet</b><span>MultiSea fee</span><b>${(o.feeBps || 50) / 100}%</b></div>
    <div class="gh" style="margin-top:12px">Your orders <span class="ldtag xp">Preview data</span></div>${rows}</div>`;
 }
-// ---- ERC-463N7 agent drops: your agents (wallet, last fed, Feed), Death-skill attack with strike/grace, tombstones ----
-let agents: AgentView[] | null = null; let atkFrom = 0; let agMsg = ''; let agBusy = '';
+// ---- ERC-463N7 agent drops: your agents (wallet, last fed, Feed, Starve), Death-skill attack with strike/grace, burned tombstones, creator lock ----
+let agents: AgentView[] | null = null; let atkFrom = 0; let agMsg = ''; let agBusy = ''; let demoLocked = false;
 function agentBox(d: Drop) {
   const now = Math.floor(Date.now() / 1000); const A: any = (d as any).agent || (d as any).raw?.agent || {}; const k = d.chains[0].chain; const native = chains[k]?.native || 'ETH';
   if (agents === null && (d as any).demo) agents = demoAgents(now);
   const feeEth = ORA_FEE_WEI[k] ? Number(BigInt(ORA_FEE_WEI[k])) / 1e18 : undefined;
   const o = { symbol: d.symbol, periodS: (A.starveDays || 30) * 86400, now, feeEth, native, busy: agBusy };
   return `<div class="fcard ldagents"><div class="gh">Your agents ${(d as any).demo ? '<span class="mut small">demo</span>' : ''}</div>
-   <p class="mut small">Feed an agent (any amount into its wallet) to reset its starvation clock (${A.starveDays || 30} days). ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
+   ${A.deathSkill && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? lockBox(d) : ''}
+   <p class="mut small">Starvation is always on for every agent: unfed for ${A.starveDays || 30} days, anyone can starve it (NFT burned, wallet to its heir or the treasury). It survives transfers and holders can't turn it off. Feed an agent (any amount into its wallet) to reset the clock. ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
    ${agents?.length ? agents.map(a => agentCard(a, o)).join('') : `<p class="mut small">${wallet.address ? 'No agents loaded yet.' : 'Connect a wallet to see your agents.'}</p>`}
    ${(d as any).demo ? '' : `<div class="agbtns"><input data-agid type="number" min="1" placeholder="Agent #"><button class="obtn sm" data-agload>Load agent</button></div>`}
    ${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
+}
+function lockBox(d: Drop) {
+  const demo = !!(d as any).demo;
+  if (demo && demoLocked) return `<div class="small ok" style="margin-bottom:8px">✓ Death-skill table locked · mint is open (demo)</div>`;
+  return `<div class="fcard small agatk" style="margin-bottom:8px"><div class="gh">Creator: lock the Death skill table</div>
+   <p class="mut small">Mint stays closed on-chain until you lock. Enter the token ids that get the ☠ Death skill (from your rarity table; ids are assigned in mint order), then lock. Locking is final.</p>
+   <label>Death-skill ids<input data-aglockids placeholder="e.g. 7, 19, 33"></label><div class="agbtns"><button class="bbtn sm" data-aglock>Assign &amp; lock</button></div></div>`;
 }
 function dropPage(d: Drop) {
   document.title = `${d.name} · Launchpad · MultiSea`;
@@ -344,7 +352,9 @@ app.addEventListener('click', e => {
     const unit = BigInt(ph.prices?.[k] ?? ph.price); realBusy = true; realMsg = ''; render();
     (async () => { let proof: `0x${string}`[] = [];
       if (ph.kind === 'allowlist') { const r = await fetch(`${API}/launchpad/proof/${d.slug}/${ai}/${wallet.address!.toLowerCase()}`).then(r => r.json()); if (!r.eligible) throw new Error('This wallet is not on the ' + ph.name + ' allowlist.'); proof = r.proof; }
-      if (isAgentDrop(d)) { const am = await import('./agentdrop'); return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); }
+      if (isAgentDrop(d)) { const am = await import('./agentdrop');
+        if (!(await am.agentMintOpen(k, (d as any).addresses[k]))) throw new Error('Mint opens once the creator locks the Death-skill table.');
+        return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); }
       const m = await import('./lpchain');
       return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
       .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; })
@@ -375,6 +385,17 @@ function onAgent(d: Drop, el: HTMLElement) {
   if (el.dataset.agload != null) { const id = +((app.querySelector('[data-agid]') as HTMLInputElement)?.value || 0); if (!(id > 0) || !eng) return;
     import('./agentdrop').then(m => m.loadAgent(k, eng, id)).then(a => { agents = [a, ...(agents || []).filter(x => x.id !== id)]; agMsg = ''; }).catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(render); return; }
   if (el.dataset.agcancel != null) { atkFrom = 0; agMsg = ''; render(); return; }
+  if (el.dataset.aglock != null) { const raw = ((app.querySelector('[data-aglockids]') as HTMLInputElement)?.value || '').split(/[\s,]+/).filter(Boolean);
+    if (raw.some(x => !/^\d+$/.test(x))) { agMsg = '<span class="err">Ids must be whole numbers.</span>'; render(); return; }
+    if (demo) { demoLocked = true; agMsg = `✓ Demo only: ${raw.length} ids would get the Death skill, then lock() opens mint. No transaction was sent.`; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = 'lock';
+    import('./agentdrop').then(m => m.agentLockSkills(k, eng, raw.map(x => BigInt(x)), h => { agMsg = `Sent ${txLink(k, h)}…`; render(); })).then(() => { agMsg = '✓ Locked. Mint is open.'; })
+      .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
+  if (el.dataset.agstarve) { const id = +el.dataset.agstarve;
+    if (demo) { const a = agents?.find(x => x.id === id); if (a) { a.dead = true; a.custodian = '0x2fee00000000000000000000000000000000a9e7'; a.heirIsTreasury = true; } agMsg = `✓ Demo only: #${id} starved: NFT burned, wallet to its heir or the treasury. No transaction was sent.`; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = 'starve';
+    import('./agentdrop').then(m => m.agentStarve(k, eng, id, h => { agMsg = `Sent ${txLink(k, h)}…`; render(); })).then(() => m2(id)).then(() => { agMsg = `✓ #${id} starved`; })
+      .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
   if (el.dataset.agatk) { atkFrom = +el.dataset.agatk; agMsg = ''; render(); return; }
   if (el.dataset.agfeed) { const id = +el.dataset.agfeed;
     if (demo) { const a = agents?.find(x => x.id === id); if (a) { a.lastFed = Math.floor(Date.now() / 1000); a.strikeAt = 0; a.graceEnd = 0; } agMsg = `✓ Demo only: fed #${id} (clock reset, strike cleared). No transaction was sent.`; render(); return; }
