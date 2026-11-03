@@ -1,6 +1,7 @@
 // MultiSea Launchpad: "Create a drop" multi-step creator form (/launchpad/create).
-// Submits to the Worker (POST /launchpad/submit, SIWE) when the API advertises the 'launchpad' feature; until the Worker
-// change is deployed it saves a LOCAL PREVIEW submission in this browser, shown in the /admin review queue on localhost.
+// Submits to the Worker (POST /launchpad/submit, SIWE) when the API advertises the 'launchpad' feature. Once MultiSea
+// approves (and the approver signs the deploy approval), the creator deploys from /launchpad/<slug> (mainnet factories in
+// config/launchpad.json). Without the Worker feature it saves a LOCAL PREVIEW submission in this browser (localhost /admin).
 import CFG from '../config/collections.json';
 import { parseEther } from 'viem';
 import { merkle, parseAllowlist, setPhasesCalldata, thirdwebClaimConditions, onchainPhases, PHASE_T, type RuleIn } from './lpmerkle';
@@ -166,7 +167,7 @@ function txBox() {
 }
 function render() {
   app.innerHTML = `${navHtml('launchpad')}<section class="page form ldcreate"><a class="mut small" href="/launchpad">← Launchpad</a><h2>Create a drop</h2>
-  ${done ? `<div class="okbox">✓ <b>${esc(done)}</b> submitted for review. ${apiFeatures.includes('launchpad') ? 'You will see it on /launchpad once approved.' : `Preview mode: saved in this browser only (the Worker launchpad endpoints are not deployed).${isLocalHost() ? ' Open <a href="/admin">/admin</a> to see it in the review queue.' : ''}`}</div><p><a class="obtn" href="/launchpad">Back to Launchpad</a> <button class="obtn" data-act="new">Create another</button></p>` : `
+  ${done ? `<div class="okbox">✓ <b>${esc(done)}</b> submitted for review. ${apiFeatures.includes('launchpad') ? 'Once MultiSea approves it, open its page on /launchpad, sign in with this wallet and press <b>Deploy</b> on each chain (you pay the gas and own the contract).' : `Preview mode: saved in this browser only (the Worker launchpad endpoints are not deployed).${isLocalHost() ? ' Open <a href="/admin">/admin</a> to see it in the review queue.' : ''}`}</div><p><a class="obtn" href="/launchpad">Back to Launchpad</a> <button class="obtn" data-act="new">Create another</button></p>` : `
   <ol class="ldsteps">${STEPS.map((n, i) => `<li class="${i === st.step ? 'on' : i < st.step ? 'done' : ''}"><button type="button" data-go="${i}" ${i > st.step ? 'disabled' : ''}><span>${i < st.step ? '✓' : i + 1}</span><em>${n}</em></button></li>`).join('')}</ol>
   <div class="ldstepn mut small">Step ${st.step + 1} of ${STEPS.length} · <b>${STEPS[st.step]}</b></div>
   ${st.step === 0 && !st.name ? '<button type="button" class="pill ldfill" data-act="demo">Fill with LIL FOOTS demo</button>' : ''}

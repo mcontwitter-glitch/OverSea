@@ -228,7 +228,7 @@ const TCH = Object.fromEntries(Object.entries(LPT0.chains).map(([k, c]) => [k, {
 const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
   return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
 const launchpad = env => env?.LP_NETWORK === 'testnet'
-  ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
+  ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));

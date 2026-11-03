@@ -11,7 +11,12 @@
 //   POST /launchpad/deployed/<slug>    (SIWE, creator) { chain, address } -> verified isDrop() on the factory -> live + listed
 //   GET  /admin/launchpad/pending      (admin)  review queue
 //   POST /admin/launchpad/approve|reject/<slug> (admin)
-import { keccak256, encodeAbiParameters, concat } from 'viem';
+//   GET  /launchpad/mine                      (session) the caller's own approved drops
+//   GET  /admin/launchpad/approvals/<slug>    (admin)  EIP-712 typed data per chain for the approver wallet to sign
+//   POST /admin/launchpad/approvals/<slug>    (admin)  { chain, signature } -> verified against the on-chain approver, stored
+// Approvals: with the LAUNCHPAD_APPROVER_KEY secret (testnet staging) the Worker signs on request. Without it (mainnet) the
+// approver wallet signs each chain's approval in /admin (signature only, no transaction) and the Worker hands it to the creator.
+import { keccak256, encodeAbiParameters, concat, recoverTypedDataAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 export const PHASE_T = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'maxSupply', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }];
@@ -126,6 +131,23 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     eids: d.chains.map(k => LP.eids[k]), hubEid: LP.eids[LP.hubChain], prices: d.chains.flatMap(k => d.phases.map(p => BigInt(p.prices[k]))),
     copyMode: d.copyMode === 'at-mint' ? 1 : 0, batchK: d.copyMode === 'at-mint' ? 0 : d.batchK ?? LP.batch.defaultK, batchT: d.copyMode === 'at-mint' ? 0 : (d.batchTMin ?? LP.batch.defaultTMin) * 60 });
 
+  // EIP-712 approval for one chain of an approved drop. Creator = the submitter (createDrop: msg.sender; createOmniDrop: p.owner).
+  function approvalTyped(d, chain, deadline) {
+    const factory = LP.factories?.[chain]; if (!d.chains.includes(chain) || !factory || !chains[chain]) bad('no factory on that chain yet', 501);
+    const creator = lc(d.submitter); const domain = { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory };
+    const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    if (d.mode === 'multichain') {
+      if (!LP.omniEscrows?.[chain]) bad('no multichain escrow on that chain yet', 501);
+      const ip = omniParams(d, creator); const cfg = omniConfigHash(ip); const collectionId = collectionIdOf(d.slug, creator);
+      const message = { creator, configHash: cfg, collectionId, deadline };
+      return { typed: { domain, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message }, out: { mode: 'multichain', chain, factory, collectionId, deadline: deadline.toString(), configHash: cfg, params: ser(ip) } };
+    }
+    const ip = initParams(d, creator, chain); const cfg = configHash(ip);
+    const salt = keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'string' }, { type: 'address' }], [d.slug, chain, creator]));
+    const message = { creator, configHash: cfg, salt, deadline };
+    return { typed: { domain, types: APPROVAL_TYPES, primaryType: 'DropApproval', message }, out: { chain, factory, salt, deadline: deadline.toString(), configHash: cfg, params: ser(ip) } };
+  }
+
   async function handle(req, env, url, p, M, body) {
     if (p[0] === 'launchpad') {
       const K = env.COLLECTIONS;
@@ -142,24 +164,25 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         await K.put('lpending:' + d.slug, JSON.stringify({ ...d, kind: 'drop', submitter: s.address, status: 'pending', submittedAt: new Date(now()).toISOString() }));
         return { ok: true, status: 'pending', slug: d.slug };
       }
+      if (M === 'GET' && p[1] === 'mine' && p.length === 2) { // the signed-in creator's own drops (submitter is never public)
+        const s = await requireSession(req, env); const l = await K.list({ prefix: 'ldrop:' });
+        const ds = (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(d => d && lc(d.submitter) === s.address);
+        return { drops: ds.map(d => ({ slug: d.slug, status: d.status, chains: d.chains, deployed: (d.deployments || []).map(x => x.chain) })) };
+      }
       if (M === 'POST' && p[1] === 'approval' && p.length === 3) {
         const s = await requireSession(req, env); const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404);
         if (lc(d.submitter) !== s.address) bad('only the creator can request a deploy approval', 403);
-        if (!env.LAUNCHPAD_APPROVER_KEY) bad('launchpad deploy approvals are not enabled yet', 501);
-        const b = await body(); const chain = b.chain; const factory = LP.factories[chain]; if (!d.chains.includes(chain) || !factory) bad('no factory on that chain yet', 501);
-        if (d.mode === 'multichain') {
-          if (!LP.omniEscrows?.[chain]) bad('no multichain escrow on that chain yet', 501);
-          const ip = omniParams(d, s.address); const cfg = omniConfigHash(ip); const collectionId = collectionIdOf(d.slug, s.address);
-          const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
-          const signature = await privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY).signTypedData({ domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory }, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message: { creator: s.address, configHash: cfg, collectionId, deadline } });
-          return { mode: 'multichain', chain, factory, collectionId, deadline: deadline.toString(), signature, configHash: cfg, params: JSON.parse(JSON.stringify(ip, (k, v) => (typeof v === 'bigint' ? v.toString() : v))) };
+        const b = await body(); const chain = b.chain;
+        if (env.LAUNCHPAD_APPROVER_KEY) {
+          const t = approvalTyped(d, chain, BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec));
+          const signature = await privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY).signTypedData(t.typed);
+          return { ...t.out, signature };
         }
-        const ip = initParams(d, s.address, chain); const cfg = configHash(ip);
-        const salt = keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'string' }, { type: 'address' }], [d.slug, chain, s.address]));
-        const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
-        const acct = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
-        const signature = await acct.signTypedData({ domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory }, types: APPROVAL_TYPES, primaryType: 'DropApproval', message: { creator: s.address, configHash: cfg, salt, deadline } });
-        return { chain, factory, salt, deadline: deadline.toString(), signature, configHash: cfg, params: JSON.parse(JSON.stringify(ip, (k, v) => (typeof v === 'bigint' ? v.toString() : v))) };
+        if (!LP.approver) bad('launchpad deploy approvals are not enabled yet', 501);
+        approvalTyped(d, chain, 0n); // validates chain / factory / escrow
+        const st = await K.get(`lsig:${d.slug}:${chain}`, 'json');
+        if (!st || BigInt(st.deadline) <= BigInt(Math.floor(now() / 1000) + 600)) bad('waiting for MultiSea to sign the deploy approval for ' + chain + ' (usually within a day)', 409);
+        return { ...approvalTyped(d, chain, BigInt(st.deadline)).out, signature: st.signature };
       }
       if (M === 'POST' && p[1] === 'deployed' && p.length === 3) {
         const s = await requireSession(req, env); const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404);
@@ -180,8 +203,32 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       return undefined;
     }
     if (p[0] === 'admin' && p[1] === 'launchpad') {
-      const s = await requireSession(req, env); if (!admins(env).includes(s.address)) bad('admin only', 403);
-      const K = env.COLLECTIONS;
+      const s = await requireSession(req, env); const K = env.COLLECTIONS;
+      // The factory approver wallet (not necessarily an admin) may read and sign deploy approvals; nothing else.
+      if (p[2] === 'approvals' && !admins(env).includes(s.address) && s.address !== lc(LP.approver || '')) bad('admin or approver only', 403);
+      if (p[2] === 'approvals' && (M === 'GET' || M === 'POST')) {
+        if (!p[3] && M === 'GET') { const l = await K.list({ prefix: 'ldrop:' }); const ds = (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(d => d && d.kind !== 'ordinals' && d.mode !== 'ordinals' && d.status !== 'rejected');
+          return { approver: LP.approver || null, drops: ds.filter(d => d.chains.some(c => LP.factories?.[c] && !(d.deployments || []).some(x => x.chain === c))).map(d => ({ slug: d.slug, name: d.name, mode: d.mode, chains: d.chains, submitter: d.submitter })) }; }
+        if (!SLUG.test(p[3] || '')) bad('bad slug');
+        const d = await K.get('ldrop:' + p[3], 'json'); if (!d) bad('not an approved drop', 404); if (!LP.approver) bad('no approver configured', 501);
+        const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+        if (M === 'GET') {
+          const out = [];
+          for (const chain of d.chains) { if (!LP.factories?.[chain]) continue; const st = await K.get(`lsig:${d.slug}:${chain}`, 'json');
+            const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec); const done = (d.deployments || []).some(x => x.chain === chain);
+            out.push({ chain, signed: !!st, deadline: st?.deadline, deployed: done, typed: ser(approvalTyped(d, chain, deadline).typed) }); }
+          return { approver: LP.approver, approvals: out };
+        }
+        const b = await req.json().catch(() => ({})); const chain = b?.chain; const sig = String(b?.signature || '');
+        if (!/^0x[0-9a-fA-F]{130}$/.test(sig) || !/^\d{1,12}$/.test(String(b?.deadline ?? ''))) bad('signature and deadline required');
+        const deadline = BigInt(b.deadline); if (deadline <= BigInt(Math.floor(now() / 1000)) || deadline > BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec + 3600)) bad('deadline out of range');
+        const t = approvalTyped(d, chain, deadline);
+        const signer = lc(await recoverTypedDataAddress({ ...t.typed, signature: sig }));
+        if (signer !== lc(LP.approver)) bad(`signature is from ${signer}, not the factory approver ${lc(LP.approver)}`, 403);
+        await K.put(`lsig:${d.slug}:${chain}`, JSON.stringify({ signature: sig, deadline: deadline.toString(), signedBy: s.address, at: new Date(now()).toISOString() }));
+        return { ok: true, chain, deadline: deadline.toString() };
+      }
+      if (!admins(env).includes(s.address)) bad('admin only', 403);
       if (M === 'GET' && p[2] === 'pending') { const l = await K.list({ prefix: 'lpending:' }); return { pending: (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(Boolean).map(d => ({ ...d, allowlists: undefined, allowlistCounts: Object.fromEntries(Object.entries(d.allowlists || {}).map(([k, v]) => [k, v.length])) })) }; }
       if (M === 'POST' && (p[2] === 'approve' || p[2] === 'reject') && SLUG.test(p[3] || '')) {
         const rec = await K.get('lpending:' + p[3], 'json'); if (!rec) bad('no such pending drop', 404);

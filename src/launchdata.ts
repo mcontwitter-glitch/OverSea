@@ -1,5 +1,5 @@
-// MultiSea Launchpad: drop model + DEMO data (preview). No launchpad contract is deployed on any chain yet, so every drop
-// here is either demo data (clearly labeled) or a local preview submission saved in this browser.
+// MultiSea Launchpad: drop model + DEMO data. Real drops come from the Worker (mainnet factories in config/launchpad.json,
+// see src/lpchain.ts); drops in this file are demo data (clearly labeled) or local preview submissions saved in this browser.
 import LP from '../config/launchpad.json';
 import APP from '../config/app.json';
 export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; prices?: Record<string, number>; maxPerWallet: number; maxSupply?: number; merkleRoot?: string; allowlist?: string[]; allowCount?: number }; // prices: per-chain native price (multichain)
@@ -14,7 +14,7 @@ export type Drop = {
   copyMode?: 'batched' | 'at-mint'; batchK?: number; batchTMin?: number; queue?: { ids: number; ageMin: number; batch: number };
   slug: string; name: string; symbol: string; creator: string; description: string; chains: ChainAlloc[];
   maxSupply: number; royaltyBps: number; reveal: 'instant' | 'delayed'; phases: Phase[]; img: string; art: string[];
-  demo?: boolean; local?: boolean; status?: 'pending' | 'approved' | 'rejected' | 'live'; deployed?: boolean; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
+  demo?: boolean; local?: boolean; remote?: boolean; addresses?: Record<string, string>; raw?: any; status?: 'pending' | 'approved' | 'rejected' | 'live'; deployed?: boolean; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
 };
 export const FEE_BPS: number = LP.platformFeeBps; // 0.5% of primary sales, paid from creator proceeds by withdraw()
 export const LP_CHAINS: string[] = LP.chains;

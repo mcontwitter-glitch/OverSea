@@ -1,5 +1,5 @@
 {
-  "_note": "Launchpad config (PREVIEW). Factories and omni escrows are NOT deployed on any chain; addresses stay null until an audited deploy. Abstract is excluded (shutting down).",
+  "_note": "Launchpad config. MAINNET factories + omni escrows deployed Nov 2026 (signed by the deployer from launchpad-signer-site; verified on-chain: code, approver, implementations, fee wallet, 50 bps, escrow owner = timelock). Abstract is excluded (shutting down).",
   "chains": [
     "base",
     "ethereum",
@@ -8,11 +8,11 @@
     "robinhood"
   ],
   "factories": {
-    "base": null,
-    "ethereum": null,
-    "apechain": null,
-    "bnb": null,
-    "robinhood": null
+    "base": "0x41B16929eecDc1dD884Ab9d1edA12055B5A4d117",
+    "ethereum": "0x355D77A407AB69890A2a76Ad018cDD917F1bFB48",
+    "apechain": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad",
+    "bnb": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad",
+    "robinhood": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3"
   },
   "platformFeeBps": 50,
   "maxPlatformFeeBps": 1500,
@@ -37,11 +37,11 @@
     "robinhood": 30416
   },
   "omniEscrows": {
-    "base": null,
-    "ethereum": null,
-    "apechain": null,
-    "bnb": null,
-    "robinhood": null
+    "base": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad",
+    "ethereum": "0x696E180F80cCA3d66D5D5CCF6cb55A7bE3661cFD",
+    "apechain": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+    "bnb": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+    "robinhood": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe"
   },
   "moveFeeUsd": 0.3,
   "lzReceiveGas": 250000,
@@ -113,7 +113,7 @@
     "shareBufferBps": 2000
   },
   "mainnet": {
-    "_note": "MAINNET deploy structure (PREVIEW, NOT deployed). Addresses stay null until the signed deploy lands. Plan: node scripts/lp-mainnet-plan.mjs --i-will-sign-myself --deployer 0x... (unsigned, no key). approver/admin given as 0xb19F00e095B1387061D73751c772bBA848D196b1 has an INVALID EIP-55 checksum: stored lowercase, confirm before signing.",
+    "_note": "MAINNET deployment (live). Factory owner = deployer 0xb19f\u202696b1 until step 24 (timelock acceptOwnership, 48 h delay) runs on each chain; pendingOwner = that chain's timelock. Drop approvals are EIP-712 signatures from `approver` (no transaction).",
     "approver": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockProposer": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockExecutor": "0xb19f00e095b1387061d73751c772bba848d196b1",
@@ -134,11 +134,11 @@
           "0x9e059a54699a285714207b43b055483e78faac25",
           "0xa7b5189bca84cd304d8553977c7c614329750d99"
         ],
-        "timelock": null,
-        "dropImpl": null,
-        "omniDropImpl": null,
-        "omniEscrow": null,
-        "factory": null
+        "timelock": "0x3e70B0695eCD987C7C2a52ca1Edc0979355A0d18",
+        "dropImpl": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe",
+        "omniDropImpl": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+        "omniEscrow": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad",
+        "factory": "0x41B16929eecDc1dD884Ab9d1edA12055B5A4d117"
       },
       "ethereum": {
         "chainId": 1,
@@ -151,11 +151,11 @@
           "0x589dedbd617e0cbcb916a9223f4d1300c294236b",
           "0x380275805876ff19055ea900cdb2b46a94ecf20d"
         ],
-        "timelock": null,
-        "dropImpl": null,
-        "omniDropImpl": null,
-        "omniEscrow": null,
-        "factory": null
+        "timelock": "0x41B16929eecDc1dD884Ab9d1edA12055B5A4d117",
+        "dropImpl": "0x939ff77dE13B5e562d687FE5F3b505c697C6F647",
+        "omniDropImpl": "0x518d6D831D555eF841148e1c97abb4f47f34A7FF",
+        "omniEscrow": "0x696E180F80cCA3d66D5D5CCF6cb55A7bE3661cFD",
+        "factory": "0x355D77A407AB69890A2a76Ad018cDD917F1bFB48"
       },
       "apechain": {
         "chainId": 33139,
@@ -168,11 +168,11 @@
           "0x6788f52439aca6bff597d3eec2dc9a44b8fee842",
           "0xdd7b5e1db4aafd5c8ec3b764efb8ed265aa5445b"
         ],
-        "timelock": null,
-        "dropImpl": null,
-        "omniDropImpl": null,
-        "omniEscrow": null,
-        "factory": null
+        "timelock": "0xEc3fA2d4B1A4C674f65E47f9921b288fBd99A96b",
+        "dropImpl": "0x3e70B0695eCD987C7C2a52ca1Edc0979355A0d18",
+        "omniDropImpl": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe",
+        "omniEscrow": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+        "factory": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad"
       },
       "bnb": {
         "chainId": 56,
@@ -185,11 +185,11 @@
           "0xfd6865c841c2d64565562fcc7e05e619a30615f0",
           "0x247624e2143504730aec22912ed41f092498bef2"
         ],
-        "timelock": null,
-        "dropImpl": null,
-        "omniDropImpl": null,
-        "omniEscrow": null,
-        "factory": null
+        "timelock": "0xEc3fA2d4B1A4C674f65E47f9921b288fBd99A96b",
+        "dropImpl": "0x3e70B0695eCD987C7C2a52ca1Edc0979355A0d18",
+        "omniDropImpl": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe",
+        "omniEscrow": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+        "factory": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad"
       },
       "robinhood": {
         "chainId": 4663,
@@ -202,12 +202,16 @@
           "0xd01ae6905d48315f7be10c7330aecf8360ef5b12",
           "0x1258a278519c7f4bd997a9c3bfd4aa802a028d89"
         ],
-        "timelock": null,
-        "dropImpl": null,
-        "omniDropImpl": null,
-        "omniEscrow": null,
-        "factory": null
+        "timelock": "0x93D73568b0EA9Ea56279dc2D826e791C8e4E6bE1",
+        "dropImpl": "0xEc3fA2d4B1A4C674f65E47f9921b288fBd99A96b",
+        "omniDropImpl": "0x3e70B0695eCD987C7C2a52ca1Edc0979355A0d18",
+        "omniEscrow": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe",
+        "factory": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3"
       }
-    }
-  }
+    },
+    "deployed": true,
+    "dropApprovals": true,
+    "deployer": "0xb19f00e095b1387061d73751c772bba848d196b1"
+  },
+  "approver": "0xb19f00e095b1387061d73751c772bba848d196b1"
 }

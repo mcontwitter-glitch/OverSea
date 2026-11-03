@@ -16,7 +16,7 @@ function kv() { const m = new Map(); return { m, async get(k, t) { const v = m.g
 const creator = privateKeyToAccount(generatePrivateKey());
 const FACTORY = '0x' + '11'.repeat(20); const ESC = '0x' + '33'.repeat(20);
 function setup(over = {}) {
-  const LP = { ...LP0, factories: { ...LP0.factories, base: FACTORY, bnb: FACTORY }, omniEscrows: { ...LP0.omniEscrows, base: ESC, bnb: ESC } };
+  const LP = { ...LP0, factories: { ...LP0.factories, base: FACTORY, bnb: FACTORY }, omniEscrows: { ...LP0.omniEscrows, base: ESC, bnb: ESC }, ...over.LP };
   const env = { COLLECTIONS: kv(), ADMIN_ADDRESSES: ADMIN, ...over.env };
   let who = lc(creator.address);
   const L = makeLaunchpad({ LP, chains: CFG.chains, lc, bad, ADDR, admins: e => [ADMIN], requireSession: async () => ({ address: who }), isDropOnChain: async (k, f, a) => over.isDrop ?? true, now: () => 1_800_000_000_000 });
@@ -63,7 +63,7 @@ test('submit -> admin queue -> approve -> proof -> approval signature -> deploye
   const pr = await call('GET', `/launchpad/proof/lil-foots-drop/0/${AL[1]}`); assert.ok(pr.eligible && pr.proof.length >= 1);
   assert.equal((await call('GET', `/launchpad/proof/lil-foots-drop/0/0x00000000000000000000000000000000000000d4`)).eligible, false);
   as(creator.address);
-  await assert.rejects(call('POST', '/launchpad/approval/lil-foots-drop', { chain: 'base' }), /not enabled/); // no key -> 501
+  await assert.rejects(call('POST', '/launchpad/approval/lil-foots-drop', { chain: 'base' }), /waiting for MultiSea/); // no key, approver set, nothing signed yet -> 409
   env.LAUNCHPAD_APPROVER_KEY = (await import('viem/accounts')).generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
   const a = await call('POST', '/launchpad/approval/lil-foots-drop', { chain: 'base' });
   assert.equal(a.factory, FACTORY);
@@ -128,3 +128,29 @@ test('multichain drop: validation, shared supply via the Base hub, omni approval
   assert.equal(col.deployments.length, 2); assert.deepEqual(col.escrow.map(e => e.chain), ['base', 'bnb']); assert.equal(col.escrow[0].address, ESC);
 });
 
+
+test('mainnet: approver wallet signs in /admin (no key in the Worker), creator gets the stored signature', async () => {
+  const apprAcct = privateKeyToAccount(generatePrivateKey()); const RANDO = '0x00000000000000000000000000000000000000e5';
+  const { call, as } = setup({ LP: { approver: lc(apprAcct.address) } });
+  await call('POST', '/launchpad/submit', drop()); await call('POST', '/launchpad/submit', drop({ slug: 'omni-one', mode: 'multichain', creatorReserve: 0, chains: ['base', 'bnb'], allocations: { base: 3404, bnb: 1000 }, phases: drop().phases.map(x => ({ ...x, prices: { base: x.price, bnb: x.price } })) }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/lil-foots-drop'); await call('POST', '/admin/launchpad/approve/omni-one');
+  as(RANDO); await assert.rejects(call('GET', '/admin/launchpad/approvals'), /admin or approver only/);
+  as(apprAcct.address); await assert.rejects(call('GET', '/admin/launchpad/pending'), /admin only/, 'approver is not an admin');
+  const list = await call('GET', '/admin/launchpad/approvals'); assert.deepEqual(list.drops.map(d => d.slug).sort(), ['lil-foots-drop', 'omni-one']);
+  for (const slug of ['lil-foots-drop', 'omni-one']) {
+    const g = await call('GET', '/admin/launchpad/approvals/' + slug);
+    for (const a of g.approvals) {
+      const t = a.typed; const msg = { ...t.message, deadline: BigInt(t.message.deadline) };
+      const wrong = await privateKeyToAccount(generatePrivateKey()).signTypedData({ ...t, message: msg });
+      await assert.rejects(call('POST', '/admin/launchpad/approvals/' + slug, { chain: a.chain, signature: wrong, deadline: t.message.deadline }), /not the factory approver/);
+      const sig = await apprAcct.signTypedData({ ...t, message: msg });
+      assert.equal((await call('POST', '/admin/launchpad/approvals/' + slug, { chain: a.chain, signature: sig, deadline: t.message.deadline })).ok, true);
+    }
+  }
+  as(creator.address); assert.deepEqual((await call('GET', '/launchpad/mine')).drops.map(d => d.slug).sort(), ['lil-foots-drop', 'omni-one']);
+  as(RANDO); assert.equal((await call('GET', '/launchpad/mine')).drops.length, 0); as(creator.address);
+  const a = await call('POST', '/launchpad/approval/lil-foots-drop', { chain: 'base' });
+  assert.ok(await verifyTypedData({ address: apprAcct.address, domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: CFG.chains.base.chainId, verifyingContract: FACTORY }, types: APPROVAL_TYPES, primaryType: 'DropApproval', message: { creator: creator.address, configHash: a.configHash, salt: a.salt, deadline: BigInt(a.deadline) }, signature: a.signature }));
+  const o = await call('POST', '/launchpad/approval/omni-one', { chain: 'bnb' }); assert.equal(o.mode, 'multichain');
+  assert.ok(await verifyTypedData({ address: apprAcct.address, domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: CFG.chains.bnb.chainId, verifyingContract: FACTORY }, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message: { creator: creator.address, configHash: o.configHash, collectionId: o.collectionId, deadline: BigInt(o.deadline) }, signature: o.signature }));
+});

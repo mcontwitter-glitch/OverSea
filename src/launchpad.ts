@@ -1,9 +1,12 @@
-// MultiSea Launchpad (PREVIEW): /launchpad (drops: live / upcoming / ended) and /launchpad/<slug> (mint page).
-// Mint is a clearly labeled DEMO stub: no launchpad factory is deployed yet, so nothing is sent on-chain.
+// MultiSea Launchpad: /launchpad (drops: live / upcoming / ended) and /launchpad/<slug> (mint page).
+// Worker drops are real: the creator deploys from this page (factory createDrop / createOmniDrop with MultiSea's signed
+// approval) and collectors mint with their own wallet (src/lpchain.ts). Demo drops (LIL FOOTS art) stay labeled stubs.
 import CFG from '../config/collections.json';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
+import { LP_LIVE, factoryOn } from './lpchain';
+import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
 const app = document.getElementById('app')!;
@@ -21,7 +24,7 @@ let rates: UsdRates = { ETH: null, APE: null, BNB: null };
 // Worker drops (once the launchpad Worker routes are deployed). Prices arrive in wei; per-chain minted counts would come
 // from each drop contract's totalMinted() (not wired in this preview: shows 0 until contracts exist).
 let remote: Drop[] = [];
-const fromApi = (d: any): Drop => ({ mode: d.mode === 'multichain' ? 'multichain' : d.mode === 'ordinals' ? 'ordinals' : 'single', ordinals: d.ordinals, slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
+const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries((d.deployments || []).map((x: any) => [x.chain, x.address])), raw: d, mode: d.mode === 'multichain' ? 'multichain' : d.mode === 'ordinals' ? 'ordinals' : 'single', ordinals: d.ordinals, slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
   // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
   deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
   chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
@@ -56,7 +59,7 @@ function listPage() {
   app.innerHTML = `${navHtml('launchpad')}<section class="page wide ldpage">
    <div class="ldhero"><div><h1>🚀 Launchpad</h1><p class="mut">Mint new collections on Base, Ethereum, ApeChain, BNB and Robinhood. Pay with any token from any chain. Every drop is reviewed by MultiSea before it goes live, then trades on MultiSea from the first mint.</p></div>
     <a class="bbtn sm" href="/launchpad/create">+ Create a drop</a></div>
-   <div class="ldnote">Preview: launchpad contracts are not deployed yet. Drops below are <b>demo data</b> (LIL FOOTS art) and minting is a stub.</div>
+   ${LP_LIVE ? (drops.some(d => d.demo) ? '<div class="ldnote">Drops tagged <b>Demo</b> (LIL FOOTS art) are examples: minting them is a stub. Every other drop is a real on-chain contract.</div>' : '') : '<div class="ldnote">Preview: launchpad contracts are not deployed yet. Drops below are <b>demo data</b> (LIL FOOTS art) and minting is a stub.</div>'}
    <div class="ldtabs" role="tablist">${(['live', 'upcoming', 'ended'] as const).map(k => `<button role="tab" class="ldtab ${tab === k ? 'on' : ''}" data-tab="${k}">${k[0].toUpperCase() + k.slice(1)} <span>${by(k).length}</span></button>`).join('')}</div>
    <div class="ldgrid">${l.length ? l.map(dropCard).join('') : `<p class="mut">No ${tab} drops right now.</p>`}</div>
    ${mine.length ? `<div class="gh pad">Your submissions (this browser)</div><div class="ldmine">${mine.map(d => `<div class="qcard"><b>${esc(d.name)}</b> <span class="ldtag ${d.status}">${esc(d.status)}</span><div class="mut small">${d.chains.map(c => esc(chains[c.chain]?.name)).join(', ')} · ${d.maxSupply.toLocaleString()} supply · submitted ${esc(d.submittedAt?.slice(0, 10))}</div></div>`).join('')}</div>` : ''}
@@ -114,17 +117,23 @@ function qtyHint(d: Drop, k: string) {
   return `<div class="ldhint">💡 Buy 3+ to save: cross-chain cost ≈ $${per(3).toFixed(2)}/NFT at 3 vs $${per(1).toFixed(2)} at 1 (one confirm covers the whole mint). Base is cheapest at ≈ $${base.toFixed(2)}.</div>`;
 }
 function mintBox(d: Drop) {
-  if (comingSoon(d)) return `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
+  const R = d as any; const isCreator = !!getSession() && mine.has(d.slug);
+  const undeployed = R.remote && LP_LIVE ? d.chains.filter(c => !R.addresses?.[c.chain]) : [];
+  const dep = isCreator && undeployed.length ? deployBox(d, undeployed.map(c => c.chain)) : '';
+  if (comingSoon(d)) return dep || `${R.remote && LP_LIVE && !getSession() ? '<div class="fcard small" style="margin-bottom:10px">Creator? <button class="pill" data-act="lsignin">Sign in to deploy</button></div>' : ''}` + `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
    <p class="mut small">This drop is approved. Minting opens once its contract is deployed and verified on-chain.</p>
    <button class="bbtn" disabled>Minting opens soon</button></div>`;
   const st = dropState(d); const ai = activePhase(d); const p = d.phases[ai]; const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
   const left = isMulti(d) ? Math.max(0, d.maxSupply - minted(d)) : Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || MAX_PER_TX, left, MAX_PER_TX));
   if (qty > max) qty = max;
-  const al = p?.kind === 'allowlist'; const eligible = !al || (!!wallet.address && !!p.allowlist?.includes(wallet.address.toLowerCase()));
+  const al = p?.kind === 'allowlist'; const eligible = !al || (!!wallet.address && (R.remote ? true : !!p.allowlist?.includes(wallet.address.toLowerCase())));
+  const real = R.remote && LP_LIVE && !!R.addresses?.[c.chain];
   const btn = st !== 'live' ? `<button class="bbtn" disabled>${st === 'upcoming' ? 'Not started' : 'Minting ended'}</button>`
     : !eligible ? `<button class="bbtn" disabled>${wallet.address ? 'Not on this allowlist' : 'Connect to check allowlist'}</button>`
     : left <= 0 ? `<button class="bbtn" disabled>Sold out</button>`
     : isMulti(d) && pend && !pend.done ? `<button class="bbtn" disabled><span class="spin"></span> Minting… confirming across chains</button>`
+    : R.remote && LP_LIVE && !real ? `<button class="bbtn" disabled>Not deployed on ${esc(chains[c.chain].name)} yet</button>`
+    : real ? (wallet.address ? `<button class="bbtn ldmint" data-act="mint" ${realBusy ? 'disabled' : ''}>${realBusy ? '<span class="spin"></span> Minting…' : `Mint ${qty} on ${esc(chains[c.chain].name)}`}</button>` : '<button class="bbtn ldmint" data-act="connect">Connect wallet to mint</button>')
     : `<button class="bbtn ldmint" data-act="mint">Mint ${qty} on ${esc(chains[c.chain].name)} · demo (no transaction)</button>`;
   return `<div class="fcard ldmintbox">
    ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}"><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${isMulti(d) ? (x.chain === HUB ? (isBatched(d) ? 'Instant · cheapest' : 'Instant · supply hub') : 'Confirms via Base') : `${(x.supply - x.minted).toLocaleString()} left`}</em></span></button>`).join('')}</div>` : ''}
@@ -133,8 +142,19 @@ function mintBox(d: Drop) {
    <div class="ldpay"><label class="${pay === 'direct' ? 'on' : ''}"><input type="radio" name="pay" value="direct" ${pay === 'direct' ? 'checked' : ''}><span><b>${esc(chains[c.chain].native)} on ${esc(chains[c.chain].name)}</b><em>Direct mint</em></span></label><label class="${pay === 'relay' ? 'on' : ''}"><input type="radio" name="pay" value="relay" ${pay === 'relay' ? 'checked' : ''}><span><b>Any token, any chain</b><em>Routed by Relay</em></span></label></div>
    ${qtyHint(d, c.chain)}${breakdown(d)}` : ''}
    ${btn}
-   ${isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
-   <p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p></div>`;
+   ${real ? (realMsg ? `<div class="okbox small">${realMsg}</div>` : '') : isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
+   ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}`;
+}
+let mine = new Set<string>(); async function loadMine() { mine = new Set(); if (!LP_LIVE || !getSession() || !apiFeatures.includes('launchpad')) return; try { const j = await import('./auth').then(a => a.api('/launchpad/mine', { auth: true })); mine = new Set(j.drops.map((x: any) => x.slug)); } catch {} }
+let realBusy = false; let realMsg = ''; let depMsg = ''; let depBusy = '';
+const EXPL: Record<string, string> = Object.fromEntries(Object.entries(CFG.chains as any).map(([k, c]: any) => [k, c.explorer]));
+const txLink = (k: string, h: string) => `<a href="${EXPL[k]}/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>`;
+function deployBox(d: Drop, todo: string[]) {
+  const ok = todo.filter(k => factoryOn(k));
+  return `<div class="fcard ldmintbox" style="margin-top:14px"><div class="gh">Deploy your drop <span class="mut small">you are the creator</span></div>
+   <p class="mut small">MultiSea approved this drop. Deploying creates your contract through the MultiSea factory with MultiSea's signed approval; you pay the gas and own the contract.${isMulti(d) ? ' Deploy on every chain (Base, the supply hub, first).' : ''}</p>
+   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : ok.map(k => `<button class="bbtn sm" data-deploy="${k}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy === k ? '<span class="spin"></span> Deploying…' : `Deploy on ${esc(chains[k].name)}`}</button>`).join('')}
+   ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
 }
 function alBox(d: Drop) {
   const al = d.phases.filter(p => p.kind === 'allowlist'); if (!al.length) return '';
@@ -289,7 +309,24 @@ app.addEventListener('click', e => {
     else alRes = d.phases.filter(p => p.kind === 'allowlist').map(p => `${p.allowlist?.includes(alAddr) ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'} ${esc(p.name)}`).join(' &nbsp; ') + ' <span class="mut">(demo list)</span>';
     render();
   }
+  if (el.dataset.act === 'connect') { openConnect(); return; }
+  if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
+  if (el.dataset.deploy) { const k = el.dataset.deploy; depBusy = k; depMsg = ''; render();
+    import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); }))
+      .then(async a => { depMsg = `✓ Deployed on ${esc(chains[k].name)}: <span class="mono">${esc(a)}</span>`; (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; await refreshRemote(); })
+      .catch(e => { depMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { depBusy = ''; render(); }); return; }
   if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
+  if (el.dataset.act === 'mint' && (d as any).remote && LP_LIVE && (d as any).addresses?.[chainSel]) {
+    if (!wallet.address) { openConnect(); return; } const k = chainSel; const ai = activePhase(d); const ph: any = (d as any).raw.phases[ai]; const n = qty;
+    const unit = BigInt(ph.prices?.[k] ?? ph.price); realBusy = true; realMsg = ''; render();
+    (async () => { let proof: `0x${string}`[] = [];
+      if (ph.kind === 'allowlist') { const r = await fetch(`${API}/launchpad/proof/${d.slug}/${ai}/${wallet.address!.toLowerCase()}`).then(r => r.json()); if (!r.eligible) throw new Error('This wallet is not on the ' + ph.name + ' allowlist.'); proof = r.proof; }
+      const m = await import('./lpchain');
+      return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
+      .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; })
+      .catch(e => { realMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { realBusy = false; render(); });
+    return;
+  }
   if (el.dataset.act === 'mint' && isMulti(d)) {
     const c = d.chains.find(x => x.chain === chainSel)!; const start = minted(d) + 1; const q = qty;
     pend = { origin: c.chain, qty: q, start, t0: Date.now(), batch: d.queue?.batch }; c.minted += q; // demo counter only
@@ -313,9 +350,10 @@ app.addEventListener('change', e => {
   if (t.name === 'pay') { pay = t.value as any; render(); }
   if (t.dataset.qin != null) { qty = Math.max(1, Math.floor(+t.value || 1)); render(); }
 });
+async function refreshRemote() { if (!apiFeatures.includes('launchpad')) return; try { const j = await fetch(API + '/launchpad/drops').then(r => r.json()); remote = (j.drops || []).map(fromApi); render(); } catch {} }
 if (path === '/launchpad/create') import('./launchcreate');
 else {
-  bindNav(); render(); setInterval(tick, 1000); onWallet(render); checkApi().then(async () => { if (!apiFeatures.includes('launchpad')) return; try { const j = await fetch(API + '/launchpad/drops').then(r => r.json()); remote = (j.drops || []).map(fromApi); render(); } catch {} });
+  bindNav(); render(); setInterval(tick, 1000); onWallet(render); checkApi().then(refreshRemote).then(loadMine).then(render); onWallet(() => loadMine().then(render));
   usdRates().then(r => { rates = r; render(); });
   const d = slug ? findDrop(slug) : null; if (d) loadGas(d).then(render);
 }
