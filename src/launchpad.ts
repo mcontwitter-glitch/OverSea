@@ -318,7 +318,7 @@ function render() {
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
-  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload]') as HTMLElement | null;
+  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib]') as HTMLElement | null;
   if (ag) { const d = findDrop(slug); if (d) onAgent(d, ag); return; }
   const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
@@ -395,6 +395,14 @@ function onAgent(d: Drop, el: HTMLElement) {
     if (demo) { const a = agents?.find(x => x.id === id); if (a) { a.dead = true; a.custodian = '0x2fee00000000000000000000000000000000a9e7'; a.heirIsTreasury = true; } agMsg = `✓ Demo only: #${id} starved: NFT burned, wallet to its heir or the treasury. No transaction was sent.`; render(); return; }
     if (!wallet.address) { openConnect(); return; } agBusy = 'starve';
     import('./agentdrop').then(m => m.agentStarve(k, eng, id, h => { agMsg = `Sent ${txLink(k, h)}…`; render(); })).then(() => m2(id)).then(() => { agMsg = `✓ #${id} starved`; })
+      .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
+  if (el.dataset.agtrib) { const q = +el.dataset.agtrib;
+    const raw = ((el.closest('.agtrib')?.querySelector('[data-agtribids]') as HTMLInputElement)?.value || '');
+    const ids = [...new Set(raw.split(/[\s,]+/).filter(Boolean).map(Number))].filter(n => Number.isInteger(n) && n > 0 && n !== q);
+    if (!ids.length || ids.length > 100) { agMsg = '<span class="err">List 1-100 other agents\' token ids.</span>'; render(); return; }
+    if (demo) { agMsg = `✓ Demo only: Queen #${q} would collect tribute from ${ids.map(i => '#' + i).join(', ')} (agents already paid this period, Queens and empty wallets are skipped). No transaction was sent.`; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = 'tribute';
+    import('./agentdrop').then(m => m.agentTribute(k, eng, q, ids, h => { agMsg = `Sent ${txLink(k, h)}…`; render(); })).then(() => m2(q)).then(() => { agMsg = `✓ Queen #${q} collected tribute`; })
       .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
   if (el.dataset.agatk) { atkFrom = +el.dataset.agatk; agMsg = ''; render(); return; }
   if (el.dataset.agfeed) { const id = +el.dataset.agfeed;

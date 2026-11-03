@@ -550,6 +550,8 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 /* Launchpad create: NFT type picker */
 .ldopts.three{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.ldnft b{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ldtag.xp{background:#2a1608;color:#fb923c;border:1px solid #fb923c55;text-transform:none}
+.ldtag.xp.zomb{background:#13240a;color:#7fbf3f;border-color:#7fbf3f66}
+.agtrib{display:flex;gap:6px;flex-wrap:wrap}.agtrib input{flex:1;min-width:140px}
 .ldagent{margin-top:10px;display:grid;gap:8px}.ldtogs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}
 .page label.ldtog{display:flex!important;flex-direction:row;gap:10px;align-items:flex-start;background:#141414;border:1px solid #262626;border-radius:12px;padding:10px 12px;margin:0;cursor:pointer}
 .ldtog>span:last-child{display:grid;gap:3px}.ldtog.on{border-color:#45bdfa;background:#0a1018}.ldtog>input{display:none!important}

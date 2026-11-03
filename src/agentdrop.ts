@@ -18,14 +18,16 @@ export const ORA_FEE_WEI: Record<string, string> = AG.oraFeeWeiEstimate || {};
 export const isAgentDrop = (d: any) => d?.raw?.nftType === 'erc463n7' || d?.nftType === 'erc463n7';
 
 const FACTORY = parseAbi([
+  'struct InfectLimits { uint16 skillBps; uint32 cooldown; uint128 maxPrice; uint32 scoreReward; }',
   'struct Limits { uint16 skillBps; uint32 attackerCooldown; uint32 minTargetAge; uint32 grace; uint32 minGap; uint32 targetCooldown; uint32 requestTimeout; }',
-  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; uint16 fertilityBps; uint16 twinBps; uint16 mutationBps; uint16 mutationSkillBps; }',
+  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; uint16 fertilityBps; uint16 twinBps; uint16 mutationBps; uint16 mutationSkillBps; bool infect; InfectLimits infectLimits; uint16 repoBps; uint16 queenBps; uint32 queenCap; uint16 zombieBps; uint256 tributeFee; uint32 tributePeriod; }',
   'function createAgentDrop(AgentInit p, bytes32 salt, uint256 deadline, bytes sig) returns (address engine, address starvation, address deathSkill)',
   'event AgentDropCreated(address indexed engine, address indexed creator, bytes32 indexed salt, address starvationRule, address deathSkill)',
 ]);
 const ENGINE = parseAbi([
   'function mintMany(address to, uint256 qty) payable returns (uint256)', 'function feed(uint256 id) payable', 'function accountOf(uint256 id) view returns (address)',
   'function lastFedOf(uint256 id) view returns (uint64)', 'function sexOf(uint256 id) view returns (uint8)', 'function hasFertility(uint256 id) view returns (bool)', 'function hasMutation(uint256 id) view returns (bool)', 'function isMutated(uint256 id) view returns (bool)', 'function isDead(uint256 id) view returns (bool)', 'function custodianOf(uint256 id) view returns (address)', 'function ownerOf(uint256 id) view returns (address)', 'function reaper() view returns (address)', 'function infector() view returns (address)', 'function mintPrice() view returns (uint256)',
+  'function genesOf(uint256 id) view returns (bytes32[])', 'function tributeFee() view returns (uint256)', 'function collectTribute(uint256 queen, uint256[] ids) returns (uint256)',
 ]);
 const ZERO_A = '0x0000000000000000000000000000000000000000';
 const INFECT = parseAbi(['function hasInfect(uint256 id) view returns (bool)', 'function infections(uint256 id) view returns (uint256)']);
@@ -66,7 +68,7 @@ export async function agentMint(k: string, engine: Address, qty: number, onTx: (
   return { hash, receipt: await pub.waitForTransactionReceipt({ hash }) };
 }
 
-export type AgentView = { id: number; wallet: string; balEth?: number; lastFed: number; dead: boolean; skill: boolean; strikeAt: number; graceEnd: number; mine: boolean; custodian?: string; heirIsTreasury?: boolean; sex?: number; fertile?: boolean; mutation?: boolean; mutated?: boolean; infect?: boolean; infections?: number };
+export type AgentView = { id: number; wallet: string; balEth?: number; lastFed: number; dead: boolean; skill: boolean; strikeAt: number; graceEnd: number; mine: boolean; custodian?: string; heirIsTreasury?: boolean; sex?: number; fertile?: boolean; mutation?: boolean; mutated?: boolean; infect?: boolean; infections?: number; repo?: boolean; queen?: boolean; zombie?: boolean };
 
 export async function loadAgent(k: string, engine: Address, id: number): Promise<AgentView> {
   const pub = readClient(k); const I = BigInt(id);
@@ -93,7 +95,11 @@ export async function loadAgent(k: string, engine: Address, id: number): Promise
   }
   const custodian = dead ? ((await pub.readContract({ address: engine, abi: ENGINE, functionName: 'custodianOf', args: [I] })) as string) : undefined;
   const bal = await pub.getBalance({ address: acct as Address });
-  return { id, wallet: acct as string, balEth: Number(bal) / 1e18, lastFed: Number(fed), dead: dead as boolean, skill, strikeAt, graceEnd, custodian, sex: Number(sx), fertile: !!fe, mutation: !!mu, mutated: !!md, infect, infections, mine: (owner as string).toLowerCase() === (wallet.address || '').toLowerCase() };
+  // Repo / Queen / Zombie: gene 3 bits 64 / 128 / 256 (older engines: none).
+  const gs = (await pub.readContract({ address: engine, abi: ENGINE, functionName: 'genesOf', args: [I] }).catch(() => [])) as readonly string[];
+  const g3 = gs.length > 3 ? BigInt(gs[3]) : 0n;
+  const repo = (g3 & 64n) !== 0n, queen = (g3 & 128n) !== 0n, zombie = (g3 & 256n) !== 0n;
+  return { repo, queen, zombie, id, wallet: acct as string, balEth: Number(bal) / 1e18, lastFed: Number(fed), dead: dead as boolean, skill, strikeAt, graceEnd, custodian, sex: Number(sx), fertile: !!fe, mutation: !!mu, mutated: !!md, infect, infections, mine: (owner as string).toLowerCase() === (wallet.address || '').toLowerCase() };
 }
 
 export async function agentFeed(k: string, engine: Address, id: number, wei: bigint, onTx: (h: string) => void) {
@@ -141,12 +147,19 @@ const short = (a: string) => a.slice(0, 6) + '…' + a.slice(-4);
 
 export function agentCard(a: AgentView, o: { symbol: string; periodS: number; now: number; feeEth?: number; native: string; busy?: string }) {
   if (a.dead) return `<div class="agc dead"><div class="tomb">🪦</div><div><b>${esc(o.symbol)} #${a.id}</b><span class="mut small">Dead · NFT burned${a.lastFed ? ' · last fed ' + ago(a.lastFed, o.now) : ''}. Its wallet passed to ${a.custodian ? (a.heirIsTreasury ? 'the treasury' : 'its heir') + ` (<span class="mono">${esc(short(a.custodian))}</span>)` : 'its heir or the treasury'}, which also controls anything left in it. Tombstone metadata stays readable.</span></div></div>`;
-  const starveIn = a.lastFed + o.periodS - o.now; const struck = a.strikeAt > 0; const inGrace = struck && a.graceEnd > o.now;
-  return `<div class="agc ${struck ? 'struck' : ''}"><div class="agh"><b>${esc(o.symbol)} #${a.id}</b>${a.sex === 1 ? '<span class="ldtag" title="Female: can breed with a male">♀ Female</span>' : a.sex === 2 ? '<span class="ldtag" title="Male: can breed with a female">♂ Male</span>' : ''}${a.fertile ? '<span class="ldtag xp" title="Fertility: a chance of twins when she breeds (decided by VRF)">✿ Fertility</span>' : ''}${a.mutation ? '<span class="ldtag xp" title="Mutation: its children look mutated and may be born with a rare skill (Death, Fertility, Mutation or Infect)">🧬 Mutation</span>' : ''}${a.mutated ? '<span class="ldtag" title="Mutated: born from a Mutation parent, its looks were changed at birth">🧬 Mutated</span>' : ''}${a.infect ? `<span class="ldtag xp" title="Infect: the holder can have this agent's wallet buy an NFT from another collection (allowlisted marketplace, capped price, cooldown) and burn it for score">🦠 Infect · ${a.infections || 0} infection${a.infections === 1 ? '' : 's'}</span>` : ''}${a.skill ? '<span class="ldtag xp" title="Death skill: can ask ORA to judge a kill">☠ Death skill</span>' : ''}${a.mine ? '<span class="ldtag drop">Yours</span>' : ''}</div>
+  const starveIn = a.zombie ? Infinity : a.lastFed + o.periodS - o.now; const struck = a.strikeAt > 0; const inGrace = struck && a.graceEnd > o.now;
+  return `<div class="agc ${struck ? 'struck' : ''}"><div class="agh"><b>${esc(o.symbol)} #${a.id}</b>${a.sex === 1 ? '<span class="ldtag" title="Female: can breed with a male">♀ Female</span>' : a.sex === 2 ? '<span class="ldtag" title="Male: can breed with a female">♂ Male</span>' : ''}${a.fertile ? '<span class="ldtag xp" title="Fertility: a chance of twins when she breeds (decided by VRF)">✿ Fertility</span>' : ''}${a.mutation ? '<span class="ldtag xp" title="Mutation: its children look mutated and may be born with a rare skill (Death, Fertility, Mutation or Infect)">🧬 Mutation</span>' : ''}${a.mutated ? '<span class="ldtag" title="Mutated: born from a Mutation parent, its looks were changed at birth">🧬 Mutated</span>' : ''}${a.infect ? `<span class="ldtag xp" title="Infect: the holder can have this agent's wallet buy an NFT from another collection (allowlisted marketplace, capped price, cooldown) and burn it for score">🦠 Infect · ${a.infections || 0} infection${a.infections === 1 ? '' : 's'}</span>` : ''}${a.skill ? '<span class="ldtag xp" title="Death skill: can ask ORA to judge a kill">☠ Death skill</span>' : ''}${a.repo ? '<span class="ldtag xp" title="Repo: when this agent kills with the Death skill, the victim\'s wallet (ETH, plus control of its tokens and NFTs) goes to this agent\'s wallet instead of the heir or treasury">💼 Repo</span>' : ''}${a.queen ? '<span class="ldtag xp" title="Queen: her holder can collect a small tribute from other living agents, once per agent per period">👑 Queen</span>' : ''}${a.zombie ? '<span class="ldtag xp zomb" title="Zombie: never dies. It cannot starve or be killed by the Death skill; only its holder can burn it">🧟 Zombie</span>' : ''}${a.mine ? '<span class="ldtag drop">Yours</span>' : ''}</div>
    <div class="kv small"><span>Agent wallet</span><b class="mono">${esc(short(a.wallet))}${a.balEth != null ? ` · ${(+a.balEth.toFixed(5))} ${esc(o.native)}` : ''}</b>
-    <span>Last fed</span><b>${a.lastFed ? ago(a.lastFed, o.now) : 'never'}</b><span>Starves in</span><b class="${starveIn < 86400 ? 'err' : ''}">${left(starveIn)}</b>
+    <span>Last fed</span><b>${a.lastFed ? ago(a.lastFed, o.now) : 'never'}</b><span>Starves in</span><b class="${starveIn < 86400 ? 'err' : ''}">${a.zombie ? 'never (Zombie)' : left(starveIn)}</b>
     ${struck ? `<span>Strike</span><b class="err">⚠ ORA kill verdict ${ago(a.strikeAt, o.now)} · ${inGrace ? `grace ends in ${left(a.graceEnd - o.now)}` : 'grace over: a 2nd kill verdict kills it'}</b>` : '<span>Strikes</span><b class="ok">none</b>'}</div>
-   <div class="agbtns">${starveIn <= 0 ? `<button class="obtn sm" data-agstarve="${a.id}" ${o.busy ? 'disabled' : ''} title="Anyone can trigger starvation once the period is over">Starve (anyone)</button>` : `<button class="bbtn sm" data-agfeed="${a.id}" ${o.busy ? 'disabled' : ''}>Feed${struck ? ' (clears strike)' : ''}</button>`}${a.skill && a.mine ? `<button class="obtn sm" data-agatk="${a.id}" ${o.busy ? 'disabled' : ''}>Attack…</button>` : ''}</div></div>`;
+   <div class="agbtns">${starveIn <= 0 ? `<button class="obtn sm" data-agstarve="${a.id}" ${o.busy ? 'disabled' : ''} title="Anyone can trigger starvation once the period is over">Starve (anyone)</button>` : `<button class="bbtn sm" data-agfeed="${a.id}" ${o.busy ? 'disabled' : ''}>Feed${struck ? ' (clears strike)' : ''}</button>`}${a.skill && a.mine ? `<button class="obtn sm" data-agatk="${a.id}" ${o.busy ? 'disabled' : ''}>Attack…</button>` : ''}</div>${a.queen && a.mine ? `<div class="agbtns agtrib"><input data-agtribids placeholder="Agent ids, e.g. 12, 44" inputmode="numeric"><button class="bbtn sm" data-agtrib="${a.id}" ${o.busy ? 'disabled' : ''} title="Each listed living agent pays the tribute fee once per period into her wallet. Queens and agents that can't pay are skipped">👑 Collect tribute</button></div>` : ''}</div>`;
+}
+
+/** Queen: pull the tribute fee from each listed agent's wallet into hers (ineligible ids are skipped on-chain). */
+export async function agentTribute(k: string, engine: Address, queen: number, ids: number[], onTx: (h: string) => void) {
+  const me = wallet.address as Address; const pub = readClient(k);
+  const sim = await pub.simulateContract({ address: engine, abi: ENGINE, functionName: 'collectTribute', args: [BigInt(queen), ids.map(BigInt)], account: me });
+  const hash = await (await walletOn(k)).writeContract({ ...sim.request, chain: vchain(k), account: me }); onTx(hash); return pub.waitForTransactionReceipt({ hash });
 }
 
 export function attackBox(attacker: number, o: { symbol: string; feeEth?: number; native: string; limits?: any; msg?: string }) {
@@ -155,14 +168,15 @@ export function attackBox(attacker: number, o: { symbol: string; feeEth?: number
    <label>Target agent #<input data-agtgt type="number" min="1" placeholder="token id"></label>
    <ol class="mut small"><li>You pay the ORA AI fee (${o.feeEth != null ? `≈ ${(+o.feeEth.toFixed(6))} ${esc(o.native)}` : 'quoted on-chain'}, not refunded). ORA's model reads both agents' on-chain stats and answers K (kill) or spare.</li>
     <li>1st K = a <b>strike</b>. The target's holder has a <b>grace</b> of ${h(L.grace || 172800)}: feeding it clears the strike.</li>
-    <li>A 2nd K at least ${h(L.minGap || 86400)} later, after grace, <b>kills</b> it: its NFT is burned and its wallet goes to its heir or the treasury. A spare verdict clears the strike.</li>
+    <li>A 2nd K at least ${h(L.minGap || 86400)} later, after grace, <b>kills</b> it: its NFT is burned and its wallet goes to its heir or the treasury (or to your agent's wallet if it has Repo). Zombies can't be attacked. A spare verdict clears the strike.</li>
     <li>Limits: one attack per attacker every ${h(L.attackerCooldown || 86400)}; targets younger than ${h(L.minTargetAge || 604800)} are immune; a target can be attacked once per ${h(L.targetCooldown || 21600)}.</li></ol>
    <div class="agbtns"><button class="bbtn sm" data-agdo="${attacker}">Ask ORA to judge</button><button class="obtn sm" data-agcancel>Cancel</button></div>${o.msg ? `<p class="small">${o.msg}</p>` : ''}</div>`;
 }
 
 /** Demo agents for the local preview (labeled; no chain reads). */
 export const demoAgents = (now: number): AgentView[] => [
-  { id: 7, wallet: '0x7a11ce00000000000000000000000000000a9e07', balEth: 0.0123, lastFed: now - 3 * 86400, dead: false, skill: true, strikeAt: 0, graceEnd: 0, mine: true, sex: 1, fertile: true, mutation: true, infect: true, infections: 3 },
-  { id: 12, wallet: '0x12bee5000000000000000000000000000a9e0012', balEth: 0.002, lastFed: now - 26 * 86400, dead: false, skill: false, strikeAt: now - 5 * 3600, graceEnd: now + 43 * 3600, mine: true, sex: 2 },
+  { id: 7, wallet: '0x7a11ce00000000000000000000000000000a9e07', balEth: 0.0123, lastFed: now - 3 * 86400, dead: false, skill: true, strikeAt: 0, graceEnd: 0, mine: true, sex: 1, fertile: true, mutation: true, infect: true, infections: 3, queen: true },
+  { id: 12, wallet: '0x12bee5000000000000000000000000000a9e0012', balEth: 0.002, lastFed: now - 26 * 86400, dead: false, skill: false, strikeAt: now - 5 * 3600, graceEnd: now + 43 * 3600, mine: true, sex: 2, repo: true },
   { id: 31, wallet: '0x31dead00000000000000000000000000000a9e31', lastFed: now - 40 * 86400, dead: true, skill: false, strikeAt: 0, graceEnd: 0, mine: true, custodian: '0x2fee00000000000000000000000000000000a9e7', heirIsTreasury: true },
-  { id: 44, wallet: '0x44f00d00000000000000000000000000000a9e44', balEth: 0.0004, lastFed: now - 31 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 1, mutated: true, mutation: true }];
+  { id: 44, wallet: '0x44f00d00000000000000000000000000000a9e44', balEth: 0.0004, lastFed: now - 31 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 1, mutated: true, mutation: true },
+  { id: 58, wallet: '0x58b0a1000000000000000000000000000000a9e58', balEth: 0.003, lastFed: now - 90 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 2, zombie: true }];

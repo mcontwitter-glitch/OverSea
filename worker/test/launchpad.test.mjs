@@ -165,8 +165,8 @@ test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding 
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
     limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500,
-    infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 } });
-  assert.equal(h, '0xa2f3eb0699c3812a29932a8413fcb6ab32825315259d61bb8af579d49f0f2686'); // = AgentDropFactory.t.sol VECTOR
+    infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 }, repoBps: 300, queenBps: 200, queenCap: 10, zombieBps: 100, tributeFee: 5n * 10n ** 14n, tributePeriod: 604800 });
+  assert.equal(h, '0xb70d53b27a7a5b9e372ba6134e9f69fd8e74ed8f45a715117bde65fb34b66937'); // = AgentDropFactory.t.sol VECTOR
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -256,6 +256,25 @@ test('agent drop: Infect rarity, cooldown, max price and score reward reach the 
   assert.equal(a.configHash, agentConfigHash(P));
   assert.notEqual(a.configHash, agentConfigHash({ ...P, infectLimits: { ...P.infectLimits, maxPrice: 10n ** 18n } }), 'max price is bound by the signature');
   assert.notEqual(a.configHash, agentConfigHash({ ...P, infect: false }), 'the module flag is bound by the signature');
+});
+
+test('agent drop: Repo, Queen and Zombie reach the signed AgentInit', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, deathSkill: false, repo: true } })), /Repo needs the Death skill/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, queen: true, tribEth: '0.006' } })), /Tribute fee/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, queen: true, tribDays: 0 } })), /Tribute period/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, queen: true, queenCap: 0 } })), /Queen cap/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, zombie: true, zombiePct: 101 } })), /Zombie rarity/);
+  await call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, deathSkill: true, skillPct: 5, repo: true, repoPct: 3, queen: true, queenPct: 2, queenCap: 4, tribEth: '0.001', tribDays: 3, zombie: true, zombiePct: 1 } }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.repoBps, 300); assert.equal(a.params.queenBps, 200); assert.equal(a.params.queenCap, 4); assert.equal(a.params.zombieBps, 100);
+  assert.equal(String(a.params.tributeFee), '1000000000000000'); assert.equal(a.params.tributePeriod, 259200);
+  const P = { ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId), tributeFee: BigInt(a.params.tributeFee), infectLimits: { ...a.params.infectLimits, maxPrice: BigInt(a.params.infectLimits.maxPrice) } };
+  assert.equal(a.configHash, agentConfigHash(P));
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, tributeFee: 5n * 10n ** 15n }), 'tribute fee is bound by the signature');
 });
 
 test('agent drop: Infect off leaves zero limits in the signed AgentInit', async () => {

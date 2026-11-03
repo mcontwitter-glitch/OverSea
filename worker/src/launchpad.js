@@ -39,7 +39,7 @@ const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repea
 // ERC-463N7 agent drops (AgentDropFactory in the ERC-463N7 repo). Mirrors AgentDropFactory.AgentInit exactly.
 export const LIMITS_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'attackerCooldown', type: 'uint32' }, { name: 'minTargetAge', type: 'uint32' }, { name: 'grace', type: 'uint32' }, { name: 'minGap', type: 'uint32' }, { name: 'targetCooldown', type: 'uint32' }, { name: 'requestTimeout', type: 'uint32' }];
 export const INFECT_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'cooldown', type: 'uint32' }, { name: 'maxPrice', type: 'uint128' }, { name: 'scoreReward', type: 'uint32' }];
-export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }, { name: 'mutationBps', type: 'uint16' }, { name: 'mutationSkillBps', type: 'uint16' }, { name: 'infect', type: 'bool' }, { name: 'infectLimits', type: 'tuple', components: INFECT_C }] }];
+export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }, { name: 'mutationBps', type: 'uint16' }, { name: 'mutationSkillBps', type: 'uint16' }, { name: 'infect', type: 'bool' }, { name: 'infectLimits', type: 'tuple', components: INFECT_C }, { name: 'repoBps', type: 'uint16' }, { name: 'queenBps', type: 'uint16' }, { name: 'queenCap', type: 'uint32' }, { name: 'zombieBps', type: 'uint16' }, { name: 'tributeFee', type: 'uint256' }, { name: 'tributePeriod', type: 'uint32' }] }];
 export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
 export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
@@ -100,7 +100,16 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const infScore = infect ? int(a.infScore ?? 25, 1, 1000, 'Infect score reward') : 0;
     let infMaxWei = '0';
     if (infect) { const m = String(a.infMaxEth ?? '0.05').trim(); if (!/^\d{1,4}(\.\d{1,18})?$/.test(m)) bad('Infect max price (ETH) must be a decimal number'); const [w, f = ''] = m.split('.'); infMaxWei = (BigInt(w) * 10n ** 18n + BigInt((f + '0'.repeat(18)).slice(0, 18))).toString(); if (BigInt(infMaxWei) === 0n || BigInt(infMaxWei) > 1000n * 10n ** 18n) bad('Infect max price (ETH) must be above 0 and at most 1000'); }
-    return { starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, modelId: AG.oraModelId ?? 11 };
+    // Repo (Death kills take the victim's wallet; needs Death), Queen (female, collects tribute), Zombie (never dies).
+    const repo = !!a.repo; if (repo && !deathSkill) bad('Repo needs the Death skill');
+    const repoPct = repo ? int(a.repoPct ?? 5, 0, 100, 'Repo rarity (%)') : 0;
+    const queen = !!a.queen; const queenPct = queen ? int(a.queenPct ?? 2, 0, 100, 'Queen rarity (%)') : 0;
+    const queenCap = queen ? int(a.queenCap ?? 10, 1, 10000, 'Queen cap') : 0;
+    const tribDays = queen ? int(a.tribDays ?? 7, 1, 365, 'Tribute period (days)') : 0;
+    let tribWei = '0';
+    if (queen) { const m = String(a.tribEth ?? '0.0005').trim(); if (!/^\d{1,2}(\.\d{1,18})?$/.test(m)) bad('Tribute fee (ETH) must be a decimal number'); const [w, f = ''] = m.split('.'); tribWei = (BigInt(w) * 10n ** 18n + BigInt((f + '0'.repeat(18)).slice(0, 18))).toString(); if (BigInt(tribWei) === 0n || BigInt(tribWei) > 5n * 10n ** 15n) bad('Tribute fee (ETH) must be above 0 and at most 0.005'); }
+    const zombie = !!a.zombie; const zombiePct = zombie ? int(a.zombiePct ?? 1, 0, 100, 'Zombie rarity (%)') : 0;
+    return { starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, repo, repoPct, queen, queenPct, queenCap, tribDays, tribWei, zombie, zombiePct, modelId: AG.oraModelId ?? 11 };
   }
 
   function validate(b, creator) {
@@ -164,7 +173,9 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     royaltyBps: d.royaltyBps, starvationPeriod: d.agent.starveDays * 86400, deathSkill: d.agent.deathSkill, modelId: BigInt(d.agent.modelId), limits: d.agent.limits,
     fertilityBps: (d.agent.fertPct || 0) * 100, twinBps: (d.agent.twinPct ?? 20) * 100,
     mutationBps: (d.agent.mutPct || 0) * 100, mutationSkillBps: (d.agent.mutSkillPct ?? 15) * 100,
-    infect: !!d.agent.infect, infectLimits: { skillBps: (d.agent.infPct || 0) * 100, cooldown: (d.agent.infCooldownH || 0) * 3600, maxPrice: BigInt(d.agent.infMaxWei || '0'), scoreReward: d.agent.infScore || 0 } });
+    infect: !!d.agent.infect, infectLimits: { skillBps: (d.agent.infPct || 0) * 100, cooldown: (d.agent.infCooldownH || 0) * 3600, maxPrice: BigInt(d.agent.infMaxWei || '0'), scoreReward: d.agent.infScore || 0 },
+    repoBps: (d.agent.repoPct || 0) * 100, queenBps: (d.agent.queenPct || 0) * 100, queenCap: d.agent.queenCap || 0, zombieBps: (d.agent.zombiePct || 0) * 100,
+    tributeFee: BigInt(d.agent.tribWei || '0'), tributePeriod: (d.agent.tribDays || 0) * 86400 });
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
