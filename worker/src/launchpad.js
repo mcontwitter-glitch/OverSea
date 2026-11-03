@@ -36,6 +36,12 @@ export const APPROVAL_TYPES = { DropApproval: [{ name: 'creator', type: 'address
 const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repeat(64);
 
 // Merkle tree compatible with OpenZeppelin MerkleProof (sorted pairs, double-hashed abi.encode(address) leaves).
+// ERC-463N7 agent drops (AgentDropFactory in the ERC-463N7 repo). Mirrors AgentDropFactory.AgentInit exactly.
+export const LIMITS_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'attackerCooldown', type: 'uint32' }, { name: 'minTargetAge', type: 'uint32' }, { name: 'grace', type: 'uint32' }, { name: 'minGap', type: 'uint32' }, { name: 'targetCooldown', type: 'uint32' }, { name: 'requestTimeout', type: 'uint32' }];
+export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }] }];
+export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
+export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
+export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
 export const leafOf = a => keccak256(keccak256(encodeAbiParameters([{ type: 'address' }], [a])));
 const hpair = (a, b) => keccak256(a < b ? concat([a, b]) : concat([b, a]));
 export function merkle(addrs) {
@@ -67,7 +73,28 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
   const pub = d => ({ ...d, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
+  const AG = LP.agentDrops || { enabled: false };
+  // Agent drop: single chain, one public phase (the engine has one mint price), art rendered on-chain (no URIs needed).
+  function validateAgent(b, base) {
+    if (!AG.enabled) bad('ERC-463N7 agent drops are not enabled yet', 403);
+    if (base.mode !== 'single' || base.chains.length !== 1) bad('agent drops are single-chain (one chain per drop)');
+    const chain = base.chains[0]; if (!(AG.chains || []).includes(chain)) bad('agent drops are available on: ' + (AG.chains || []).join(', '));
+    if (base.phases.length !== 1 || base.phases[0].kind !== 'public') bad('agent drops have exactly one public phase (one mint price)');
+    if (base.creatorReserve) bad('creator reserve is not supported for agent drops');
+    const a = b.agent && typeof b.agent === 'object' ? b.agent : {};
+    const starveDays = int(a.starveDays ?? 30, 1, 365, 'starvation period (days)');
+    const deathSkill = !!a.deathSkill;
+    if (deathSkill && !(AG.deathSkillChains || []).includes(chain)) bad('the Death skill needs ORA, available on: ' + (AG.deathSkillChains || []).join(', '));
+    const l = a.limits && typeof a.limits === 'object' ? a.limits : {}; const H = 3600;
+    const limits = { skillBps: 0, attackerCooldown: int(l.attackerCooldown ?? DEATH_LIMITS_DEFAULT.attackerCooldown, H, 30 * 86400, 'attacker cooldown'), minTargetAge: int(l.minTargetAge ?? DEATH_LIMITS_DEFAULT.minTargetAge, H, 90 * 86400, 'min target age'),
+      grace: int(l.grace ?? DEATH_LIMITS_DEFAULT.grace, H, 30 * 86400, 'grace'), minGap: int(l.minGap ?? DEATH_LIMITS_DEFAULT.minGap, H, 30 * 86400, 'min gap between strikes'), targetCooldown: int(l.targetCooldown ?? DEATH_LIMITS_DEFAULT.targetCooldown, H, 30 * 86400, 'target cooldown'), requestTimeout: int(l.requestTimeout ?? DEATH_LIMITS_DEFAULT.requestTimeout, H, 7 * 86400, 'oracle timeout') };
+    // Rarity table: % of supply that gets the skill; the creator assigns ids with setSkill then lock() before mint.
+    const skillPct = deathSkill ? int(a.skillPct ?? 5, 1, 100, 'Death-skill rarity (%)') : 0;
+    return { starveDays, deathSkill, limits, skillPct, modelId: AG.oraModelId ?? 11 };
+  }
+
   function validate(b, creator) {
+    const isAgent = b.nftType === 'erc463n7';
     const slug = str(b.slug, 40); if (!SLUG.test(slug)) bad('slug must be 3-40 chars a-z 0-9 -');
     const name = str(b.name, 60); if (!name) bad('name required');
     const symbol = str(b.symbol, 12).toUpperCase(); if (!/^[A-Z0-9]{1,12}$/.test(symbol)) bad('symbol must be 1-12 letters/digits');
@@ -100,8 +127,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const royaltyReceiver = lc(b.royaltyReceiver || payout); if (!ADDR.test(royaltyReceiver)) bad('royalty receiver must be an address');
     const reveal = b.reveal === 'delayed' ? 'delayed' : 'instant';
     const baseURI = uri(b.baseURI, 'base URI'), preRevealURI = uri(b.preRevealURI, 'pre-reveal URI');
-    if (reveal === 'instant' && !baseURI) bad('instant reveal needs the final base URI (ipfs://CID/ or ar://TX/)');
-    if (reveal === 'delayed' && !preRevealURI) bad('delayed reveal needs a placeholder URI');
+    if (!isAgent && reveal === 'instant' && !baseURI) bad('instant reveal needs the final base URI (ipfs://CID/ or ar://TX/)');
+    if (!isAgent && reveal === 'delayed' && !preRevealURI) bad('delayed reveal needs a placeholder URI');
     const ph = Array.isArray(b.phases) ? b.phases : []; if (!ph.length || ph.length > LP.maxPhases) bad(`1-${LP.maxPhases} phases`);
     const allowlists = {}; let totalAllow = 0;
     const phases = ph.map((x, i) => {
@@ -117,9 +144,14 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       const prices = mode === 'multichain' ? Object.fromEntries(chainsSel.map(k => [k, wei(x.prices?.[k] ?? (chains[k].native === 'ETH' ? price : undefined), `phase ${i + 1} price on ${k}`)])) : undefined;
       return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), maxSupply: int(x.maxSupply ?? 0, 0, maxSupply, `phase ${i + 1} max supply (0 = no cap, at most total supply)`), merkleRoot };
     });
-    return { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
+    const out = { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
       mode, copyMode, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
+    if (isAgent) { out.nftType = 'erc463n7'; out.agent = validateAgent(b, out); }
+    return out;
   }
+
+  const agentParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, treasury: d.payout, mintPrice: BigInt(d.phases[0].price), maxSupply: d.maxSupply, maxPerWallet: d.phases[0].maxPerWallet,
+    royaltyBps: d.royaltyBps, starvationPeriod: d.agent.starveDays * 86400, deathSkill: d.agent.deathSkill, modelId: BigInt(d.agent.modelId), limits: d.agent.limits });
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',
@@ -136,6 +168,13 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const factory = LP.factories?.[chain]; if (!d.chains.includes(chain) || !factory || !chains[chain]) bad('no factory on that chain yet', 501);
     const creator = lc(d.submitter); const domain = { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory };
     const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    if (d.nftType === 'erc463n7') {
+      const af = AG.enabled && AG.factories?.[chain]; if (!af || !d.chains.includes(chain)) bad('no agent drop factory on that chain yet', 501);
+      const ip = agentParams(d, creator); const cfg = agentConfigHash(ip);
+      const salt = keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'string' }, { type: 'address' }], ['agent:' + d.slug, chain, creator]));
+      const message = { creator, configHash: cfg, salt, deadline };
+      return { typed: { domain: { name: 'MultiSeaAgentLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: af }, types: AGENT_APPROVAL_TYPES, primaryType: 'AgentDropApproval', message }, out: { kind: 'agent', chain, factory: af, salt, deadline: deadline.toString(), configHash: cfg, params: ser(ip) } };
+    }
     if (d.mode === 'multichain') {
       if (!LP.omniEscrows?.[chain]) bad('no multichain escrow on that chain yet', 501);
       const ip = omniParams(d, creator); const cfg = omniConfigHash(ip); const collectionId = collectionIdOf(d.slug, creator);
@@ -189,7 +228,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         if (lc(d.submitter) !== s.address) bad('creator only', 403);
         const b = await body(); const chain = b.chain, address = lc(b.address);
         if (!d.chains.includes(chain) || !ADDR.test(address)) bad('bad chain/address');
-        if (!LP.factories[chain] || !(await isDropOnChain(chain, LP.factories[chain], address))) bad('address is not a MultiSea launchpad drop on ' + chain);
+        const fac = d.nftType === 'erc463n7' ? (AG.enabled && AG.factories?.[chain]) : LP.factories[chain];
+        if (!fac || !(await isDropOnChain(chain, fac, address))) bad('address is not a MultiSea launchpad drop on ' + chain);
         const deployments = [...(d.deployments || []).filter(x => x.chain !== chain), { chain, address }];
         const live = { ...d, deployments, status: 'live' }; await K.put('ldrop:' + d.slug, JSON.stringify(live));
         // Auto-list on MultiSea: the drop becomes a normal approved collection page /c/<slug> (trading uses the 0.5% marketplace fee).

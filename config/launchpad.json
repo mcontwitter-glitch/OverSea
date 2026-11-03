@@ -213,5 +213,27 @@
     "dropApprovals": true,
     "deployer": "0xb19f00e095b1387061d73751c772bba848d196b1"
   },
-  "approver": "0xb19f00e095b1387061d73751c772bba848d196b1"
+  "approver": "0xb19f00e095b1387061d73751c772bba848d196b1",
+  "agentDrops": {
+    "_note": "ERC-463N7 agent drops (AgentDropFactory, ERC-463N7 repo). OFF until factories are deployed and verified. Single-chain; Death skill only where ORA's AIOracle (0x0A0f4321214BB6C7811dD8a71cF587bdaF03f0A0) is deployed per github.com/ora-io/OAO.",
+    "enabled": false,
+    "chains": [
+      "base",
+      "ethereum",
+      "bnb"
+    ],
+    "deathSkillChains": [
+      "base",
+      "ethereum",
+      "bnb"
+    ],
+    "factories": {},
+    "oraModelId": 11,
+    "oraCallbackGas": 800000,
+    "oraFeeWeiEstimate": {
+      "base": "301066594400000",
+      "ethereum": "1846000000000000",
+      "bnb": "1180000000000000"
+    }
+  }
 }

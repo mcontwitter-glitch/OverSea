@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { verifyTypedData, keccak256, concat } from 'viem';
-import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES } from '../src/launchpad.js';
+import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES } from '../src/launchpad.js';
 const CFG = JSON.parse(fs.readFileSync(new URL('../../config/collections.json', import.meta.url)));
 const LP0 = JSON.parse(fs.readFileSync(new URL('../../config/launchpad.json', import.meta.url)));
 const lc = s => String(s || '').toLowerCase();
@@ -153,4 +153,55 @@ test('mainnet: approver wallet signs in /admin (no key in the Worker), creator g
   assert.ok(await verifyTypedData({ address: apprAcct.address, domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: CFG.chains.base.chainId, verifyingContract: FACTORY }, types: APPROVAL_TYPES, primaryType: 'DropApproval', message: { creator: creator.address, configHash: a.configHash, salt: a.salt, deadline: BigInt(a.deadline) }, signature: a.signature }));
   const o = await call('POST', '/launchpad/approval/omni-one', { chain: 'bnb' }); assert.equal(o.mode, 'multichain');
   assert.ok(await verifyTypedData({ address: apprAcct.address, domain: { name: 'MultiSeaLaunchpad', version: '1', chainId: CFG.chains.bnb.chainId, verifyingContract: FACTORY }, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message: { creator: creator.address, configHash: o.configHash, collectionId: o.collectionId, deadline: BigInt(o.deadline) }, signature: o.signature }));
+});
+
+// ---- ERC-463N7 agent drops (AgentDropFactory) ----
+const AF = '0x' + '44'.repeat(20);
+const AGON = { ...LP0.agentDrops, enabled: true, factories: { base: AF } };
+const agentDrop = (o = {}) => ({ slug: 'agents-one', name: 'Agents', symbol: 'agt', nftType: 'erc463n7', chains: ['base'], maxSupply: 500, royaltyBps: 500, reveal: 'instant',
+  phases: [{ name: 'Public', kind: 'public', start: 1800000000, end: 0, price: '10000000000000000', maxPerWallet: 0 }], agent: { starveDays: 30, deathSkill: true, skillPct: 5 }, ...o });
+
+test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding (cast vector)', () => {
+  const C = '0x0000000000000000000000000000000000c0ffee';
+  const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
+    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 } });
+  assert.equal(h, '0x804e9361bd5963d6d01b9b1338015a49490647d4c7f90f6c67ef0e9dcfe2cb7f');
+});
+
+test('agent drops are OFF by default (config flag) and rejected at submit', async () => {
+  assert.equal(LP0.agentDrops.enabled, false);
+  assert.deepEqual(LP0.agentDrops.factories, {});
+  const { call } = setup();
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop()), /not enabled/);
+});
+
+test('agent drop validation: single chain, one public phase, ORA chains only for the Death skill, limit bounds', async () => {
+  const { call } = setup({ LP: { agentDrops: AGON } });
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ chains: ['base', 'bnb'], allocations: { base: 250, bnb: 250 } })), /single-chain/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ chains: ['apechain'] })), /available on/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ phases: [{ kind: 'public', start: 1, price: '1' }, { kind: 'public', start: 2, price: '1' }] })), /one public phase/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 0 } })), /starvation/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { deathSkill: true, limits: { grace: 60 } } })), /grace/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { deathSkill: true, skillPct: 0 } })), /rarity/);
+  const { call: c2 } = setup({ LP: { agentDrops: { ...AGON, chains: ['base', 'apechain'] } } });
+  await assert.rejects(c2('POST', '/launchpad/submit', agentDrop({ chains: ['apechain'] })), /needs ORA/);
+  const ok = await call('POST', '/launchpad/submit', agentDrop()); assert.equal(ok.status, 'pending');
+});
+
+test('agent drop: approve -> AgentDropApproval signature (salt, cap via factory, fee fixed on-chain) -> deployed via agent factory', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await call('POST', '/launchpad/submit', agentDrop());
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address);
+  env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.kind, 'agent'); assert.equal(a.factory, AF);
+  assert.equal(a.params.treasury, lc(creator.address)); assert.equal(a.params.starvationPeriod, 30 * 86400); assert.equal(a.params.limits.skillBps, 0); assert.equal(a.params.mintPrice, '10000000000000000');
+  assert.equal(a.configHash, agentConfigHash({ ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId) }));
+  const ok = await verifyTypedData({ address: appr.address, domain: { name: 'MultiSeaAgentLaunchpad', version: '1', chainId: CFG.chains.base.chainId, verifyingContract: AF }, types: AGENT_APPROVAL_TYPES, primaryType: 'AgentDropApproval',
+    message: { creator: creator.address, configHash: a.configHash, salt: a.salt, deadline: BigInt(a.deadline) }, signature: a.signature });
+  assert.ok(ok, 'agent approval recovers to approver');
+  const dep = await call('POST', '/launchpad/deployed/agents-one', { chain: 'base', address: '0x' + '55'.repeat(20) });
+  assert.equal(dep.drop.status, 'live');
 });

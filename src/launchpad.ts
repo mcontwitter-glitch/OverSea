@@ -8,6 +8,7 @@ import { gasPrice } from './txgas';
 import { LP_LIVE, factoryOn } from './lpchain';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
+import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; native: string; chainId: number }>;
@@ -29,8 +30,14 @@ const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries
   deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
   chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
   phases: (d.phases || []).map((p: any) => ({ ...p, price: Number(BigInt(p.price)) / 1e18, prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, Number(BigInt(v as string)) / 1e18])) : undefined })), img: d.logo ? API + d.logo : '/brand/icon-128.webp', art: d.banner ? [API + d.banner] : [] });
-const allDrops = () => [...remote, ...demoAndLocal().filter(x => !remote.some(r => r.slug === x.slug))];
-const findDrop = (s: string) => remote.find(d => d.slug === s) || findLocal(s);
+// Agent-drop local preview (VITE_AGENT_DROPS=1 only, flag OFF in config): one labeled demo drop, nothing on-chain.
+const AGENT_DEMO: Drop | null = AGENT_PREVIEW ? { slug: 'agents-demo', name: 'Hungry Agents', symbol: 'HGRY', creator: '0x000000000000000000000000000000000000a9e7', demo: true, status: 'live', mode: 'single', nftType: 'erc463n7',
+  description: 'Demo ERC-463N7 agent drop. Each NFT is an agent with its own wallet. Unfed agents starve after 30 days; agents with the rare Death skill (5%) can ask ORA to judge a kill on another agent. Preview only: nothing mints on-chain.',
+  chains: [{ chain: 'base', supply: 500, minted: 212 }], maxSupply: 500, royaltyBps: 500, reveal: 'instant', img: '/brand/icon-128.webp', art: [],
+  phases: [{ name: 'Public', kind: 'public', start: Math.floor(Date.now() / 1000) - 86400, end: 0, price: 0.01, maxPerWallet: 0 }], agent: { starveDays: 30, deathSkill: true, skillPct: 5 } } as any : null;
+const demoAndLocal2 = () => (AGENT_DEMO ? [AGENT_DEMO, ...demoAndLocal()] : demoAndLocal());
+const allDrops = () => [...remote, ...demoAndLocal2().filter(x => !remote.some(r => r.slug === x.slug))];
+const findDrop = (s: string) => remote.find(d => d.slug === s) || (AGENT_DEMO && s === AGENT_DEMO.slug ? AGENT_DEMO : null) || findLocal(s);
 
 // ---------------- list ----------------
 let tab: 'live' | 'upcoming' | 'ended' = 'live';
@@ -250,6 +257,19 @@ function ordBox(d: Drop) {
   return `<div class="fcard ldordbox"><div class="gh"><img class="cl" src="/logos/bitcoin.svg" alt=""> Bitcoin Ordinals drop</div><div class="kv small"><span>Price</span><b>${esc(String(o.priceUsdc))} USDC on Base</b><span>Inscription fee</span><b>Paid by buyer (mempool rate at checkout)</b><span>Delivery</span><b>To your taproot address within ${H}h, else refund</b><span>Order limit</span><b>${o.orderLimit} per wallet</b><span>MultiSea fee</span><b>${(o.feeBps || 50) / 100}%</b></div>
    <div class="gh" style="margin-top:12px">Your orders <span class="ldtag xp">Preview data</span></div>${rows}</div>`;
 }
+// ---- ERC-463N7 agent drops: your agents (wallet, last fed, Feed), Death-skill attack with strike/grace, tombstones ----
+let agents: AgentView[] | null = null; let atkFrom = 0; let agMsg = ''; let agBusy = '';
+function agentBox(d: Drop) {
+  const now = Math.floor(Date.now() / 1000); const A: any = (d as any).agent || (d as any).raw?.agent || {}; const k = d.chains[0].chain; const native = chains[k]?.native || 'ETH';
+  if (agents === null && (d as any).demo) agents = demoAgents(now);
+  const feeEth = ORA_FEE_WEI[k] ? Number(BigInt(ORA_FEE_WEI[k])) / 1e18 : undefined;
+  const o = { symbol: d.symbol, periodS: (A.starveDays || 30) * 86400, now, feeEth, native, busy: agBusy };
+  return `<div class="fcard ldagents"><div class="gh">Your agents ${(d as any).demo ? '<span class="mut small">demo</span>' : ''}</div>
+   <p class="mut small">Feed an agent (any amount into its wallet) to reset its starvation clock (${A.starveDays || 30} days). ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
+   ${agents?.length ? agents.map(a => agentCard(a, o)).join('') : `<p class="mut small">${wallet.address ? 'No agents loaded yet.' : 'Connect a wallet to see your agents.'}</p>`}
+   ${(d as any).demo ? '' : `<div class="agbtns"><input data-agid type="number" min="1" placeholder="Agent #"><button class="obtn sm" data-agload>Load agent</button></div>`}
+   ${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
+}
 function dropPage(d: Drop) {
   document.title = `${d.name} · Launchpad · MultiSea`;
   // Multichain: pre-select Base (the hub: instant and the cheapest chain to mint on).
@@ -266,8 +286,8 @@ function dropPage(d: Drop) {
     ${isMulti(d) ? sharedBar(d) : `<div class="ldprog big"><div class="ldprogh"><b>${pct(minted(d), d.maxSupply).toFixed(1)}% minted</b><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div>
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
-   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${mintBox(d)}${soon ? '' : alBox(d)}
-    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
+   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${mintBox(d)}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
+    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isAgentDrop(d) ? 'ERC-463N7 agents (experimental, unaudited)' : isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
 }
@@ -289,7 +309,10 @@ function render() {
   dropPage(d);
 }
 app.addEventListener('click', e => {
-  const t = e.target as HTMLElement; const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
+  const t = e.target as HTMLElement;
+  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload]') as HTMLElement | null;
+  if (ag) { const d = findDrop(slug); if (d) onAgent(d, ag); return; }
+  const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
   const d = findDrop(slug); if (!d) return;
   if (el.dataset.move) { moveId = +el.dataset.move; moveDst = ''; moveMsg = ''; const h = held.find(x => x.id === moveId); if (h && gp[h.active] === undefined) loadGas({ ...d, chains: [{ chain: h.active, supply: 0, minted: 0 }] }).then(render); render(); return; }
@@ -312,7 +335,7 @@ app.addEventListener('click', e => {
   if (el.dataset.act === 'connect') { openConnect(); return; }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
   if (el.dataset.deploy) { const k = el.dataset.deploy; depBusy = k; depMsg = ''; render();
-    import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); }))
+    (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })))
       .then(async a => { depMsg = `✓ Deployed on ${esc(chains[k].name)}: <span class="mono">${esc(a)}</span>`; (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; await refreshRemote(); })
       .catch(e => { depMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { depBusy = ''; render(); }); return; }
   if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
@@ -321,6 +344,7 @@ app.addEventListener('click', e => {
     const unit = BigInt(ph.prices?.[k] ?? ph.price); realBusy = true; realMsg = ''; render();
     (async () => { let proof: `0x${string}`[] = [];
       if (ph.kind === 'allowlist') { const r = await fetch(`${API}/launchpad/proof/${d.slug}/${ai}/${wallet.address!.toLowerCase()}`).then(r => r.json()); if (!r.eligible) throw new Error('This wallet is not on the ' + ph.name + ' allowlist.'); proof = r.proof; }
+      if (isAgentDrop(d)) { const am = await import('./agentdrop'); return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); }
       const m = await import('./lpchain');
       return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
       .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; })
@@ -345,6 +369,25 @@ app.addEventListener('click', e => {
     render();
   }
 });
+function onAgent(d: Drop, el: HTMLElement) {
+  const demo = !!(d as any).demo; const k = d.chains[0].chain; const eng = (d as any).addresses?.[k];
+  const m2 = (id: number) => import('./agentdrop').then(m => m.loadAgent(k, eng, id)).then(a => { agents = (agents || []).map(x => (x.id === id ? a : x)); });
+  if (el.dataset.agload != null) { const id = +((app.querySelector('[data-agid]') as HTMLInputElement)?.value || 0); if (!(id > 0) || !eng) return;
+    import('./agentdrop').then(m => m.loadAgent(k, eng, id)).then(a => { agents = [a, ...(agents || []).filter(x => x.id !== id)]; agMsg = ''; }).catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(render); return; }
+  if (el.dataset.agcancel != null) { atkFrom = 0; agMsg = ''; render(); return; }
+  if (el.dataset.agatk) { atkFrom = +el.dataset.agatk; agMsg = ''; render(); return; }
+  if (el.dataset.agfeed) { const id = +el.dataset.agfeed;
+    if (demo) { const a = agents?.find(x => x.id === id); if (a) { a.lastFed = Math.floor(Date.now() / 1000); a.strikeAt = 0; a.graceEnd = 0; } agMsg = `✓ Demo only: fed #${id} (clock reset, strike cleared). No transaction was sent.`; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = 'feed';
+    import('./agentdrop').then(m => m.agentFeed(k, eng, id, 10n ** 14n, h => { agMsg = `Sent ${txLink(k, h)}…`; render(); })).then(() => m2(id)).then(() => { agMsg = `✓ Fed #${id}`; })
+      .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
+  if (el.dataset.agdo) { const from = +el.dataset.agdo; const tgt = +((app.querySelector('[data-agtgt]') as HTMLInputElement)?.value || 0);
+    if (!(tgt > 0) || tgt === from) { agMsg = '<span class="err">Enter another agent\'s token id.</span>'; render(); return; }
+    if (demo) { agMsg = `✓ Demo only: #${from} asked ORA to judge #${tgt}. A K verdict would put a strike on #${tgt} (its holder then has the grace period to feed it). No transaction was sent.`; atkFrom = 0; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = 'attack';
+    import('./agentdrop').then(m => m.agentAttack(k, eng, from, tgt, h => { agMsg = `Sent ${txLink(k, h)}… ORA answers in a few minutes.`; render(); })).then(() => { atkFrom = 0; })
+      .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); }
+}
 app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.name === 'pay') { pay = t.value as any; render(); }

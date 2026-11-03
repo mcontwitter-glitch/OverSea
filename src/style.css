@@ -628,3 +628,15 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .wact .r{display:grid;grid-template-columns:110px 110px 1.4fr 1.4fr 140px 60px;gap:10px;padding:10px 4px;border-bottom:1px solid #1a1a1a;align-items:center;font-size:14px}.wact .h{color:#777;font-size:12px}
 @media (max-width:700px){.wact .h{display:none}.wact .r{grid-template-columns:1fr auto;font-size:13px}.wact .r>span:nth-child(3),.wact .r>span:nth-child(4){grid-column:1/-1;color:#999}}
 .tag{display:inline-block;border-radius:6px;padding:2px 7px;font-size:12px;background:#1d1d1d}.tag.mint{background:#163a24;color:#7ee2a0}.tag.buy{background:#13314a;color:#8cc8ff}.tag.sale{background:#432a12;color:#ffc685}.tag.in{background:#222}.tag.out{background:#2a1a1a}
+/* ERC-463N7 agent drops (behind agentDrops flag) */
+.ldagents .agc{border:1px solid var(--line,#2a2a2a);border-radius:12px;padding:10px;margin:8px 0}
+.ldagents .agc.struck{border-color:#d9822b}
+.ldagents .agc.dead{display:flex;gap:10px;align-items:center;opacity:.7;filter:grayscale(1)}
+.ldagents .agc .tomb{font-size:28px}
+.ldagents .agc.dead span{display:block}
+.ldagents .agh{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.ldagents .agbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ldagents .agbtns input{flex:1;min-width:90px}
+.ldagents .agatk ol{padding-left:18px}
+.ldagents .agatk label{display:block}
+.ldagents .agatk input{width:100%}
