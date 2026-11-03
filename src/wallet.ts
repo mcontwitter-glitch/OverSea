@@ -128,6 +128,7 @@ export function openWalletMenu(onDisconnect?: () => void) {
   if (!wallet.address) return openConnect();
   const social = !!wallet.provider?.isMultiSeaEmbedded;
   const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all"><span data-addr="${esc(wallet.address)}">${esc(wallet.address)}</span></p>
+    <div data-wm="bal" class="wbalbox"><span class="mut small"><span class="spin"></span> Reading balances on every chain…</span></div>
     <div style="display:grid;gap:10px;margin-top:14px">
       <a class="bbtn ghost" href="/me">My activity</a><a class="bbtn ghost" href="/holders">Holder area</a>
       <button class="bbtn ghost" data-wm="copy">Copy address</button>
@@ -136,6 +137,9 @@ export function openWalletMenu(onDisconnect?: () => void) {
   m.querySelector('[data-wm=copy]')!.addEventListener('click', e => { navigator.clipboard?.writeText(wallet.address!); (e.target as HTMLElement).textContent = 'Copied ✓'; });
   m.querySelector('[data-wm=out]')!.addEventListener('click', () => { m.remove(); disconnect(); onDisconnect?.(); });
   m.querySelector('[data-wm=export]')?.addEventListener('click', () => openKeyExport());
+  const addr = wallet.address, box = m.querySelector('[data-wm=bal]') as HTMLElement;
+  import('./walletbal').then(b => b.balancesHtml(addr)).then(h => { if (wallet.address === addr) box.innerHTML = h; })
+    .catch(() => { box.innerHTML = '<p class="err small">Couldn’t read balances right now. Close and reopen to retry.</p>'; });
 }
 function openKeyExport() {
   if (!wallet.provider?.isMultiSeaEmbedded) return;

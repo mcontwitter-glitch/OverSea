@@ -640,3 +640,6 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .ldagents .agatk ol{padding-left:18px}
 .ldagents .agatk label{display:block}
 .ldagents .agatk input{width:100%}
+.wbalbox{margin-top:12px}.wbal{border:1px solid #23303b;border-radius:12px;padding:10px 12px;max-height:46vh;overflow:auto}
+.wbhd{display:flex;justify-content:space-between;margin-bottom:6px}.wbrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:baseline;font-size:13px;padding:4px 0;border-top:1px solid #1a242d}
+.wbch{display:flex;align-items:center;gap:5px;white-space:nowrap}.wbch img{width:16px;height:16px}.wbv{display:flex;flex-direction:column;align-items:flex-end;text-align:right}.wbv b{color:#dfe8ef;font-weight:600}.wbu{min-width:58px;text-align:right}
