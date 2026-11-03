@@ -25,8 +25,10 @@ const FACTORY = parseAbi([
 ]);
 const ENGINE = parseAbi([
   'function mintMany(address to, uint256 qty) payable returns (uint256)', 'function feed(uint256 id) payable', 'function accountOf(uint256 id) view returns (address)',
-  'function lastFedOf(uint256 id) view returns (uint64)', 'function sexOf(uint256 id) view returns (uint8)', 'function hasFertility(uint256 id) view returns (bool)', 'function hasMutation(uint256 id) view returns (bool)', 'function isMutated(uint256 id) view returns (bool)', 'function isDead(uint256 id) view returns (bool)', 'function custodianOf(uint256 id) view returns (address)', 'function ownerOf(uint256 id) view returns (address)', 'function reaper() view returns (address)', 'function mintPrice() view returns (uint256)',
+  'function lastFedOf(uint256 id) view returns (uint64)', 'function sexOf(uint256 id) view returns (uint8)', 'function hasFertility(uint256 id) view returns (bool)', 'function hasMutation(uint256 id) view returns (bool)', 'function isMutated(uint256 id) view returns (bool)', 'function isDead(uint256 id) view returns (bool)', 'function custodianOf(uint256 id) view returns (address)', 'function ownerOf(uint256 id) view returns (address)', 'function reaper() view returns (address)', 'function infector() view returns (address)', 'function mintPrice() view returns (uint256)',
 ]);
+const ZERO_A = '0x0000000000000000000000000000000000000000';
+const INFECT = parseAbi(['function hasInfect(uint256 id) view returns (bool)', 'function infections(uint256 id) view returns (uint256)']);
 const SKILL = parseAbi([
   'function hasSkill(uint256 id) view returns (bool)', 'function fee() view returns (uint256)', 'function strikeOf(uint256 target) view returns (uint64)', 'function graceEndsOf(uint256 target) view returns (uint256)',
   'function attack(uint256 attacker, uint256 target) payable returns (uint256)',
@@ -64,7 +66,7 @@ export async function agentMint(k: string, engine: Address, qty: number, onTx: (
   return { hash, receipt: await pub.waitForTransactionReceipt({ hash }) };
 }
 
-export type AgentView = { id: number; wallet: string; balEth?: number; lastFed: number; dead: boolean; skill: boolean; strikeAt: number; graceEnd: number; mine: boolean; custodian?: string; heirIsTreasury?: boolean; sex?: number; fertile?: boolean; mutation?: boolean; mutated?: boolean };
+export type AgentView = { id: number; wallet: string; balEth?: number; lastFed: number; dead: boolean; skill: boolean; strikeAt: number; graceEnd: number; mine: boolean; custodian?: string; heirIsTreasury?: boolean; sex?: number; fertile?: boolean; mutation?: boolean; mutated?: boolean; infect?: boolean; infections?: number };
 
 export async function loadAgent(k: string, engine: Address, id: number): Promise<AgentView> {
   const pub = readClient(k); const I = BigInt(id);
@@ -81,9 +83,17 @@ export async function loadAgent(k: string, engine: Address, id: number): Promise
   }
   // Sex (1 Female / 2 Male, fixed for life) and Fertility (female-only rarity: twins by VRF luck). Older engines: unknown.
   const [sx, fe, mu, md] = await Promise.all([pub.readContract({ address: engine, abi: ENGINE, functionName: 'sexOf', args: [I] }).catch(() => 0), pub.readContract({ address: engine, abi: ENGINE, functionName: 'hasFertility', args: [I] }).catch(() => false), pub.readContract({ address: engine, abi: ENGINE, functionName: 'hasMutation', args: [I] }).catch(() => false), pub.readContract({ address: engine, abi: ENGINE, functionName: 'isMutated', args: [I] }).catch(() => false)]);
+  // Infect (optional InfectSkill module, engine `infector()`): skill + count of NFTs bought and burned. Older engines: none.
+  let infect = false, infections = 0;
+  const infr = (await pub.readContract({ address: engine, abi: ENGINE, functionName: 'infector' }).catch(() => ZERO_A)) as string;
+  if (infr && !/^0x0+$/.test(infr)) {
+    const ri = (fn: string) => pub.readContract({ address: infr as Address, abi: INFECT, functionName: fn as any, args: [I] } as any).catch(() => 0);
+    const [hi, n] = await Promise.all([ri('hasInfect'), ri('infections')]);
+    infect = !!hi; infections = Number(n);
+  }
   const custodian = dead ? ((await pub.readContract({ address: engine, abi: ENGINE, functionName: 'custodianOf', args: [I] })) as string) : undefined;
   const bal = await pub.getBalance({ address: acct as Address });
-  return { id, wallet: acct as string, balEth: Number(bal) / 1e18, lastFed: Number(fed), dead: dead as boolean, skill, strikeAt, graceEnd, custodian, sex: Number(sx), fertile: !!fe, mutation: !!mu, mutated: !!md, mine: (owner as string).toLowerCase() === (wallet.address || '').toLowerCase() };
+  return { id, wallet: acct as string, balEth: Number(bal) / 1e18, lastFed: Number(fed), dead: dead as boolean, skill, strikeAt, graceEnd, custodian, sex: Number(sx), fertile: !!fe, mutation: !!mu, mutated: !!md, infect, infections, mine: (owner as string).toLowerCase() === (wallet.address || '').toLowerCase() };
 }
 
 export async function agentFeed(k: string, engine: Address, id: number, wei: bigint, onTx: (h: string) => void) {
@@ -132,7 +142,7 @@ const short = (a: string) => a.slice(0, 6) + '…' + a.slice(-4);
 export function agentCard(a: AgentView, o: { symbol: string; periodS: number; now: number; feeEth?: number; native: string; busy?: string }) {
   if (a.dead) return `<div class="agc dead"><div class="tomb">🪦</div><div><b>${esc(o.symbol)} #${a.id}</b><span class="mut small">Dead · NFT burned${a.lastFed ? ' · last fed ' + ago(a.lastFed, o.now) : ''}. Its wallet passed to ${a.custodian ? (a.heirIsTreasury ? 'the treasury' : 'its heir') + ` (<span class="mono">${esc(short(a.custodian))}</span>)` : 'its heir or the treasury'}, which also controls anything left in it. Tombstone metadata stays readable.</span></div></div>`;
   const starveIn = a.lastFed + o.periodS - o.now; const struck = a.strikeAt > 0; const inGrace = struck && a.graceEnd > o.now;
-  return `<div class="agc ${struck ? 'struck' : ''}"><div class="agh"><b>${esc(o.symbol)} #${a.id}</b>${a.sex === 1 ? '<span class="ldtag" title="Female: can breed with a male">♀ Female</span>' : a.sex === 2 ? '<span class="ldtag" title="Male: can breed with a female">♂ Male</span>' : ''}${a.fertile ? '<span class="ldtag xp" title="Fertility: a chance of twins when she breeds (decided by VRF)">✿ Fertility</span>' : ''}${a.mutation ? '<span class="ldtag xp" title="Mutation: its children look mutated and may be born with a rare skill (Death, Fertility or Mutation)">🧬 Mutation</span>' : ''}${a.mutated ? '<span class="ldtag" title="Mutated: born from a Mutation parent, its looks were changed at birth">🧬 Mutated</span>' : ''}${a.skill ? '<span class="ldtag xp" title="Death skill: can ask ORA to judge a kill">☠ Death skill</span>' : ''}${a.mine ? '<span class="ldtag drop">Yours</span>' : ''}</div>
+  return `<div class="agc ${struck ? 'struck' : ''}"><div class="agh"><b>${esc(o.symbol)} #${a.id}</b>${a.sex === 1 ? '<span class="ldtag" title="Female: can breed with a male">♀ Female</span>' : a.sex === 2 ? '<span class="ldtag" title="Male: can breed with a female">♂ Male</span>' : ''}${a.fertile ? '<span class="ldtag xp" title="Fertility: a chance of twins when she breeds (decided by VRF)">✿ Fertility</span>' : ''}${a.mutation ? '<span class="ldtag xp" title="Mutation: its children look mutated and may be born with a rare skill (Death, Fertility, Mutation or Infect)">🧬 Mutation</span>' : ''}${a.mutated ? '<span class="ldtag" title="Mutated: born from a Mutation parent, its looks were changed at birth">🧬 Mutated</span>' : ''}${a.infect ? `<span class="ldtag xp" title="Infect: the holder can have this agent's wallet buy an NFT from another collection (allowlisted marketplace, capped price, cooldown) and burn it for score">🦠 Infect · ${a.infections || 0} infection${a.infections === 1 ? '' : 's'}</span>` : ''}${a.skill ? '<span class="ldtag xp" title="Death skill: can ask ORA to judge a kill">☠ Death skill</span>' : ''}${a.mine ? '<span class="ldtag drop">Yours</span>' : ''}</div>
    <div class="kv small"><span>Agent wallet</span><b class="mono">${esc(short(a.wallet))}${a.balEth != null ? ` · ${(+a.balEth.toFixed(5))} ${esc(o.native)}` : ''}</b>
     <span>Last fed</span><b>${a.lastFed ? ago(a.lastFed, o.now) : 'never'}</b><span>Starves in</span><b class="${starveIn < 86400 ? 'err' : ''}">${left(starveIn)}</b>
     ${struck ? `<span>Strike</span><b class="err">⚠ ORA kill verdict ${ago(a.strikeAt, o.now)} · ${inGrace ? `grace ends in ${left(a.graceEnd - o.now)}` : 'grace over: a 2nd kill verdict kills it'}</b>` : '<span>Strikes</span><b class="ok">none</b>'}</div>
@@ -152,7 +162,7 @@ export function attackBox(attacker: number, o: { symbol: string; feeEth?: number
 
 /** Demo agents for the local preview (labeled; no chain reads). */
 export const demoAgents = (now: number): AgentView[] => [
-  { id: 7, wallet: '0x7a11ce00000000000000000000000000000a9e07', balEth: 0.0123, lastFed: now - 3 * 86400, dead: false, skill: true, strikeAt: 0, graceEnd: 0, mine: true, sex: 1, fertile: true, mutation: true },
+  { id: 7, wallet: '0x7a11ce00000000000000000000000000000a9e07', balEth: 0.0123, lastFed: now - 3 * 86400, dead: false, skill: true, strikeAt: 0, graceEnd: 0, mine: true, sex: 1, fertile: true, mutation: true, infect: true, infections: 3 },
   { id: 12, wallet: '0x12bee5000000000000000000000000000a9e0012', balEth: 0.002, lastFed: now - 26 * 86400, dead: false, skill: false, strikeAt: now - 5 * 3600, graceEnd: now + 43 * 3600, mine: true, sex: 2 },
   { id: 31, wallet: '0x31dead00000000000000000000000000000a9e31', lastFed: now - 40 * 86400, dead: true, skill: false, strikeAt: 0, graceEnd: 0, mine: true, custodian: '0x2fee00000000000000000000000000000000a9e7', heirIsTreasury: true },
   { id: 44, wallet: '0x44f00d00000000000000000000000000000a9e44', balEth: 0.0004, lastFed: now - 31 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 1, mutated: true, mutation: true }];

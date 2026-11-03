@@ -164,8 +164,9 @@ const agentDrop = (o = {}) => ({ slug: 'agents-one', name: 'Agents', symbol: 'ag
 test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding (cast vector)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
-    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500 });
-  assert.equal(h, '0xd17b2bfd1f705c59bb7b3373ee2c45386077e3cb23d2fde3e03d5a68a9ae687c'); // = AgentDropFactory.t.sol VECTOR
+    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500,
+    infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 } });
+  assert.equal(h, '0xa2f3eb0699c3812a29932a8413fcb6ab32825315259d61bb8af579d49f0f2686'); // = AgentDropFactory.t.sol VECTOR
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -234,4 +235,35 @@ test('agent drop: approve -> AgentDropApproval signature (salt, cap via factory,
   assert.ok(ok, 'agent approval recovers to approver');
   const dep = await call('POST', '/launchpad/deployed/agents-one', { chain: 'base', address: '0x' + '55'.repeat(20) });
   assert.equal(dep.drop.status, 'live');
+});
+
+test('agent drop: Infect rarity, cooldown, max price and score reward reach the signed AgentInit', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, infect: true, infPct: 101 } })), /Infect rarity/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, infect: true, infCooldownH: 0 } })), /Infect cooldown/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, infect: true, infMaxEth: '0' } })), /Infect max price/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, infect: true, infMaxEth: 'abc' } })), /Infect max price/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, infect: true, infScore: 0 } })), /Infect score/);
+  await call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, deathSkill: true, skillPct: 5, infect: true, infPct: 8, infCooldownH: 2, infMaxEth: '0.05', infScore: 30 } }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.infect, true);
+  assert.equal(a.params.infectLimits.skillBps, 800); assert.equal(a.params.infectLimits.cooldown, 7200);
+  assert.equal(String(a.params.infectLimits.maxPrice), '50000000000000000'); assert.equal(a.params.infectLimits.scoreReward, 30);
+  const P = { ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId), infectLimits: { ...a.params.infectLimits, maxPrice: BigInt(a.params.infectLimits.maxPrice) } };
+  assert.equal(a.configHash, agentConfigHash(P));
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, infectLimits: { ...P.infectLimits, maxPrice: 10n ** 18n } }), 'max price is bound by the signature');
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, infect: false }), 'the module flag is bound by the signature');
+});
+
+test('agent drop: Infect off leaves zero limits in the signed AgentInit', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await call('POST', '/launchpad/submit', agentDrop());
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.infect, false); assert.equal(a.params.infectLimits.skillBps, 0); assert.equal(String(a.params.infectLimits.maxPrice), '0');
 });
