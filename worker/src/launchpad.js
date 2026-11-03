@@ -90,7 +90,9 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       grace: int(l.grace ?? DEATH_LIMITS_DEFAULT.grace, H, 30 * 86400, 'grace'), minGap: int(l.minGap ?? DEATH_LIMITS_DEFAULT.minGap, H, 30 * 86400, 'min gap between strikes'), targetCooldown: int(l.targetCooldown ?? DEATH_LIMITS_DEFAULT.targetCooldown, H, 30 * 86400, 'target cooldown'), requestTimeout: int(l.requestTimeout ?? DEATH_LIMITS_DEFAULT.requestTimeout, H, 7 * 86400, 'oracle timeout') };
     // Rarity table: % of supply that gets the skill; the creator assigns ids with setSkill then lock() before mint.
     const skillPct = deathSkill ? int(a.skillPct ?? 5, 1, 100, 'Death-skill rarity (%)') : 0;
-    return { starveDays, deathSkill, limits, skillPct, modelId: AG.oraModelId ?? 11 };
+    // Fertility (female-only rarity) and twin chance: launch-only engine params 12/13; twins capped at 50%.
+    const fertility = !!a.fertility; const fertPct = fertility ? int(a.fertPct ?? 10, 1, 100, 'Fertility rarity (%)') : 0; const twinPct = int(a.twinPct ?? 20, 1, 50, 'Twin chance (%)');
+    return { starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, modelId: AG.oraModelId ?? 11 };
   }
 
   function validate(b, creator) {
