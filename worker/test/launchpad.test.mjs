@@ -164,8 +164,8 @@ const agentDrop = (o = {}) => ({ slug: 'agents-one', name: 'Agents', symbol: 'ag
 test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding (cast vector)', () => {
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
-    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000 });
-  assert.equal(h, '0x13203ff8f8b00754c1bbda422a9cbddbbab140dd02da95044f2b2532f76a4c8b'); // = AgentDropFactory.t.sol VECTOR
+    limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500 });
+  assert.equal(h, '0xd17b2bfd1f705c59bb7b3373ee2c45386077e3cb23d2fde3e03d5a68a9ae687c'); // = AgentDropFactory.t.sol VECTOR
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -180,6 +180,22 @@ test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (k
   const P = { ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId) };
   assert.equal(a.configHash, agentConfigHash(P));
   assert.notEqual(a.configHash, agentConfigHash({ ...P, twinBps: 2000 }), 'twin chance is bound by the signature');
+});
+
+test('agent drop: Mutation rarity and skill chance reach the signed AgentInit (keys 14/15)', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, mutation: true, mutPct: 5, mutSkillPct: 51 } })), /Mutation skill chance/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, mutation: true, mutPct: 0 } })), /Mutation rarity/);
+  await call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 30, deathSkill: true, skillPct: 5, mutation: true, mutPct: 7, mutSkillPct: 25 } }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.mutationBps, 700); assert.equal(a.params.mutationSkillBps, 2500);
+  const P = { ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId) };
+  assert.equal(a.configHash, agentConfigHash(P));
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, mutationSkillBps: 1500 }), 'skill chance is bound by the signature');
+  assert.notEqual(a.configHash, agentConfigHash({ ...P, mutationBps: 0 }), 'rarity is bound by the signature');
 });
 
 test('agent drops are OFF by default (config flag) and rejected at submit', async () => {
