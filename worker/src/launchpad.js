@@ -11,6 +11,7 @@
 //   POST /launchpad/deployed/<slug>    (SIWE, creator) { chain, address } -> verified isDrop() on the factory -> live + listed
 //   GET  /admin/launchpad/pending      (admin)  review queue
 //   POST /admin/launchpad/approve|reject/<slug> (admin)
+//   GET  /launchpad/reveal-uri/<slug>       (session, creator) { baseURI } stored for a delayed-reveal drop
 //   GET  /launchpad/mine                      (session) the caller's own approved drops
 //   GET  /admin/launchpad/approvals/<slug>    (admin)  EIP-712 typed data per chain for the approver wallet to sign
 //   POST /admin/launchpad/approvals/<slug>    (admin)  { chain, signature } -> verified against the on-chain approver, stored
@@ -72,7 +73,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   const uri = (v, what) => { const s = str(v, 200); if (s && !/^(ipfs:\/\/|ar:\/\/|https:\/\/)[\w\-./?=&%#]+$/.test(s)) bad(`${what} must be ipfs://, ar:// or https://`); return s; };
   // deployed: true only once POST /launchpad/deployed verified a contract on-chain against a factory (status 'live').
   // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
-  const pub = d => ({ ...d, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
+  // Delayed reveal: the revealed baseURI stays private until the creator reveals (GET /launchpad/reveal-uri/<slug>).
+  const pub = d => ({ ...d, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
   const AG = LP.agentDrops || { enabled: false };
   // Agent drop: single chain, one public phase (the engine has one mint price), art rendered on-chain (no URIs needed).
@@ -148,6 +150,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const baseURI = uri(b.baseURI, 'base URI'), preRevealURI = uri(b.preRevealURI, 'pre-reveal URI');
     if (!isAgent && reveal === 'instant' && !baseURI) bad('instant reveal needs the final base URI (ipfs://CID/ or ar://TX/)');
     if (!isAgent && reveal === 'delayed' && !preRevealURI) bad('delayed reveal needs a placeholder URI');
+    if (preRevealURI && !/^https:\/\//.test(preRevealURI) && !/\.json$/i.test(preRevealURI)) bad('pre-reveal URI must point to one .json file (e.g. ipfs://CID/placeholder.json), not a folder');
     const ph = Array.isArray(b.phases) ? b.phases : []; if (!ph.length || ph.length > LP.maxPhases) bad(`1-${LP.maxPhases} phases`);
     const allowlists = {}; let totalAllow = 0;
     const phases = ph.map((x, i) => {
@@ -231,6 +234,11 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         const s = await requireSession(req, env); const l = await K.list({ prefix: 'ldrop:' });
         const ds = (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(d => d && lc(d.submitter) === s.address);
         return { drops: ds.map(d => ({ slug: d.slug, status: d.status, chains: d.chains, deployed: (d.deployments || []).map(x => x.chain) })) };
+      }
+      if (M === 'GET' && p[1] === 'reveal-uri' && p.length === 3) { // creator only: the stored revealed base URI for reveal(baseURI)
+        const s = await requireSession(req, env); const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404);
+        if (lc(d.submitter) !== s.address) bad('only the creator can read the reveal URI', 403);
+        return { baseURI: d.baseURI || '' };
       }
       if (M === 'POST' && p[1] === 'approval' && p.length === 3) {
         const s = await requireSession(req, env); const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404);

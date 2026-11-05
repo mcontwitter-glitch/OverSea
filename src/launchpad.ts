@@ -153,6 +153,32 @@ function mintBox(d: Drop) {
    ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}`;
 }
 let mine = new Set<string>(); async function loadMine() { mine = new Set(); if (!LP_LIVE || !getSession() || !apiFeatures.includes('launchpad')) return; try { const j = await import('./auth').then(a => a.api('/launchpad/mine', { auth: true })); mine = new Set(j.drops.map((x: any) => x.slug)); } catch {} }
+// Reveal (delayed-reveal drops): creator + on-chain owner only, contract not revealed yet. ?mockreveal on localhost = UI preview.
+type RevSt = { revealed: boolean; frozen: boolean; owner: string } | null;
+const revCache: Record<string, RevSt | 'loading' | 'err'> = {}; let revURI = ''; let revStored = ''; let revStep: '' | 'confirm' = ''; let revCustom = false; let revBusy = false; let revMsg = '';
+const MOCK_REV = /localhost|127\.0\.0\.1/.test(location.hostname) && new URLSearchParams(location.search).has('mockreveal');
+function revealBox(d: Drop) {
+  const R = d as any; if (d.reveal !== 'delayed') return '';
+  const k = R.addresses?.[chainSel] ? chainSel : d.chains.map(c => c.chain).find(c => R.addresses?.[c]) || (MOCK_REV ? d.chains[0]?.chain : undefined); const addr = k && R.addresses?.[k];
+  if (!MOCK_REV && !(R.remote && LP_LIVE && addr && getSession() && mine.has(d.slug))) return '';
+  const key = MOCK_REV ? 'mock' : `${k}:${addr}`; let s = MOCK_REV ? { revealed: false, frozen: false, owner: (wallet.address || '0xmock').toLowerCase() } : revCache[key];
+  if (!MOCK_REV && s === undefined) { revCache[key] = 'loading'; import('./lpchain').then(m => m.revealState(k!, addr)).then(v => { revCache[key] = v; }).catch(() => { revCache[key] = 'err'; }).finally(render); return ''; }
+  if (!s || s === 'loading' || s === 'err' || s.frozen) return '';
+  if (s.revealed) return `<div class="fcard small ldrevbox"><div class="gh">Reveal</div><span class="ok">✓ Revealed on ${esc(chains[k || 'base'].name)}</span>${revMsg ? `<p class="small">${revMsg}</p>` : ''}</div>`;
+  if (!MOCK_REV && s.owner !== (wallet.address || '').toLowerCase()) return `<div class="fcard small ldrevbox"><div class="gh">Reveal</div><p class="mut">Connect the contract owner wallet (<span class="mono">${esc(s.owner.slice(0, 8))}…</span>) to reveal.</p></div>`;
+  if (!revStored && !MOCK_REV) import('./lpchain').then(m => m.storedRevealURI(d.slug)).then(u => { revStored = u || 'none'; if (!revURI) revURI = u; render(); }).catch(() => { revStored = 'none'; render(); });
+  if (MOCK_REV && !revStored) { revStored = 'ipfs://QmavdjX1pSf11jePFqCHZ45NzY6fpL96XupsVAi6wEpoBe/'; revURI ||= revStored; }
+  const others = isMulti(d) ? d.chains.map(c => c.chain).filter(c => c !== k && R.addresses?.[c]) : [];
+  const ok = /^(ipfs|ar):\/\/\S+\/$|^https:\/\/\S+\/$/.test(revURI);
+  return `<div class="fcard ldrevbox"><div class="gh">Reveal collection</div><p class="mut small">Holders see the placeholder until you reveal. Token N then resolves to <span class="mono">baseURI + N.json</span>. You sign the transaction on ${esc(chains[k || 'base'].name)} and pay the gas.</p>
+   <div class="small">Base URI: ${revURI ? `<code class="mono">${esc(revURI)}</code>` : `<span class="mut">${revStored ? 'none stored' : 'loading…'}</span>`}${revURI && revURI !== revStored && revStored && revStored !== 'none' ? ' <span class="ldtag xp">custom</span>' : ''}</div>
+   ${revCustom ? `<label class="small ldrevin">Different base URI<input data-revuri value="${esc(revURI)}" placeholder="ipfs://CID/"></label>` : `<button type="button" class="pill sm" data-act="revcustom">Use a different base URI</button>`}
+   ${revURI && !ok ? '<p class="err small">Base URI must end with "/" (ipfs://CID/).</p>' : ''}
+   ${revStep === 'confirm' ? `<div class="ldnote small">Reveal sets the final metadata for every token on ${esc(chains[k || 'base'].name)}. You can't undo it once metadata is frozen.</div><div class="two"><button class="obtn" data-act="revcancel">Cancel</button><button class="bbtn" data-act="revgo" ${revBusy ? 'disabled' : ''}>${revBusy ? '<span class="spin"></span> Revealing…' : 'Confirm & sign'}</button></div>`
+     : `<button class="bbtn" data-act="revask" ${ok ? '' : 'disabled'}>Reveal collection</button>`}
+   ${others.length ? `<p class="mut small">Multichain: each chain has its own contract. Switch the chain above and reveal on ${others.map(c => esc(chains[c].name)).join(', ')} too.</p>` : ''}
+   ${revMsg ? `<p class="small">${revMsg}</p>` : ''}</div>`;
+}
 let realBusy = false; let realMsg = ''; let depMsg = ''; let depBusy = '';
 const EXPL: Record<string, string> = Object.fromEntries(Object.entries(CFG.chains as any).map(([k, c]: any) => [k, c.explorer]));
 const txLink = (k: string, h: string) => `<a href="${EXPL[k]}/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>`;
@@ -294,7 +320,7 @@ function dropPage(d: Drop) {
     ${isMulti(d) ? sharedBar(d) : `<div class="ldprog big"><div class="ldprogh"><b>${pct(minted(d), d.maxSupply).toFixed(1)}% minted</b><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div>
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
-   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${mintBox(d)}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
+   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${revealBox(d)}${mintBox(d)}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
     <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isAgentDrop(d) ? 'ERC-463N7 agents (experimental, unaudited)' : isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
@@ -341,6 +367,16 @@ app.addEventListener('click', e => {
     render();
   }
   if (el.dataset.act === 'connect') { openConnect(); return; }
+  if (el.dataset.act?.startsWith('rev')) { const d = findDrop(slug); if (!d) return; const a = el.dataset.act;
+    if (a === 'revcustom') { revCustom = true; render(); return; }
+    if (a === 'revask') { revStep = 'confirm'; revMsg = ''; render(); return; }
+    if (a === 'revcancel') { revStep = ''; render(); return; }
+    if (a === 'revgo') { const R = d as any; const k = R.addresses?.[chainSel] ? chainSel : d.chains.map(c => c.chain).find(c => R.addresses?.[c]);
+      if (MOCK_REV || !k) { revMsg = '<span class="mut">Preview only: no transaction sent.</span>'; revStep = ''; render(); return; }
+      revBusy = true; render();
+      import('./lpchain').then(m => m.revealOn(k, R.addresses[k], revURI, h => { revMsg = `Transaction sent: ${txLink(k, h)}`; render(); }))
+        .then(() => { revCache[`${k}:${R.addresses[k]}`] = undefined as any; delete revCache[`${k}:${R.addresses[k]}`]; revMsg = '✓ Revealed. Marketplaces may take a few minutes to refresh metadata.'; revStep = ''; })
+        .catch(e => { revMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { revBusy = false; render(); }); return; } }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
   if (el.dataset.deploy) { const k = el.dataset.deploy; depBusy = k; depMsg = ''; render();
     (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })))
@@ -417,6 +453,8 @@ function onAgent(d: Drop, el: HTMLElement) {
     import('./agentdrop').then(m => m.agentAttack(k, eng, from, tgt, h => { agMsg = `Sent ${txLink(k, h)}… ORA answers in a few minutes.`; render(); })).then(() => { atkFrom = 0; })
       .catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); }
 }
+app.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (t.dataset.revuri != null) { revURI = t.value.trim(); } });
+app.addEventListener('focusout', e => { if ((e.target as HTMLElement).dataset?.revuri != null) render(); });
 app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.name === 'pay') { pay = t.value as any; render(); }

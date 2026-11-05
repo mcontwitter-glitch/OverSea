@@ -85,3 +85,18 @@ export async function mint(multi: boolean, k: string, drop: Address, phaseId: nu
   onTx(hash); const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('mint reverted');
   return { hash, ...q };
 }
+
+// Delayed reveal (MultiSeaDrop and MultiSeaOmniDrop share these): owner-only reveal(baseURI), one tx per chain's contract.
+const REV = [{ type: 'function', name: 'revealed', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] }, { type: 'function', name: 'metadataFrozen', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }, { type: 'function', name: 'reveal', stateMutability: 'nonpayable', inputs: [{ type: 'string' }], outputs: [] }] as const;
+export async function revealState(k: string, addr: Address) {
+  const pub = readClient(k); const [revealed, frozen, owner] = await Promise.all(['revealed', 'metadataFrozen', 'owner'].map(fn => pub.readContract({ address: addr, abi: REV, functionName: fn as any })));
+  return { revealed: !!revealed, frozen: !!frozen, owner: String(owner).toLowerCase() };
+}
+export const storedRevealURI = (slug: string): Promise<string> => api('/launchpad/reveal-uri/' + slug, { auth: true }).then((j: any) => j.baseURI || '');
+export async function revealOn(k: string, addr: Address, uri: string, onTx: (h: string) => void) {
+  const pub = readClient(k); const w = await walletOn(k);
+  const sim = await pub.simulateContract({ address: addr, abi: REV, functionName: 'reveal', args: [uri], account: wallet.address as Address });
+  const hash = await w.writeContract({ ...sim.request, chain: vchain(k), account: wallet.address as Address }); onTx(hash);
+  const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('reveal transaction reverted');
+}
