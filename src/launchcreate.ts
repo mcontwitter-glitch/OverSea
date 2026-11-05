@@ -9,7 +9,7 @@ import { encodeAbiParameters } from 'viem';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures } from './wallet';
 import { navHtml, bindNav, esc } from './shell';
 import { api } from './auth';
-import { uploadHtml, addMedia, clearMedia, loadCsv, downloadTemplate, uploadProblem, usingUpload, pinAll, media } from './lpmedia';
+import { uploadHtml, addMedia, clearMedia, loadCsv, downloadTemplate, uploadProblem, usingUpload, pinAll, media, ph as phd, setPlaceholder, placeholderHtml, pinPlaceholder } from './lpmedia';
 import { AGENT_UI, AGENT_PREVIEW, DEATH_CHAINS, AGENT_CHAINS, ORA_FEE_WEI } from './agentdrop';
 import { LP_CHAINS, FEE_BPS, localDrops, saveLocal, isLocalHost, BATCH, batchShareUsd, mintLegs, legsUsd, type Drop, type Phase } from './launchdata';
 const app = document.getElementById('app')!; document.title = 'Create a drop · Launchpad · MultiSea';
@@ -17,7 +17,7 @@ const chains = CFG.chains as Record<string, { name: string; native: string }>;
 const STEPS = ['Project', 'Art & metadata', 'Chains & supply', 'Mint phases', 'Royalties & payout', 'Review'];
 const SKEY = 'multisea-lp-draft';
 type PhaseIn = { name: string; kind: 'allowlist' | 'public'; start: string; end: string; price: string; maxPerWallet: string; maxSupply?: string; allowlist: string; prices?: Record<string, string> }; // prices: multichain non-ETH chains (APE, BNB)
-type St = { step: number; mode: 'single' | 'multichain' | 'ordinals'; ordPrice?: string; ordLimit?: string; copyMode: 'batched' | 'at-mint'; batchK: string; batchT: string; total: string; name: string; symbol: string; slug: string; description: string; website: string; x: string; storage: 'ipfs' | 'arweave' | 'own'; baseURI: string; reveal: 'instant' | 'delayed'; preRevealURI: string; files: number;
+type St = { step: number; mode: 'single' | 'multichain' | 'ordinals'; ordPrice?: string; ordLimit?: string; copyMode: 'batched' | 'at-mint'; batchK: string; batchT: string; total: string; name: string; symbol: string; slug: string; description: string; website: string; x: string; storage: 'ipfs' | 'arweave' | 'own'; baseURI: string; reveal: 'instant' | 'delayed'; preRevealURI: string; phOwn?: boolean; phName?: string; phDesc?: string; files: number;
   chains: Record<string, string>; reserve: string; phases: PhaseIn[]; royalty: string; payout: string; royaltyReceiver: string; agree: boolean;
   nftType: NftType; ag: AgentOpts };
 type NftType = 'erc721' | 'erc6551' | 'erc463n7';
@@ -45,7 +45,7 @@ const ts = (v: string) => (v ? Math.floor(new Date(v).getTime() / 1000) : 0);
 function validate(step: number): string {
   if (step === 0) { if (!st.name.trim()) return 'Project name is required.'; if (!/^[A-Za-z0-9]{1,12}$/.test(st.symbol)) return 'Symbol: 1-12 letters or digits.'; if (!/^[a-z0-9-]{3,40}$/.test(st.slug)) return 'Slug: 3-40 lowercase letters, digits, dashes.'; }
   if (step === 1) { if (st.storage === 'own') { if (st.reveal === 'instant' && !/^(ipfs|ar):\/\/\S+|^https:\/\/\S+/.test(st.baseURI)) return 'Advanced: paste the final metadata base URI (ipfs://CID/ or ar://TX/), or upload media + CSV instead.'; } else if (!st.baseURI || usingUpload()) { const p = uploadProblem(); if (p) return p; }
-    if (st.reveal === 'delayed' && !/^(ipfs|ar|https):\/\/\S+/.test(st.preRevealURI)) return 'Delayed reveal needs a placeholder metadata URI.'; }
+    if (st.reveal === 'delayed') { if (st.phOwn) { if (!/^(ipfs|ar|https):\/\/\S+/.test(st.preRevealURI)) return 'Advanced: paste the placeholder metadata URI (one JSON, e.g. ipfs://CID/hidden.json).'; } else if (!phd.file && !st.preRevealURI) return 'Delayed reveal: drop a placeholder image or video.'; } }
   if (step === 2 && isOrd()) { if (!(supply() > 0 && supply() <= 100000)) return 'Set the total inscriptions (1-100,000).'; if (!(+(st.ordPrice ?? '') >= 0) || (st.ordPrice ?? '') === '') return 'Set the price per inscription in USDC (0 or more).'; const l = +(st.ordLimit ?? 50); if (!(Number.isInteger(l) && l >= 1 && l <= ORD_LIMIT_MAX)) return `Order limit per wallet: 1-${ORD_LIMIT_MAX}.`; return ''; }
   if (step === 2) { if (!Object.keys(st.chains).length) return 'Pick at least one chain.';
     if (isMc()) { if (Object.keys(st.chains).length < 2) return 'Multichain drops need at least 2 chains.'; if (!('base' in st.chains)) return 'Multichain drops include Base (the supply hub).'; if (!(supply() > 0 && supply() <= 100000)) return 'Set the total shared supply (1-100,000).';
@@ -147,7 +147,10 @@ function stepHtml(): string {
    <details class="fcard ldadv" ${st.storage === 'own' ? 'open' : ''}><summary><b>Advanced: I already have a base URI</b></summary><label class="ldtog ${st.storage === 'own' ? 'on' : ''}"><input type="checkbox" data-own ${st.storage === 'own' ? 'checked' : ''}><span class="sw"></span><span><b>Use my own base URI</b><span class="mut small">Skip uploads. Token N resolves to baseURI + N.json.</span></span></label>
    ${st.storage === 'own' && st.reveal === 'instant' ? inp('baseURI', 'Metadata base URI <span class="mut small">token N → baseURI + N.json</span>', 'placeholder="ipfs://bafy…/"') : ''}</details>
    <div class="gh pad">Reveal</div><div class="ldopts two">${([['instant', 'Instant reveal', 'Each NFT shows its art right after mint.'], ['delayed', 'Delayed reveal', 'Placeholder until you reveal, then freeze.']] as const).map(([k, t, d]) => `<label class="ldopt ${st.reveal === k ? 'on' : ''}"><input type="radio" name="reveal" value="${k}" ${st.reveal === k ? 'checked' : ''}><b>${t}</b><span class="mut small">${d}</span></label>`).join('')}</div>
-   ${st.reveal === 'delayed' ? inp('preRevealURI', 'Placeholder metadata URI', 'placeholder="ipfs://bafy…/hidden.json"') + '<p class="mut small">Your uploaded media + CSV is pinned as the final (revealed) metadata.</p>' : ''}`;
+   ${st.reveal === 'delayed' ? `${st.phOwn ? '' : st.preRevealURI && !phd.file ? `<div class="fcard small">✓ Placeholder pinned: <code class="mono">${esc(st.preRevealURI)}</code> <button type="button" class="pill sm" data-act="rephold">Replace</button></div>` : placeholderHtml(st.phName || '', st.phDesc || '', st.name)}
+   <details class="fcard ldadv" ${st.phOwn ? 'open' : ''}><summary><b>Advanced: I already have a placeholder URI</b></summary><label class="ldtog ${st.phOwn ? 'on' : ''}"><input type="checkbox" data-phown ${st.phOwn ? 'checked' : ''}><span class="sw"></span><span><b>Use my own placeholder URI</b><span class="mut small">One metadata JSON returned for every token until reveal.</span></span></label>
+   ${st.phOwn ? inp('preRevealURI', 'Placeholder metadata URI', 'placeholder="ipfs://bafy…/hidden.json"') : ''}</details>
+   <p class="mut small">Your media + CSV is pinned now as the revealed metadata; you reveal it later from the drop (owner calls <span class="mono">reveal(baseURI)</span>).</p>` : ''}`;
   if (s === 2) return `<div class="gh">Drop type</div><div class="ldopts two ldmode">${([['single', 'Single chain', 'One separate ERC-721A collection per chain, each with its own supply. Simplest and cheapest.'], ['multichain', 'Multichain (escrow)', 'One collection, one shared supply across chains. Each NFT minted is Active on the minter\'s chain and the same ID is minted into escrow on every other chain (batched); movable later via LayerZero.'], ['ordinals', 'Bitcoin Ordinals', 'Collectors pay in USDC on Base; MultiSea inscribes each item on Bitcoin and delivers it to the buyer\'s taproot address within 6h.']] as const).map(([k, t, d]) => `<label class="ldopt ${st.mode === k ? 'on' : ''}"><input type="radio" name="mode" value="${k}" ${st.mode === k ? 'checked' : ''}><b>${t}${k === 'multichain' ? ' <span class="ldtag mc">Multichain</span>' : k === 'ordinals' ? ' <span class="ldtag btcl">₿ New</span>' : ''}</b><span class="mut small">${d}</span></label>`).join('')}</div>
    ${isOrd() ? ordPanel() : ''}${isOrd() ? '' : `<div class="ldordx">`}${isMc() ? `<div class="ldnote small">🔁 <b>One shared supply, no per-chain split.</b> Collectors mint on any of your chains. Each mint makes the NFT <b>Active</b> on the minter's chain and <b>mints the same ID into MultiSea's escrow on every other chain</b> (LayerZero). <b>Base is the supply hub</b>: it hands out the next ID and enforces the total, so two chains can never mint the same ID or oversell. Mints on Base are instant; mints elsewhere confirm through Base in a few minutes (refunded if it sold out meanwhile). The escrow copies are <b>batched</b> by default (below), so the LayerZero cost per NFT is small: ≈ $0.07 on Base, ≈ $0.6 elsewhere (2.3 from Ethereum), shown at mint.</div>` : ''}
    <div class="gh">Chains <span class="mut small">${isMc() ? 'one collection, deployed on every selected chain with the same config' : 'each chain is its own ERC-721A contract with its own supply allocation'}</span></div>
@@ -222,12 +225,18 @@ app.addEventListener('change', e => {
   if (t.dataset.ph && t.dataset.f === 'kind') { st.phases[+t.dataset.ph].kind = t.value as any; save(); render(); }
   if (t.dataset.media != null && t.files?.length) { const sk = addMedia(t.files); st.baseURI = ''; msg = sk.length ? `Skipped ${sk.length} file(s) over 100 MB.` : ''; msgCls = 'err'; render(); }
   if (t.dataset.mcsv != null && t.files?.[0]) { const f = t.files[0]; f.text().then(txt => { loadCsv(f.name, txt); st.baseURI = ''; msg = ''; save(); render(); }); }
+  if (t.dataset.phfile != null && t.files?.[0]) { setPlaceholder(t.files[0]); st.preRevealURI = ''; msg = ''; save(); render(); }
+  if (t.dataset.phown != null) { st.phOwn = t.checked; st.preRevealURI = ''; save(); render(); }
   if (t.dataset.own != null) { st.storage = t.checked ? 'own' : 'ipfs'; if (!t.checked) st.baseURI = ''; save(); render(); }
   if (t.dataset.agree != null) { st.agree = t.checked; save(); }
   if (t.dataset.csv != null && t.files?.[0]) { const i = +t.dataset.csv; t.files[0].text().then(txt => { const { ok, bad } = parseAllowlist(txt); const p = st.phases[i]; p.allowlist = [...new Set([...addrs(p.allowlist), ...ok])].join('\n'); msg = `CSV: added ${ok.length} addresses${bad.length ? `, skipped ${bad.length} invalid` : ''}.`; msgCls = bad.length ? 'err' : 'ok'; save(); render(); }); }
 });
 async function submit() {
   const err = [0, 1, 2, 3, 4, 5].map(validate).find(Boolean); if (err) { msg = err; msgCls = 'err'; render(); return; }
+  if (st.reveal === 'delayed' && !st.phOwn && phd.file && (!apiFeatures.includes('launchpad') || wallet.address)) {
+    try { st.preRevealURI = await pinPlaceholder({ name: st.phName?.trim() || `${st.name} (Unrevealed)`, description: st.phDesc?.trim() || 'Revealing soon.' }, s => { msg = s; msgCls = 'mut'; render(); }); setPlaceholder(null); save(); }
+    catch (er: any) { msg = 'IPFS upload failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+  }
   if (st.storage !== 'own' && usingUpload() && (!apiFeatures.includes('launchpad') || wallet.address)) {
     try { st.baseURI = await pinAll({ description: st.description, website: st.website }, s => { msg = s; msgCls = 'mut'; render(); }); clearMedia(); media.rows = []; media.csvName = ''; save(); }
     catch (er: any) { msg = 'IPFS upload failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
@@ -266,6 +275,7 @@ app.addEventListener('click', e => {
   if (a === 'submit') submit();
   if (a === 'csvtpl') downloadTemplate();
   if (a === 'clrmedia') { clearMedia(); render(); }
+  if (a === 'rephold') { st.preRevealURI = ''; save(); render(); }
   if (a === 'repin') { st.baseURI = ''; save(); render(); }
   if (a === 'new') { done = ''; st = blank(); save(); render(); }
   if (a === 'demo') { st = { ...blank(), name: 'LIL FOOTS', symbol: 'FOOT', slug: 'lil-foots-v2', description: '4,404 tiny feet walking every chain. Demo drop for the launchpad preview.', website: 'https://multisea.io', x: 'https://x.com/lilfoots',
@@ -274,5 +284,5 @@ app.addEventListener('click', e => {
 });
 app.addEventListener('dragover', e => { const d = (e.target as HTMLElement).closest('[data-drop]'); if (d) { e.preventDefault(); d.classList.add('over'); } });
 app.addEventListener('dragleave', e => (e.target as HTMLElement).closest('[data-drop]')?.classList.remove('over'));
-app.addEventListener('drop', e => { const d = (e.target as HTMLElement).closest('[data-drop]'); if (!d || !e.dataTransfer?.files.length) return; e.preventDefault(); const fs = Array.from(e.dataTransfer.files); const csv = fs.find(f => /\.csv$/i.test(f.name)); const rest = fs.filter(f => f !== csv); if (rest.length) addMedia(rest); st.baseURI = ''; if (csv) csv.text().then(t => { loadCsv(csv.name, t); render(); }); else render(); });
+app.addEventListener('drop', e => { const d = (e.target as HTMLElement).closest('[data-drop]') as HTMLElement | null; if (!d || !e.dataTransfer?.files.length) return; e.preventDefault(); if (d.dataset.drop === 'ph') { setPlaceholder(e.dataTransfer.files[0]); st.preRevealURI = ''; save(); render(); return; } const fs = Array.from(e.dataTransfer.files); const csv = fs.find(f => /\.csv$/i.test(f.name)); const rest = fs.filter(f => f !== csv); if (rest.length) addMedia(rest); st.baseURI = ''; if (csv) csv.text().then(t => { loadCsv(csv.name, t); render(); }); else render(); });
 bindNav(); render(); onWallet(render); checkApi().then(render);

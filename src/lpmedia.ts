@@ -8,6 +8,9 @@ export const MEDIA_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg
 const MAX_FILE = 100 * 1024 * 1024; // per file
 export const CSV_BASE = ['tokenID', 'name', 'description', 'file_name', 'external_url'];
 export type Row = { line: number; tokenID: string; name: string; description: string; file_name: string; external_url: string; attrs: { trait_type: string; value: string }[]; errs: string[] };
+export const PH_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm';
+export const ph = { file: null as File | null, url: '' };
+export function setPlaceholder(f: File | null) { if (ph.url) URL.revokeObjectURL(ph.url); ph.file = f; ph.url = f ? URL.createObjectURL(f) : ''; }
 export const media = { files: new Map<string, File>(), rows: [] as Row[], csvName: '', csvErr: '', thumbs: new Map<string, string>() };
 
 const isVid = (f: File) => /^(video|audio)\//.test(f.type) || /\.(mp4|webm|mov|mp3|wav)$/i.test(f.name);
@@ -123,4 +126,27 @@ export async function pinAll(project: { description?: string; website?: string }
   const base = out[0].replace(/[^/]+$/, '');
   if (!/^ipfs:\/\/\w+\/$/.test(base)) throw new Error('Unexpected IPFS response: ' + out[0]);
   return base;
+}
+
+/** Delayed-reveal placeholder drop box (single file) + optional name/description. */
+export function placeholderHtml(name: string, desc: string, coll: string) {
+  const f = ph.file; const vid = f && /^video\//.test(f.type);
+  const pv = f ? (vid ? `<video class="lmphpv" src="${ph.url}" muted loop playsinline autoplay></video>` : `<img class="lmphpv" src="${ph.url}" alt="">`) : '';
+  return `<div class="fcard ldup"><div class="gh">Placeholder (shown until reveal)</div><p class="mut small">One image (png, jpg, gif, webp, svg) or video (mp4, webm). Every token shows it until you reveal.</p>
+   <div class="lmph">${pv}<label class="lmdrop" data-drop="ph"><input type="file" class="fin" data-phfile accept="${PH_ACCEPT}"><b>${f ? 'Replace placeholder' : 'Drag &amp; drop placeholder here'}</b><span class="mut small">${f ? `${esc(f.name)} · ${(f.size / 1048576).toFixed(2)} MB` : 'or <u>browse files</u>'}</span></label></div>
+   <label>Placeholder name <span class="mut small">optional</span><input data-k="phName" value="${esc(name)}" placeholder="${esc((coll || 'Collection') + ' (Unrevealed)')}"></label>
+   <label>Placeholder description <span class="mut small">optional</span><textarea data-k="phDesc" rows="2" placeholder="Revealing soon.">${esc(desc)}</textarea></label></div>`;
+}
+/** Pins the placeholder media then a single placeholder JSON. Returns its ipfs://CID/placeholder.json (the contract returns it verbatim for every token). */
+export async function pinPlaceholder(meta: { name: string; description: string }, onStep: (s: string) => void): Promise<string> {
+  if (!pinningReady()) throw new Error('IPFS pinning is not configured on this site. Use "Advanced: I already have a placeholder URI".');
+  const f = ph.file; if (!f) throw new Error('Add a placeholder image.');
+  const { client, upload } = await tw();
+  onStep('Pinning placeholder to IPFS…');
+  const u: string = [].concat(await upload({ client, files: [f] }) as any)[0] as any;
+  const j: Record<string, unknown> = { name: meta.name, description: meta.description, image: u };
+  if (/^video\//.test(f.type) || /\.(mp4|webm)$/i.test(f.name)) j.animation_url = u;
+  const out: string = [].concat(await upload({ client, files: [new File([JSON.stringify(j)], 'placeholder.json', { type: 'application/json' })] }) as any)[0] as any;
+  if (!/^ipfs:\/\/\w+\/placeholder\.json$/.test(out)) throw new Error('Unexpected IPFS response: ' + out);
+  return out;
 }
