@@ -20,7 +20,7 @@ export const isAgentDrop = (d: any) => d?.raw?.nftType === 'erc463n7' || d?.nftT
 const FACTORY = parseAbi([
   'struct InfectLimits { uint16 skillBps; uint32 cooldown; uint128 maxPrice; uint32 scoreReward; }',
   'struct Limits { uint16 skillBps; uint32 attackerCooldown; uint32 minTargetAge; uint32 grace; uint32 minGap; uint32 targetCooldown; uint32 requestTimeout; }',
-  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; uint16 fertilityBps; uint16 twinBps; uint16 mutationBps; uint16 mutationSkillBps; bool infect; InfectLimits infectLimits; uint16 repoBps; uint16 queenBps; uint32 queenCap; uint16 zombieBps; uint256 tributeFee; uint32 tributePeriod; }',
+  'struct AgentInit { string name; string symbol; address owner; address treasury; uint256 mintPrice; uint32 maxSupply; uint32 maxPerWallet; uint16 royaltyBps; uint32 starvationPeriod; bool deathSkill; uint256 modelId; Limits limits; uint16 fertilityBps; uint16 twinBps; uint16 mutationBps; uint16 mutationSkillBps; bool infect; InfectLimits infectLimits; uint16 repoBps; uint16 queenBps; uint32 queenCap; uint16 zombieBps; uint256 tributeFee; uint32 tributePeriod; bytes kit; }',
   'function createAgentDrop(AgentInit p, bytes32 salt, uint256 deadline, bytes sig) returns (address engine, address starvation, address deathSkill)',
   'event AgentDropCreated(address indexed engine, address indexed creator, bytes32 indexed salt, address starvationRule, address deathSkill)',
 ]);
@@ -60,8 +60,26 @@ export async function deployAgentOn(slug: string, k: string, onTx: (h: string) =
 }
 
 /** Collector: mint qty (≤ 50 per tx, enforced on-chain) at the engine's mint price. 0.5% goes to MultiSea in-contract. */
-export async function agentMint(k: string, engine: Address, qty: number, onTx: (h: string) => void) {
+// AgentDropKit (the drop's renderer): MultiSeaDrop-style phases for agent drops. Gen-0 mint goes through kit.mint.
+const KIT = parseAbi(['function mint(address engine, address to, uint256 phaseId, uint256 qty, bytes32[] proof) payable returns (uint256)',
+  'function phases(address engine) view returns ((uint64 start, uint64 end, uint128 price, uint32 maxPerWallet, uint32 maxSupply, bytes32 merkleRoot)[])',
+  'function renderer() view returns (address)', 'function locked() view returns (bool)']);
+/** Kit address when this drop mints through AgentDropKit phases, else null (legacy engine mint at mintPrice). */
+export async function kitOf(k: string, engine: Address): Promise<Address | null> {
+  const pub = readClient(k);
+  try { const kit = (await pub.readContract({ address: engine, abi: KIT, functionName: 'renderer' })) as Address;
+    const ph = (await pub.readContract({ address: kit, abi: KIT, functionName: 'phases', args: [engine] })) as any[]; return ph.length ? kit : null; } catch { return null; }
+}
+export async function agentMint(k: string, engine: Address, qty: number, onTx: (h: string) => void, phaseId = 0, proof: `0x${string}`[] = [], unit?: bigint) {
   const pub = readClient(k); const me = wallet.address as Address;
+  const kit = await kitOf(k, engine);
+  if (kit) {
+    const ph = ((await pub.readContract({ address: kit, abi: KIT, functionName: 'phases', args: [engine] })) as any[])[phaseId];
+    const value = (unit ?? BigInt(ph.price)) * BigInt(qty);
+    const sim = await pub.simulateContract({ address: kit, abi: KIT, functionName: 'mint', args: [engine, me, BigInt(phaseId), BigInt(qty), proof], value, account: me });
+    const hash = await (await walletOn(k)).writeContract({ ...sim.request, chain: vchain(k), account: me }); onTx(hash);
+    return { hash, receipt: await pub.waitForTransactionReceipt({ hash }) };
+  }
   const price = (await pub.readContract({ address: engine, abi: ENGINE, functionName: 'mintPrice' })) as bigint;
   const sim = await pub.simulateContract({ address: engine, abi: ENGINE, functionName: 'mintMany', args: [me, BigInt(qty)], value: price * BigInt(qty), account: me });
   const hash = await (await walletOn(k)).writeContract({ ...sim.request, chain: vchain(k), account: me }); onTx(hash);
@@ -121,6 +139,8 @@ async function reaperOf(k: string, engine: Address) { return (await readClient(k
 /** Mint gate: false until the creator locked the Death-skill table (starvation-only drops: always true). */
 export async function agentMintOpen(k: string, engine: Address): Promise<boolean> {
   const r = await reaperOf(k, engine); if (/^0x0+$/.test(r)) return true;
+  // Phased drops: the reaper only opens inside kit.mint, so "open" = the Death-skill table is locked (or no table).
+  if (await kitOf(k, engine)) { try { return (await readClient(k).readContract({ address: r, abi: KIT, functionName: 'locked' })) as boolean; } catch { return true; } }
   return (await readClient(k).readContract({ address: r, abi: SKILL, functionName: 'mintOpen' })) as boolean;
 }
 

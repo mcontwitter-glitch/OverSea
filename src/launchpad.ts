@@ -390,7 +390,7 @@ app.addEventListener('click', e => {
       if (ph.kind === 'allowlist') { const r = await fetch(`${API}/launchpad/proof/${d.slug}/${ai}/${wallet.address!.toLowerCase()}`).then(r => r.json()); if (!r.eligible) throw new Error('This wallet is not on the ' + ph.name + ' allowlist.'); proof = r.proof; }
       if (isAgentDrop(d)) { const am = await import('./agentdrop');
         if (!(await am.agentMintOpen(k, (d as any).addresses[k]))) throw new Error('Mint opens once the creator locks the Death-skill table.');
-        return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); }
+        return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }, ai, proof, unit); }
       const m = await import('./lpchain');
       return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
       .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; })

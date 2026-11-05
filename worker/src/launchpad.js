@@ -40,7 +40,16 @@ const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repea
 // ERC-463N7 agent drops (AgentDropFactory in the ERC-463N7 repo). Mirrors AgentDropFactory.AgentInit exactly.
 export const LIMITS_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'attackerCooldown', type: 'uint32' }, { name: 'minTargetAge', type: 'uint32' }, { name: 'grace', type: 'uint32' }, { name: 'minGap', type: 'uint32' }, { name: 'targetCooldown', type: 'uint32' }, { name: 'requestTimeout', type: 'uint32' }];
 export const INFECT_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'cooldown', type: 'uint32' }, { name: 'maxPrice', type: 'uint128' }, { name: 'scoreReward', type: 'uint32' }];
-export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }, { name: 'mutationBps', type: 'uint16' }, { name: 'mutationSkillBps', type: 'uint16' }, { name: 'infect', type: 'bool' }, { name: 'infectLimits', type: 'tuple', components: INFECT_C }, { name: 'repoBps', type: 'uint16' }, { name: 'queenBps', type: 'uint16' }, { name: 'queenCap', type: 'uint32' }, { name: 'zombieBps', type: 'uint16' }, { name: 'tributeFee', type: 'uint256' }, { name: 'tributePeriod', type: 'uint32' }] }];
+export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }, { name: 'mutationBps', type: 'uint16' }, { name: 'mutationSkillBps', type: 'uint16' }, { name: 'infect', type: 'bool' }, { name: 'infectLimits', type: 'tuple', components: INFECT_C }, { name: 'repoBps', type: 'uint16' }, { name: 'queenBps', type: 'uint16' }, { name: 'queenCap', type: 'uint32' }, { name: 'zombieBps', type: 'uint16' }, { name: 'tributeFee', type: 'uint256' }, { name: 'tributePeriod', type: 'uint32' }, { name: 'kit', type: 'bytes' }] }];
+// AgentInit.kit = abi.encode(string mediaBase, string mediaExt, string deathURI, Phase[] phases) for AgentDropKit
+// (art + MultiSeaDrop-layout phases). Phase = (uint64 start, uint64 end, uint128 price, uint32 maxPerWallet, uint32 maxSupply, bytes32 merkleRoot).
+export const KIT_PHASE_C = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'maxSupply', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }];
+export const KIT_T = [{ type: 'string' }, { type: 'string' }, { type: 'string' }, { type: 'tuple[]', components: KIT_PHASE_C }];
+export const agentKit = ({ mediaBase = '', mediaExt = '', deathURI = '', phases = [] }) => encodeAbiParameters(KIT_T, [mediaBase, mediaExt, deathURI, phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end || 0), price: BigInt(p.price), maxPerWallet: p.maxPerWallet || 0, maxSupply: p.maxSupply || 0, merkleRoot: p.merkleRoot || ZH }))]);
+// Death image: one direct image file (not a folder / JSON). Media base: folder of <n><ext> pinned by the create form.
+export const DEATH_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/[\w\-.%]+|https:\/\/[\w\-./%]+)\.(png|jpe?g|gif|webp|svg)$/i;
+export const MEDIA_BASE_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/|https:\/\/[\w\-./%]+\/)$/;
+export const MEDIA_EXT_RE = /^\.(png|jpe?g|gif|webp|svg)$/i;
 export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
 export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
@@ -77,12 +86,12 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   const pub = d => ({ ...d, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
   const AG = LP.agentDrops || { enabled: false };
-  // Agent drop: single chain, one public phase (the engine has one mint price), art rendered on-chain (no URIs needed).
+  // Agent drop: single chain; full phases via AgentDropKit; art = uploaded media folder (+ optional death image), metadata JSON onchain.
   function validateAgent(b, base) {
     if (!AG.enabled) bad('ERC-463N7 agent drops are not enabled yet', 403);
     if (base.mode !== 'single' || base.chains.length !== 1) bad('agent drops are single-chain (one chain per drop)');
     const chain = base.chains[0]; if (!(AG.chains || []).includes(chain)) bad('agent drops are available on: ' + (AG.chains || []).join(', '));
-    if (base.phases.length !== 1 || base.phases[0].kind !== 'public') bad('agent drops have exactly one public phase (one mint price)');
+    base.phases.forEach((p, i) => { if (i && p.start < base.phases[i - 1].start) bad(`phase ${i + 1} starts before phase ${i}`); });
     if (base.creatorReserve) bad('creator reserve is not supported for agent drops');
     const a = b.agent && typeof b.agent === 'object' ? b.agent : {};
     const starveDays = int(a.starveDays ?? 30, 1, 365, 'starvation period (days)');
@@ -111,7 +120,11 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     let tribWei = '0';
     if (queen) { const m = String(a.tribEth ?? '0.0005').trim(); if (!/^\d{1,2}(\.\d{1,18})?$/.test(m)) bad('Tribute fee (ETH) must be a decimal number'); const [w, f = ''] = m.split('.'); tribWei = (BigInt(w) * 10n ** 18n + BigInt((f + '0'.repeat(18)).slice(0, 18))).toString(); if (BigInt(tribWei) === 0n || BigInt(tribWei) > 5n * 10n ** 15n) bad('Tribute fee (ETH) must be above 0 and at most 0.005'); }
     const zombie = !!a.zombie; const zombiePct = zombie ? int(a.zombiePct ?? 1, 0, 100, 'Zombie rarity (%)') : 0;
-    return { starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, repo, repoPct, queen, queenPct, queenCap, tribDays, tribWei, zombie, zombiePct, modelId: AG.oraModelId ?? 11 };
+    const mediaBase = str(a.mediaBase, 200), mediaExt = str(a.mediaExt, 8).toLowerCase(), deathURI = str(a.deathURI, 200);
+    if (mediaBase && !MEDIA_BASE_RE.test(mediaBase)) bad('agent media base must be a folder: ipfs://CID/ or https://…/');
+    if (mediaBase ? !MEDIA_EXT_RE.test(mediaExt) : mediaExt) bad('agent media extension must be .png, .jpg, .gif, .webp or .svg (with a media base)');
+    if (deathURI && !DEATH_RE.test(deathURI)) bad('death image must be one image file: ipfs://CID/death.png or https://….png (png, jpg, gif, webp, svg), not a folder or JSON');
+    return { mediaBase, mediaExt, deathURI, starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, repo, repoPct, queen, queenPct, queenCap, tribDays, tribWei, zombie, zombiePct, modelId: AG.oraModelId ?? 11 };
   }
 
   function validate(b, creator) {
@@ -172,13 +185,15 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     return out;
   }
 
-  const agentParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, treasury: d.payout, mintPrice: BigInt(d.phases[0].price), maxSupply: d.maxSupply, maxPerWallet: d.phases[0].maxPerWallet,
+  // Phases live in AgentDropKit; the engine price (also the spawn price) is the lowest phase price so every phase can pay it.
+  const agentParams = (d, creator) => ({ name: d.name, symbol: d.symbol, owner: creator, treasury: d.payout, mintPrice: d.phases.reduce((m, p) => (BigInt(p.price) < m ? BigInt(p.price) : m), BigInt(d.phases[0].price)), maxSupply: d.maxSupply, maxPerWallet: 0,
     royaltyBps: d.royaltyBps, starvationPeriod: d.agent.starveDays * 86400, deathSkill: d.agent.deathSkill, modelId: BigInt(d.agent.modelId), limits: d.agent.limits,
     fertilityBps: (d.agent.fertPct || 0) * 100, twinBps: (d.agent.twinPct ?? 20) * 100,
     mutationBps: (d.agent.mutPct || 0) * 100, mutationSkillBps: (d.agent.mutSkillPct ?? 15) * 100,
     infect: !!d.agent.infect, infectLimits: { skillBps: (d.agent.infPct || 0) * 100, cooldown: (d.agent.infCooldownH || 0) * 3600, maxPrice: BigInt(d.agent.infMaxWei || '0'), scoreReward: d.agent.infScore || 0 },
     repoBps: (d.agent.repoPct || 0) * 100, queenBps: (d.agent.queenPct || 0) * 100, queenCap: d.agent.queenCap || 0, zombieBps: (d.agent.zombiePct || 0) * 100,
-    tributeFee: BigInt(d.agent.tribWei || '0'), tributePeriod: (d.agent.tribDays || 0) * 86400 });
+    tributeFee: BigInt(d.agent.tribWei || '0'), tributePeriod: (d.agent.tribDays || 0) * 86400,
+    kit: agentKit({ mediaBase: d.agent.mediaBase || '', mediaExt: d.agent.mediaBase ? d.agent.mediaExt : '', deathURI: d.agent.deathURI || '', phases: d.phases }) });
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',

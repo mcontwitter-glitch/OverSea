@@ -651,3 +651,6 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 .lmph{display:flex;gap:12px;align-items:stretch}.lmph .lmdrop{flex:1}.lmphpv{width:120px;height:120px;object-fit:cover;border-radius:12px;border:1px solid #262626;margin:8px 0;flex:none}
 
 .ldrevbox{display:flex;flex-direction:column;gap:10px}.ldrevbox code{word-break:break-all}.ldrevin{display:flex;flex-direction:column;gap:4px}.ldrevin input{width:100%;box-sizing:border-box}
+
+[data-rootv]{word-break:break-all;overflow-wrap:anywhere}.ldph,.ldcsv{min-width:0;overflow-wrap:anywhere}
+.lddeathcmp{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}.lddeathcmp figure{margin:0;display:flex;flex-direction:column;gap:4px;align-items:center}.lddeathcmp .lmphpv{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;max-height:none}.lddeathnone{display:flex;align-items:center;justify-content:center;border:1px dashed var(--line,#333)}

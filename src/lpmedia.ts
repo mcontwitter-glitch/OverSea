@@ -107,16 +107,34 @@ export function uploadHtml(supply: number) {
 let cid: Promise<any> | null = null;
 const tw = () => (cid ??= Promise.all([import('thirdweb'), import('thirdweb/storage')]).then(([t, s]) => ({ client: t.createThirdwebClient({ clientId: THIRDWEB_CLIENT_ID }), upload: s.upload })));
 export const pinningReady = () => !!THIRDWEB_CLIENT_ID;
+/** ERC-463N7 agent drops: the onchain renderer shows media file `<n><ext>` for the n-th gen-0 mint, so the CSV must be
+ * tokenID 1..N (mint order) and every file an image with one shared extension. '' when OK. */
+export const AGENT_IMG_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
+export const extOf = (n: string) => (n.match(/\.[a-z0-9]+$/i)?.[0] || '').toLowerCase();
+export function agentMediaProblem(): string {
+  const ids = media.rows.map(r => +r.tokenID).sort((a, b) => a - b);
+  if (ids.some((v, i) => v !== i + 1)) return 'Agent drops: CSV tokenID must run 1, 2, 3… N (token N = the N-th agent minted).';
+  const exts = new Set(media.rows.map(r => extOf(r.file_name)));
+  if ([...exts].some(e => !AGENT_IMG_EXT.test(e))) return 'Agent drops: media must be images (png, jpg, gif, webp, svg); the token image is rendered onchain.';
+  if (exts.size > 1) return `Agent drops: use one file type for all media (found ${[...exts].join(', ')}).`;
+  return '';
+}
+/** Set by pinAll({ agent: true }): folder of `<tokenID><ext>` for AgentInit.kit (mediaBase + n + mediaExt). */
+export const agentPin = { mediaBase: '', mediaExt: '' };
 /** Pins media, then tokenID.json metadata folder. Returns ipfs://CID/ (token N → baseURI + N.json). */
-export async function pinAll(project: { description?: string; website?: string }, onStep: (s: string) => void): Promise<string> {
+export async function pinAll(project: { description?: string; website?: string }, onStep: (s: string) => void, agent = false): Promise<string> {
   if (!pinningReady()) throw new Error('IPFS pinning is not configured on this site (thirdweb client id missing). Use "Advanced: I already have a base URI".');
   const { client, upload } = await tw();
-  const files = media.rows.map(r => media.files.get(r.file_name)!).filter((f, i, a) => a.indexOf(f) === i);
+  const ext = agent ? extOf(media.rows[0]?.file_name || '') : '';
+  // agent: one file per token renamed <tokenID><ext> so the onchain renderer can derive it; else de-duplicated originals
+  const files = agent ? media.rows.map(r => { const f = media.files.get(r.file_name)!; return new File([f], `${r.tokenID}${ext}`, { type: f.type }); })
+    : media.rows.map(r => media.files.get(r.file_name)!).filter((f, i, a) => a.indexOf(f) === i);
   onStep(`Pinning ${files.length} media file${files.length > 1 ? 's' : ''} to IPFS…`);
   const mu: string[] = [].concat(await upload({ client, files }) as any);
-  const uriOf = new Map(files.map((f, i) => [f.name, mu[i]]));
+  const uriOf = new Map(agent ? media.rows.map((r, i) => [r.file_name + '#' + r.tokenID, mu[i]]) : files.map((f, i) => [f.name, mu[i]]));
+  if (agent) { const mb = mu[0].replace(/[^/]+$/, ''); if (!/^ipfs:\/\/\w+\/$/.test(mb)) throw new Error('Unexpected IPFS response: ' + mu[0]); agentPin.mediaBase = mb; agentPin.mediaExt = ext; }
   onStep(`Pinning ${media.rows.length} metadata files…`);
-  const metas = media.rows.map(r => { const f = media.files.get(r.file_name)!; const u = uriOf.get(f.name)!;
+  const metas = media.rows.map(r => { const f = media.files.get(r.file_name)!; const u = uriOf.get(agent ? r.file_name + '#' + r.tokenID : f.name)!;
     const j: Record<string, unknown> = { name: r.name, description: r.description || project.description || '', image: u };
     if (isVid(f)) j.animation_url = u;
     if (r.external_url || project.website) j.external_url = r.external_url || project.website;
@@ -148,5 +166,38 @@ export async function pinPlaceholder(meta: { name: string; description: string }
   if (/^video\//.test(f.type) || /\.(mp4|webm)$/i.test(f.name)) j.animation_url = u;
   const out: string = [].concat(await upload({ client, files: [new File([JSON.stringify(j)], 'placeholder.json', { type: 'application/json' })] }) as any)[0] as any;
   if (!/^ipfs:\/\/\w+\/placeholder\.json$/.test(out)) throw new Error('Unexpected IPFS response: ' + out);
+  return out;
+}
+
+/** ERC-463N7 death image: one image shown for dead / burned agents instead of the onchain tombstone. */
+export const DEATH_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.png,.jpg,.jpeg,.gif,.webp,.svg';
+export const DEATH_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/[\w\-.%]+|https:\/\/[\w\-./%]+)\.(png|jpe?g|gif|webp|svg)$/i;
+export const death = { file: null as File | null, url: '' };
+export function setDeath(f: File | null): string {
+  if (f && !AGENT_IMG_EXT.test(f.name)) return 'Death image: png, jpg, gif, webp or svg only.';
+  if (f && f.size > 20 * 1048576) return 'Death image: 20 MB max.';
+  if (death.url) URL.revokeObjectURL(death.url); death.file = f; death.url = f ? URL.createObjectURL(f) : ''; return '';
+}
+/** Same picture as AgentRenderer's onchain tombstone (dead agent, no custom image). */
+export function tombstoneSvg(id = 1) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 350" font-family="monospace"><rect width="100%" height="100%" fill="#0b0b12"/><path d="M115 260 V140 a60 60 0 0 1 120 0 V260 Z" fill="#2a2a2a" stroke="#777" stroke-width="3"/><text x="175" y="175" text-anchor="middle" font-size="28" fill="#999">RIP</text><text x="20" y="30" font-size="16" fill="#fff">ERC-463N7 #${id}</text><text x="20" y="300" font-size="13" fill="#ccc">Dead | gen 0 | Common</text><text x="20" y="325" font-size="13" fill="#ccc">score 0</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+export function deathHtml(pinned: string) {
+  const f = death.file; const cur = f ? `<img class="lmphpv" src="${death.url}" alt="">` : pinned ? `<img class="lmphpv" src="${esc(pinned.replace(/^ipfs:\/\//, 'https://gateway.pinata.cloud/ipfs/'))}" alt="">` : '';
+  return `<div class="fcard ldup lddeath"><div class="gh">🪦 Death image <span class="mut small">optional</span></div><p class="mut small">Shown for agents that die (starved or killed) or are burned, instead of the default tombstone. One image: png, jpg, gif, webp or svg. Fixed once the first agent is minted.</p>
+   <div class="lddeathcmp"><figure><img class="lmphpv" src="${tombstoneSvg()}" alt="Default tombstone"><figcaption class="mut small">Default (onchain)</figcaption></figure>
+   <figure>${cur || '<div class="lmphpv lddeathnone mut small">Your image</div>'}<figcaption class="mut small">${f ? esc(f.name) : pinned ? 'Pinned' : 'Yours'}</figcaption></figure></div>
+   <label class="lmdrop" data-drop="death"><input type="file" class="fin" data-deathfile accept="${DEATH_ACCEPT}"><b>${f || pinned ? 'Replace death image' : 'Drag &amp; drop death image here'}</b><span class="mut small">${f ? `${esc(f.name)} · ${(f.size / 1048576).toFixed(2)} MB` : pinned ? `<span class="mono">${esc(pinned)}</span>` : 'or <u>browse files</u>'}</span></label>
+   ${f || pinned ? '<button type="button" class="pill sm" data-act="deathclear">Use default tombstone</button>' : ''}</div>`;
+}
+/** Pins the death image as a direct image: ipfs://CID/death.<ext>. */
+export async function pinDeath(onStep: (s: string) => void): Promise<string> {
+  if (!pinningReady()) throw new Error('IPFS pinning is not configured on this site. Use "Advanced: I already have a death image URI".');
+  const f = death.file; if (!f) throw new Error('Add a death image.');
+  const { client, upload } = await tw();
+  onStep('Pinning death image to IPFS…');
+  const out: string = [].concat(await upload({ client, files: [new File([f], 'death' + extOf(f.name), { type: f.type })] }) as any)[0] as any;
+  if (!DEATH_RE.test(out) || !/\/death\.\w+$/.test(out)) throw new Error('Unexpected IPFS response: ' + out);
   return out;
 }

@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { verifyTypedData, keccak256, concat } from 'viem';
-import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES } from '../src/launchpad.js';
+import { verifyTypedData, keccak256, concat, decodeAbiParameters } from 'viem';
+import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES, agentKit, KIT_T } from '../src/launchpad.js';
 const CFG = JSON.parse(fs.readFileSync(new URL('../../config/collections.json', import.meta.url)));
 const LP0 = JSON.parse(fs.readFileSync(new URL('../../config/launchpad.json', import.meta.url)));
 const lc = s => String(s || '').toLowerCase();
@@ -165,8 +165,9 @@ test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding 
   const C = '0x0000000000000000000000000000000000c0ffee';
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
     limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500,
-    infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 }, repoBps: 300, queenBps: 200, queenCap: 10, zombieBps: 100, tributeFee: 5n * 10n ** 14n, tributePeriod: 604800 });
-  assert.equal(h, '0xb70d53b27a7a5b9e372ba6134e9f69fd8e74ed8f45a715117bde65fb34b66937'); // = AgentDropFactory.t.sol VECTOR
+    infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 }, repoBps: 300, queenBps: 200, queenCap: 10, zombieBps: 100, tributeFee: 5n * 10n ** 14n, tributePeriod: 604800,
+    kit: agentKit({ mediaBase: 'ipfs://QmMedia/', mediaExt: '.png', deathURI: 'ipfs://QmDeath/death.png', phases: [{ start: 1800000000, end: 1800003600, price: 10n ** 16n, maxPerWallet: 2, maxSupply: 100, merkleRoot: '0x' + '11'.repeat(32) }, { start: 1800003600, end: 0, price: 2n * 10n ** 16n, maxPerWallet: 0, maxSupply: 0 }] }) });
+  assert.equal(h, '0x78f99ac1a00058483a8e2f0bb54e2ee406dfda2280c9983dabca2d97fce45f92'); // = AgentDropFactory.t.sol VECTOR (AgentInit + kit bytes)
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -206,11 +207,11 @@ test('agent drops are OFF by default (config flag) and rejected at submit', asyn
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop()), /not enabled/);
 });
 
-test('agent drop validation: single chain, one public phase, ORA chains only for the Death skill, limit bounds', async () => {
+test('agent drop validation: single chain, ordered phases, ORA chains only for the Death skill, limit bounds', async () => {
   const { call } = setup({ LP: { agentDrops: AGON } });
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ chains: ['base', 'bnb'], allocations: { base: 250, bnb: 250 } })), /single-chain/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ chains: ['apechain'] })), /available on/);
-  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ phases: [{ kind: 'public', start: 1, price: '1' }, { kind: 'public', start: 2, price: '1' }] })), /one public phase/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ phases: [{ kind: 'public', start: 2, price: '1' }, { kind: 'public', start: 1, price: '1' }] })), /starts before/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { starveDays: 0 } })), /starvation/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { deathSkill: true, limits: { grace: 60 } } })), /grace/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { deathSkill: true, skillPct: 0 } })), /rarity/);
@@ -235,6 +236,33 @@ test('agent drop: approve -> AgentDropApproval signature (salt, cap via factory,
   assert.ok(ok, 'agent approval recovers to approver');
   const dep = await call('POST', '/launchpad/deployed/agents-one', { chain: 'base', address: '0x' + '55'.repeat(20) });
   assert.equal(dep.drop.status, 'live');
+});
+
+test('agent drop: full phases (times, prices, caps, allowlist root) + media base + death image reach AgentInit.kit', async () => {
+  const L = setup({ LP: { agentDrops: AGON } });
+  const { call, env, as } = L;
+  const art = { starveDays: 30, mediaBase: 'ipfs://QmMediaFolder/', mediaExt: '.png', deathURI: 'ipfs://QmDeathImg/death.png' };
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, deathURI: 'ipfs://QmDeathImg/' } })), /death image/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, deathURI: 'ipfs://QmDeathImg/meta.json' } })), /death image/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, mediaBase: 'ipfs://QmMediaFolder/1.png' } })), /media base/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, mediaExt: '.mp4' } })), /media extension/);
+  const al = [creator.address, '0x' + '22'.repeat(20)];
+  await call('POST', '/launchpad/submit', agentDrop({ agent: art, phases: [
+    { name: 'AL', kind: 'allowlist', start: 1800000000, end: 1800003600, price: '5000000000000000', maxPerWallet: 2, maxSupply: 100, allowlist: al },
+    { name: 'Public', kind: 'public', start: 1800003600, end: 0, price: '10000000000000000', maxPerWallet: 5, maxSupply: 0 }] }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/agents-one');
+  as(creator.address);
+  env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
+  assert.equal(a.params.mintPrice, '5000000000000000'); // engine / spawn price = lowest phase price
+  assert.equal(a.params.maxPerWallet, 0); // per-wallet caps are per phase in the kit
+  const [mb, ext, death, ph] = decodeAbiParameters(KIT_T, a.params.kit);
+  assert.equal(mb, 'ipfs://QmMediaFolder/'); assert.equal(ext, '.png'); assert.equal(death, 'ipfs://QmDeathImg/death.png');
+  assert.equal(ph.length, 2);
+  assert.deepEqual([ph[0].start, ph[0].end, ph[0].price, ph[0].maxPerWallet, ph[0].maxSupply], [1800000000n, 1800003600n, 5000000000000000n, 2, 100]);
+  assert.equal(ph[0].merkleRoot, merkle(al).root);
+  assert.equal(ph[1].merkleRoot, '0x' + '00'.repeat(32)); assert.equal(ph[1].price, 10n ** 16n); assert.equal(ph[1].maxPerWallet, 5);
+  assert.equal(a.configHash, agentConfigHash({ ...a.params, mintPrice: BigInt(a.params.mintPrice), modelId: BigInt(a.params.modelId) }));
 });
 
 test('agent drop: Infect rarity, cooldown, max price and score reward reach the signed AgentInit', async () => {
