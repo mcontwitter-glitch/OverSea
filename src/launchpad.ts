@@ -9,6 +9,7 @@ import { LP_LIVE, factoryOn } from './lpchain';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
+import { encodeTraits, traitGas, traitsCard, primeCost, loadTraits, saveTraits, fetchTraits, type TraitEnc } from './agenttraits';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; native: string; chainId: number }>;
@@ -34,7 +35,7 @@ const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries
 const AGENT_DEMO: Drop | null = AGENT_PREVIEW ? { slug: 'agents-demo', name: 'Hungry Agents', symbol: 'HGRY', creator: '0x000000000000000000000000000000000000a9e7', demo: true, status: 'live', mode: 'single', nftType: 'erc463n7',
   description: 'Demo ERC-463N7 agent drop. Each NFT is an agent with its own wallet. Unfed agents starve after 30 days; agents with the rare Death skill (5%) can ask ORA to judge a kill on another agent. Preview only: nothing mints on-chain.',
   chains: [{ chain: 'base', supply: 500, minted: 212 }], maxSupply: 500, royaltyBps: 500, reveal: 'instant', img: '/brand/icon-128.webp', art: [],
-  phases: [{ name: 'Public', kind: 'public', start: Math.floor(Date.now() / 1000) - 86400, end: 0, price: 0.01, maxPerWallet: 0 }], agent: { starveDays: 30, deathSkill: true, skillPct: 5 } } as any : null;
+  phases: [{ name: 'Public', kind: 'public', start: Math.floor(Date.now() / 1000) - 86400, end: 0, price: 0.01, maxPerWallet: 0 }], agent: { starveDays: 30, deathSkill: true, skillPct: 5, traitRows: 500 } } as any : null;
 const demoAndLocal2 = () => (AGENT_DEMO ? [AGENT_DEMO, ...demoAndLocal()] : demoAndLocal());
 const allDrops = () => [...remote, ...demoAndLocal2().filter(x => !remote.some(r => r.slug === x.slug))];
 const findDrop = (s: string) => remote.find(d => d.slug === s) || (AGENT_DEMO && s === AGENT_DEMO.slug ? AGENT_DEMO : null) || findLocal(s);
@@ -285,13 +286,32 @@ function ordBox(d: Drop) {
 }
 // ---- ERC-463N7 agent drops: your agents (wallet, last fed, Feed, Starve), Death-skill attack with strike/grace, burned tombstones, creator lock ----
 let agents: AgentView[] | null = null; let atkFrom = 0; let agMsg = ''; let agBusy = ''; let demoLocked = false;
+// Onchain CSV traits (AgentDropKit): table from this browser (create form), the pinned traitsURI, or a re-uploaded CSV.
+let trEnc: TraitEnc | null = null; let trSlug = ''; let trState: { expected: number; rows: number; done: boolean; dict: boolean } | null | undefined; let trMsg = ''; let demoTraits = '';
+const demoEnc = (n: number) => encodeTraits(Array.from({ length: n }, (_, i) => ({ tokenID: String(i + 1), attrs: [['Background', ['Mint', 'Peach', 'Night', 'Sand', 'Lilac'][i % 5]], ['Fur', ['Gold', 'Ash', 'Cream', 'Ink'][(i * 7) % 4]], ['Eyes', ['Laser', 'Sleepy', 'Wide', 'Wink', 'Hypno', 'X'][(i * 3) % 6]], ['Mouth', ['Grin', 'Fang', 'Pipe'][(i * 5) % 3]], ['Hat', i % 4 ? ['Cap', 'Crown', 'Halo', 'Beanie'][(i * 11) % 4] : ''], ['Status', ['Common', 'Rare'][i % 9 ? 0 : 1]]].map(([trait_type, value]) => ({ trait_type, value })) }))) as TraitEnc;
+function traitsBox(d: Drop) {
+  const R = d as any; const A: any = R.agent || R.raw?.agent || {}; const demo = !!R.demo; const k = d.chains[0].chain; const eng = R.addresses?.[k];
+  if (trSlug !== d.slug) { trSlug = d.slug; trState = undefined; trMsg = ''; trEnc = demo ? demoEnc(A.traitRows) : loadTraits(d.slug);
+    if (!trEnc && A.traitsURI) fetchTraits(A.traitsURI).then(e => { if (e && trSlug === d.slug) { trEnc = e; saveTraits(d.slug, e); render(); } }); }
+  if (!demo && eng && trState === undefined) { trState = null; import('./agentdrop').then(m => m.agentTraitsState(k, eng)).then(t => { trState = t; render(); }); }
+  if (demo ? demoTraits : trState?.done) return `<div class="small ok" style="margin-bottom:8px">✓ ${demo ? demoTraits : trState!.rows ? `CSV traits stored onchain (${trState!.rows.toLocaleString()} rows)` : 'CSV traits skipped'} · mint can open</div>`;
+  if (!demo && !eng) return `<div class="fcard small agatk" style="margin-bottom:8px"><div class="gh">Creator: CSV traits onchain</div><p class="mut small">After you deploy, upload your ${(+A.traitRows).toLocaleString()} CSV trait rows here (mint stays closed until then).</p></div>`;
+  if (trEnc) primeCost(trEnc, [k], render);
+  const n = trEnc ? traitGas(trEnc).txs : 0; const busy = agBusy === 'traits' || agBusy === 'skiptraits';
+  const done = trState?.rows ? ` · ${trState.rows.toLocaleString()} of ${trState.expected.toLocaleString()} rows already uploaded` : '';
+  return `<div class="fcard small agatk lptrstep" style="margin-bottom:8px"><div class="gh">Creator: put the CSV traits onchain <span class="ldtag drop">before mint</span></div>
+   <p class="mut small">Mint stays closed onchain until the ${(+A.traitRows).toLocaleString()} signed trait rows are uploaded (or you skip them). Uploading is final and locks at the first mint${done}.</p>
+   ${trEnc ? traitsCard(trEnc, [k], 'Your traits table') : `<p class="small ldwarn">The traits table isn't in this browser${A.traitsURI ? ' (loading the pinned copy…)' : ''}. Re-upload the same metadata CSV:</p><label class="small">Metadata CSV<input type="file" accept=".csv,text/csv" data-trcsv></label>`}
+   ${trMsg ? `<p class="small">${trMsg}</p>` : ''}
+   <div class="agbtns"><button class="bbtn sm" data-agtr="up" ${!trEnc || busy ? 'disabled' : ''}>${agBusy === 'traits' ? '<span class="spin"></span> Uploading…' : `Upload traits on-chain (${n} tx)`}</button><button class="obtn sm" data-agtr="skip" ${busy ? 'disabled' : ''}>Skip CSV traits</button></div></div>`;
+}
 function agentBox(d: Drop) {
   const now = Math.floor(Date.now() / 1000); const A: any = (d as any).agent || (d as any).raw?.agent || {}; const k = d.chains[0].chain; const native = chains[k]?.native || 'ETH';
   if (agents === null && (d as any).demo) agents = demoAgents(now);
   const feeEth = ORA_FEE_WEI[k] ? Number(BigInt(ORA_FEE_WEI[k])) / 1e18 : undefined;
   const o = { symbol: d.symbol, periodS: (A.starveDays || 30) * 86400, now, feeEth, native, busy: agBusy };
   return `<div class="fcard ldagents"><div class="gh">Your agents ${(d as any).demo ? '<span class="mut small">demo</span>' : ''}</div>
-   ${A.deathSkill && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? lockBox(d) : ''}
+   ${A.traitRows && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? traitsBox(d) : ''}${A.deathSkill && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? lockBox(d) : ''}
    <p class="mut small">Starvation is always on for every agent: unfed for ${A.starveDays || 30} days, anyone can starve it (NFT burned, wallet to its heir or the treasury). It survives transfers and holders can't turn it off. Feed an agent (any amount into its wallet) to reset the clock. ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
    ${agents?.length ? agents.map(a => agentCard(a, o)).join('') : `<p class="mut small">${wallet.address ? 'No agents loaded yet.' : 'Connect a wallet to see your agents.'}</p>`}
    ${(d as any).demo ? '' : `<div class="agbtns"><input data-agid type="number" min="1" placeholder="Agent #"><button class="obtn sm" data-agload>Load agent</button></div>`}
@@ -344,7 +364,7 @@ function render() {
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
-  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib]') as HTMLElement | null;
+  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr]') as HTMLElement | null;
   if (ag) { const d = findDrop(slug); if (d) onAgent(d, ag); return; }
   const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
@@ -389,7 +409,7 @@ app.addEventListener('click', e => {
     (async () => { let proof: `0x${string}`[] = [];
       if (ph.kind === 'allowlist') { const r = await fetch(`${API}/launchpad/proof/${d.slug}/${ai}/${wallet.address!.toLowerCase()}`).then(r => r.json()); if (!r.eligible) throw new Error('This wallet is not on the ' + ph.name + ' allowlist.'); proof = r.proof; }
       if (isAgentDrop(d)) { const am = await import('./agentdrop');
-        if (!(await am.agentMintOpen(k, (d as any).addresses[k]))) throw new Error('Mint opens once the creator locks the Death-skill table.');
+        const why = await am.agentMintGate(k, (d as any).addresses[k]); if (why) throw new Error(why);
         return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }, ai, proof, unit); }
       const m = await import('./lpchain');
       return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
@@ -421,6 +441,14 @@ function onAgent(d: Drop, el: HTMLElement) {
   if (el.dataset.agload != null) { const id = +((app.querySelector('[data-agid]') as HTMLInputElement)?.value || 0); if (!(id > 0) || !eng) return;
     import('./agentdrop').then(m => m.loadAgent(k, eng, id)).then(a => { agents = [a, ...(agents || []).filter(x => x.id !== id)]; agMsg = ''; }).catch(e => { agMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(render); return; }
   if (el.dataset.agcancel != null) { atkFrom = 0; agMsg = ''; render(); return; }
+  if (el.dataset.agtr) { const skip = el.dataset.agtr === 'skip';
+    if (skip && !confirm('Skip CSV traits? Agents will show only their onchain traits. This is final.')) return;
+    if (demo) { demoTraits = skip ? 'CSV traits skipped (demo)' : `CSV traits stored onchain (${trEnc?.rows ?? 0} rows, ${trEnc ? traitGas(trEnc).txs : 0} tx, demo: nothing sent)`; render(); return; }
+    if (!wallet.address) { openConnect(); return; } agBusy = skip ? 'skiptraits' : 'traits'; trMsg = ''; render();
+    import('./agentdrop').then(m => skip ? m.agentSkipTraits(k, eng, h => { trMsg = `Sent ${txLink(k, h)}…`; render(); })
+      : m.agentUploadTraits(k, eng, trEnc!, (h, i, n) => { trMsg = `<span class="spin"></span> Tx ${i}/${n}: ${txLink(k, h)}`; render(); }))
+      .then(() => import('./agentdrop')).then(m => m.agentTraitsState(k, eng)).then(t => { trState = t; trMsg = ''; })
+      .catch(e => { trMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { agBusy = ''; render(); }); return; }
   if (el.dataset.aglock != null) { const raw = ((app.querySelector('[data-aglockids]') as HTMLInputElement)?.value || '').split(/[\s,]+/).filter(Boolean);
     if (raw.some(x => !/^\d+$/.test(x))) { agMsg = '<span class="err">Ids must be whole numbers.</span>'; render(); return; }
     if (demo) { demoLocked = true; agMsg = `✓ Demo only: ${raw.length} ids would get the Death skill, then lock() opens mint. No transaction was sent.`; render(); return; }
@@ -459,6 +487,9 @@ app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.name === 'pay') { pay = t.value as any; render(); }
   if (t.dataset.qin != null) { qty = Math.max(1, Math.floor(+t.value || 1)); render(); }
+  if (t.dataset.trcsv != null && t.files?.[0]) { const d = findDrop(slug); t.files[0].text().then(async txt => { const lm = await import('./lpmedia'); lm.loadCsv(t.files![0].name, txt);
+    const e = lm.media.csvErr || encodeTraits(lm.media.rows); lm.media.rows = [];
+    if (typeof e === 'string' || !e) { trMsg = `<span class="err">${esc(e || 'No trait columns in that CSV.')}</span>`; } else { trEnc = e; if (d) saveTraits(d.slug, e); trMsg = ''; } render(); }); }
 });
 async function refreshRemote() { if (!apiFeatures.includes('launchpad')) return; try { const j = await fetch(API + '/launchpad/drops').then(r => r.json()); remote = (j.drops || []).map(fromApi); render(); } catch {} }
 if (path === '/launchpad/create') import('./launchcreate');

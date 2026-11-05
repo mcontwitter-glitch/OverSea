@@ -7,6 +7,7 @@ import { createWalletClient, custom, decodeEventLog, parseAbi, type Address } fr
 import { wallet, ensureChain, readClient, vchain } from './wallet';
 import { api } from './auth';
 import { esc } from './shell';
+import { KIT_TRAITS, traitTxs, rowsPerChunk, type TraitEnc } from './agenttraits';
 
 const AG: any = (LPC as any).agentDrops || { enabled: false };
 export const AGENT_DROPS: boolean = !!AG.enabled;
@@ -136,12 +137,44 @@ export async function agentAttack(k: string, engine: Address, attacker: number, 
 
 async function reaperOf(k: string, engine: Address) { return (await readClient(k).readContract({ address: engine, abi: ENGINE, functionName: 'reaper' })) as Address; }
 
+/** Why mint is still closed ('' = open): CSV traits not uploaded/skipped, or the Death-skill table not locked. */
+export async function agentMintGate(k: string, engine: Address): Promise<string> {
+  const t = await agentTraitsState(k, engine);
+  if (t && t.expected && !t.done) return 'Mint opens once the creator uploads the CSV traits onchain (or skips them).';
+  return (await agentMintOpen(k, engine)) ? '' : 'Mint opens once the creator locks the Death-skill table.';
+}
 /** Mint gate: false until the creator locked the Death-skill table (starvation-only drops: always true). */
 export async function agentMintOpen(k: string, engine: Address): Promise<boolean> {
   const r = await reaperOf(k, engine); if (/^0x0+$/.test(r)) return true;
   // Phased drops: the reaper only opens inside kit.mint, so "open" = the Death-skill table is locked (or no table).
   if (await kitOf(k, engine)) { try { return (await readClient(k).readContract({ address: r, abi: KIT, functionName: 'locked' })) as boolean; } catch { return true; } }
   return (await readClient(k).readContract({ address: r, abi: SKILL, functionName: 'mintOpen' })) as boolean;
+}
+
+/** Onchain CSV traits (AgentDropKit): signed row count, rows uploaded, sealed. null = legacy drop without a kit. */
+export async function agentTraitsState(k: string, engine: Address): Promise<{ expected: number; rows: number; done: boolean; dict: boolean } | null> {
+  const kit = await kitOf(k, engine); if (!kit) return null;
+  try { const [expected, rows, , done, dict] = (await readClient(k).readContract({ address: kit, abi: KIT_TRAITS, functionName: 'traits', args: [engine] })) as any;
+    return { expected: Number(expected), rows: Number(rows), done, dict: !/^0x0+$/.test(dict) }; } catch { return null; }
+}
+/** Creator: upload the CSV-traits table in batches (resumes after a partial upload), the last tx seals and opens mint. */
+export async function agentUploadTraits(k: string, engine: Address, e: TraitEnc, onTx: (h: string, i: number, n: number) => void) {
+  const kit = await kitOf(k, engine); if (!kit) throw new Error('This drop has no AgentDropKit.');
+  const st = await agentTraitsState(k, engine); if (!st) throw new Error('Could not read the traits state.');
+  if (st.done) return; if (st.expected !== e.rows) throw new Error(`The deploy signed ${st.expected} trait rows but this table has ${e.rows}.`);
+  const from = Math.floor(st.rows / rowsPerChunk(e)); const txs = traitTxs(e, engine, from, !st.dict);
+  const me = wallet.address as Address; const pub = readClient(k); const w = await walletOn(k);
+  for (let i = 0; i < txs.length; i++) { const t = txs[i];
+    const sim = await pub.simulateContract({ address: kit, abi: KIT_TRAITS, functionName: 'uploadTraits', args: [engine, t.dict, t.chunks, t.seal], account: me });
+    const hash = await w.writeContract({ ...sim.request, chain: vchain(k), account: me }); onTx(hash, i + 1, txs.length);
+    const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error(`traits tx ${i + 1} reverted`); }
+}
+/** Creator: open mint without CSV traits (agents show only their onchain traits). Final. */
+export async function agentSkipTraits(k: string, engine: Address, onTx: (h: string) => void) {
+  const kit = await kitOf(k, engine); if (!kit) throw new Error('This drop has no AgentDropKit.');
+  const me = wallet.address as Address; const pub = readClient(k);
+  const sim = await pub.simulateContract({ address: kit, abi: KIT_TRAITS, functionName: 'skipTraits', args: [engine], account: me });
+  const hash = await (await walletOn(k)).writeContract({ ...sim.request, chain: vchain(k), account: me }); onTx(hash); return pub.waitForTransactionReceipt({ hash });
 }
 
 /** Anyone: kill an agent that is past its starvation period (always on, no holder opt-in). */

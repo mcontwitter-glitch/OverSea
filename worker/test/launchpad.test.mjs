@@ -166,8 +166,8 @@ test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding 
   const h = agentConfigHash({ name: 'Agents', symbol: 'AGT', owner: C, treasury: C, mintPrice: 10n ** 16n, maxSupply: 500, maxPerWallet: 0, royaltyBps: 500, starvationPeriod: 2592000, deathSkill: true, modelId: 11n,
     limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500,
     infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 }, repoBps: 300, queenBps: 200, queenCap: 10, zombieBps: 100, tributeFee: 5n * 10n ** 14n, tributePeriod: 604800,
-    kit: agentKit({ mediaBase: 'ipfs://QmMedia/', mediaExt: '.png', deathURI: 'ipfs://QmDeath/death.png', phases: [{ start: 1800000000, end: 1800003600, price: 10n ** 16n, maxPerWallet: 2, maxSupply: 100, merkleRoot: '0x' + '11'.repeat(32) }, { start: 1800003600, end: 0, price: 2n * 10n ** 16n, maxPerWallet: 0, maxSupply: 0 }] }) });
-  assert.equal(h, '0x78f99ac1a00058483a8e2f0bb54e2ee406dfda2280c9983dabca2d97fce45f92'); // = AgentDropFactory.t.sol VECTOR (AgentInit + kit bytes)
+    kit: agentKit({ mediaBase: 'ipfs://QmMedia/', mediaExt: '.png', deathURI: 'ipfs://QmDeath/death.png', phases: [{ start: 1800000000, end: 1800003600, price: 10n ** 16n, maxPerWallet: 2, maxSupply: 100, merkleRoot: '0x' + '11'.repeat(32) }, { start: 1800003600, end: 0, price: 2n * 10n ** 16n, maxPerWallet: 0, maxSupply: 0 }], traitRows: 1000 }) });
+  assert.equal(h, '0x839050454bb85ee47ce5907160cedd9c6ff8a941dbcfbf015083f16f86d60ba6'); // = AgentDropFactory.t.sol VECTOR (AgentInit + kit bytes incl. traitRows)
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -246,6 +246,10 @@ test('agent drop: full phases (times, prices, caps, allowlist root) + media base
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, deathURI: 'ipfs://QmDeathImg/meta.json' } })), /death image/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, mediaBase: 'ipfs://QmMediaFolder/1.png' } })), /media base/);
   await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, mediaExt: '.mp4' } })), /media extension/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, traitRows: 501 } })), /CSV trait rows/); // > maxSupply
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, traitRows: 2.5 } })), /CSV trait rows/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { ...art, traitRows: 3, traitsURI: 'https://x.io/t.json' } })), /traits table/);
+  art.traitRows = 3; art.traitsURI = 'ipfs://QmTraits/traits.json'; // 3 CSV lines -> kit.expectedRows: mint gated until kit.uploadTraits seals them (or skipTraits)
   const al = [creator.address, '0x' + '22'.repeat(20)];
   await call('POST', '/launchpad/submit', agentDrop({ agent: art, phases: [
     { name: 'AL', kind: 'allowlist', start: 1800000000, end: 1800003600, price: '5000000000000000', maxPerWallet: 2, maxSupply: 100, allowlist: al },
@@ -254,9 +258,10 @@ test('agent drop: full phases (times, prices, caps, allowlist root) + media base
   as(creator.address);
   env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
   const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
-  assert.equal(a.params.mintPrice, '5000000000000000'); // engine / spawn price = lowest phase price
+  assert.equal(a.params.mintPrice, '5000000000000000'); // engine price = lowest phase price (only the mint price: spawning was removed)
   assert.equal(a.params.maxPerWallet, 0); // per-wallet caps are per phase in the kit
-  const [mb, ext, death, ph] = decodeAbiParameters(KIT_T, a.params.kit);
+  const [mb, ext, death, ph, rows] = decodeAbiParameters(KIT_T, a.params.kit);
+  assert.equal(rows, 3);
   assert.equal(mb, 'ipfs://QmMediaFolder/'); assert.equal(ext, '.png'); assert.equal(death, 'ipfs://QmDeathImg/death.png');
   assert.equal(ph.length, 2);
   assert.deepEqual([ph[0].start, ph[0].end, ph[0].price, ph[0].maxPerWallet, ph[0].maxSupply], [1800000000n, 1800003600n, 5000000000000000n, 2, 100]);

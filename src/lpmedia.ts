@@ -146,6 +146,14 @@ export async function pinAll(project: { description?: string; website?: string }
   return base;
 }
 
+/** Pins one JSON file (e.g. the agent CSV-traits encoding) and returns its ipfs://CID/<name> URI. */
+export async function pinJson(name: string, obj: unknown): Promise<string> {
+  const { client, upload } = await tw();
+  const u: string[] = [].concat(await upload({ client, files: [new File([JSON.stringify(obj)], name, { type: 'application/json' })] }) as any);
+  if (!/^ipfs:\/\/\w+\/[\w.-]+$/.test(u[0])) throw new Error('Unexpected IPFS response: ' + u[0]);
+  return u[0];
+}
+
 /** Delayed-reveal placeholder drop box (single file) + optional name/description. */
 export function placeholderHtml(name: string, desc: string, coll: string) {
   const f = ph.file; const vid = f && /^video\//.test(f.type);
