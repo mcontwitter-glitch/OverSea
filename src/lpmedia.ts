@@ -1,0 +1,126 @@
+// Launchpad create form: OpenSea-style media + metadata CSV upload. Files stay in memory (never in sessionStorage);
+// on submit, media is pinned to IPFS via thirdweb storage (VITE_THIRDWEB_CLIENT_ID, no extra secret), then per-token
+// JSON (tokenID.json) is generated and pinned as one folder; its ipfs://CID/ becomes the drop's baseURI.
+import { esc } from './shell';
+import { THIRDWEB_CLIENT_ID } from './embedded';
+
+export const MEDIA_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,audio/mpeg,audio/wav,model/gltf-binary,.glb,.gltf';
+const MAX_FILE = 100 * 1024 * 1024; // per file
+export const CSV_BASE = ['tokenID', 'name', 'description', 'file_name', 'external_url'];
+export type Row = { line: number; tokenID: string; name: string; description: string; file_name: string; external_url: string; attrs: { trait_type: string; value: string }[]; errs: string[] };
+export const media = { files: new Map<string, File>(), rows: [] as Row[], csvName: '', csvErr: '', thumbs: new Map<string, string>() };
+
+const isVid = (f: File) => /^(video|audio)\//.test(f.type) || /\.(mp4|webm|mov|mp3|wav)$/i.test(f.name);
+export function addMedia(list: FileList | File[]) {
+  const skipped: string[] = [];
+  for (const f of Array.from(list)) { if (f.size > MAX_FILE) { skipped.push(f.name); continue; } media.files.set(f.name, f); }
+  validateRows(); return skipped;
+}
+export function clearMedia() { for (const u of media.thumbs.values()) URL.revokeObjectURL(u); media.files.clear(); media.thumbs.clear(); validateRows(); }
+const thumb = (f: File) => { let u = media.thumbs.get(f.name); if (!u) { u = URL.createObjectURL(f); media.thumbs.set(f.name, u); } return u; };
+
+/** RFC4180-ish CSV parser (quotes, escaped quotes, CRLF). */
+export function parseCsv(txt: string): string[][] {
+  const out: string[][] = []; let row: string[] = [], cell = '', q = false;
+  txt = txt.replace(/^\uFEFF/, '');
+  for (let i = 0; i < txt.length; i++) {
+    const c = txt[i];
+    if (q) { if (c === '"') { if (txt[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; continue; }
+    if (c === '"') q = true; else if (c === ',') { row.push(cell); cell = ''; } else if (c === '\n' || c === '\r') { if (c === '\r' && txt[i + 1] === '\n') i++; row.push(cell); out.push(row); row = []; cell = ''; } else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); out.push(row); }
+  return out.filter(r => r.some(v => v.trim()));
+}
+export function loadCsv(name: string, txt: string) {
+  media.csvName = name; media.csvErr = ''; media.rows = [];
+  const t = parseCsv(txt); if (!t.length) { media.csvErr = 'CSV is empty.'; return; }
+  const head = t[0].map(h => h.trim()); const low = head.map(h => h.toLowerCase());
+  const need = ['tokenid', 'name', 'file_name']; const miss = need.filter(n => !low.includes(n));
+  if (miss.length) { media.csvErr = 'Missing column(s): ' + miss.join(', ') + '. Download the template.'; return; }
+  const col = (n: string) => low.indexOf(n.toLowerCase());
+  const traits = head.map((h, i) => [h.match(/^attributes\[(.+)\]$/i)?.[1]?.trim(), i] as const).filter(([n]) => n) as [string, number][];
+  media.rows = t.slice(1).map((r, k) => ({ line: k + 2, tokenID: (r[col('tokenid')] || '').trim(), name: (r[col('name')] || '').trim(), description: col('description') >= 0 ? (r[col('description')] || '').trim() : '',
+    file_name: (r[col('file_name')] || '').trim(), external_url: col('external_url') >= 0 ? (r[col('external_url')] || '').trim() : '',
+    attrs: traits.map(([n, i]) => ({ trait_type: n, value: (r[i] || '').trim() })).filter(a => a.value), errs: [] }));
+  if (!media.rows.length) media.csvErr = 'CSV has a header but no rows.';
+  validateRows();
+}
+export function validateRows() {
+  const seen = new Map<string, number>();
+  for (const r of media.rows) {
+    r.errs = [];
+    if (!/^\d+$/.test(r.tokenID)) r.errs.push('tokenID must be a whole number');
+    else if (seen.has(r.tokenID)) r.errs.push(`duplicate tokenID (also row ${seen.get(r.tokenID)})`); else seen.set(r.tokenID, r.line);
+    if (!r.name) r.errs.push('name is empty');
+    if (!r.file_name) r.errs.push('file_name is empty'); else if (!media.files.has(r.file_name)) r.errs.push(`no uploaded file "${r.file_name}"`);
+    if (r.external_url && !/^https?:\/\/\S+$/.test(r.external_url)) r.errs.push('external_url must start with https://');
+  }
+}
+export const badRows = () => media.rows.filter(r => r.errs.length);
+export const usingUpload = () => media.files.size > 0 || media.rows.length > 0;
+/** '' when ready to pin, else the first problem. */
+export function uploadProblem(): string {
+  if (!media.files.size) return 'Upload your media files.';
+  if (media.csvErr) return 'Metadata CSV: ' + media.csvErr;
+  if (!media.rows.length) return 'Upload the metadata CSV (download the template).';
+  const b = badRows(); if (b.length) return `Metadata CSV: ${b.length} row${b.length > 1 ? 's have' : ' has'} errors (first: row ${b[0].line}, ${b[0].errs[0]}).`;
+  const used = new Set(media.rows.map(r => r.file_name)); const unused = [...media.files.keys()].filter(n => !used.has(n));
+  if (unused.length) return `${unused.length} uploaded file${unused.length > 1 ? 's are' : ' is'} not in the CSV (e.g. "${unused[0]}"). Remove it or add a row.`;
+  return '';
+}
+
+export function templateCsv(traits = ['Background', 'Eyes']) {
+  const head = [...CSV_BASE, ...traits.map(t => `attributes[${t}]`)];
+  const rows = [['1', 'My NFT #1', 'The first one', '1.png', 'https://example.com/1', 'Blue', 'Laser'], ['2', 'My NFT #2', 'An animated one', '2.gif', '', 'Red', 'Sleepy'], ['3', 'My NFT #3', 'A video', '3.mp4', '', 'Green', '']];
+  const q = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  return [head, ...rows].map(r => r.map(q).join(',')).join('\n') + '\n';
+}
+export function downloadTemplate() {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([templateCsv()], { type: 'text/csv' })); a.download = 'multisea-metadata-template.csv';
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+function cell(r: Row) {
+  const f = media.files.get(r.file_name);
+  const pv = f ? (isVid(f) ? (/^video\//.test(f.type) || /\.(mp4|webm|mov)$/i.test(f.name) ? `<video src="${thumb(f)}" muted loop playsinline autoplay></video>` : '<div class="lmnone">♪</div>') : `<img src="${thumb(f)}" alt="" loading="lazy">`) : '<div class="lmnone">?</div>';
+  return `<div class="lmcell ${r.errs.length ? 'bad' : ''}">${pv}<div class="lmmeta"><b>#${esc(r.tokenID || '?')} ${esc(r.name || '(no name)')}</b><span class="mut mono">${esc(r.file_name || '—')}</span>${r.attrs.length ? `<span class="mut">${r.attrs.slice(0, 3).map(a => `${esc(a.trait_type)}: ${esc(a.value)}`).join(' · ')}</span>` : ''}${r.errs.map(e => `<span class="err">Row ${r.line}: ${esc(e)}</span>`).join('')}</div></div>`;
+}
+/** Media + CSV sections. */
+export function uploadHtml(supply: number) {
+  const n = media.files.size; const bad = badRows();
+  const total = [...media.files.values()].reduce((a, f) => a + f.size, 0);
+  const sample = [...bad.slice(0, 4), ...media.rows.filter(r => !r.errs.length).slice(0, Math.max(0, 6 - Math.min(bad.length, 4)))].sort((a, b) => a.line - b.line);
+  const used = new Set(media.rows.map(r => r.file_name)); const unused = media.rows.length ? [...media.files.keys()].filter(k => !used.has(k)) : [];
+  return `<div class="fcard ldup"><div class="gh">1. Media</div><p class="mut small">Images, GIFs, video (mp4/webm), audio or 3D (glb). Up to 100 MB per file. File names must match the <span class="mono">file_name</span> column of your CSV.</p>
+   <label class="lmdrop" data-drop><input type="file" class="fin" data-media multiple accept="${MEDIA_ACCEPT}"><b>Drag &amp; drop media here</b><span class="mut small">or <u>browse files</u></span></label>
+   <div class="lmsum small">${n ? `<b>${n.toLocaleString()}</b> file${n > 1 ? 's' : ''} · ${(total / 1048576).toFixed(1)} MB <button type="button" class="pill sm" data-act="clrmedia">Clear</button>` : '<span class="mut">No media yet.</span>'}</div></div>
+  <div class="fcard ldup"><div class="gh">2. Metadata CSV</div><p class="mut small">One row per token: <span class="mono">${CSV_BASE.join(', ')}</span>, plus one <span class="mono">attributes[Trait]</span> column per trait. <button type="button" class="pill sm" data-act="csvtpl">Download CSV template</button></p>
+   <span class="fpick"><input type="file" class="fin" data-mcsv accept=".csv,text/csv"><span class="upbtn">Upload CSV</span><span class="fname mut small">${esc(media.csvName || 'No file chosen')}</span></span>
+   ${media.csvErr ? `<p class="err small">${esc(media.csvErr)}</p>` : ''}
+   ${media.rows.length ? `<div class="lmsum small"><b>${media.rows.length.toLocaleString()}</b> rows · ${bad.length ? `<span class="err">${bad.length} with errors</span>` : '<span class="ok">all rows match a file ✓</span>'}${supply && supply !== media.rows.length ? ` · <span class="mut">supply is ${supply.toLocaleString()} (set in step 3)</span>` : ''}${unused.length ? ` · <span class="err">${unused.length} file${unused.length > 1 ? 's' : ''} not in CSV</span>` : ''}</div>
+   <div class="gh pad small">Preview</div><div class="lmgrid">${sample.map(cell).join('')}</div>` : ''}</div>`;
+}
+
+let cid: Promise<any> | null = null;
+const tw = () => (cid ??= Promise.all([import('thirdweb'), import('thirdweb/storage')]).then(([t, s]) => ({ client: t.createThirdwebClient({ clientId: THIRDWEB_CLIENT_ID }), upload: s.upload })));
+export const pinningReady = () => !!THIRDWEB_CLIENT_ID;
+/** Pins media, then tokenID.json metadata folder. Returns ipfs://CID/ (token N → baseURI + N.json). */
+export async function pinAll(project: { description?: string; website?: string }, onStep: (s: string) => void): Promise<string> {
+  if (!pinningReady()) throw new Error('IPFS pinning is not configured on this site (thirdweb client id missing). Use "Advanced: I already have a base URI".');
+  const { client, upload } = await tw();
+  const files = media.rows.map(r => media.files.get(r.file_name)!).filter((f, i, a) => a.indexOf(f) === i);
+  onStep(`Pinning ${files.length} media file${files.length > 1 ? 's' : ''} to IPFS…`);
+  const mu: string[] = [].concat(await upload({ client, files }) as any);
+  const uriOf = new Map(files.map((f, i) => [f.name, mu[i]]));
+  onStep(`Pinning ${media.rows.length} metadata files…`);
+  const metas = media.rows.map(r => { const f = media.files.get(r.file_name)!; const u = uriOf.get(f.name)!;
+    const j: Record<string, unknown> = { name: r.name, description: r.description || project.description || '', image: u };
+    if (isVid(f)) j.animation_url = u;
+    if (r.external_url || project.website) j.external_url = r.external_url || project.website;
+    if (r.attrs.length) j.attributes = r.attrs;
+    return new File([JSON.stringify(j)], `${r.tokenID}.json`, { type: 'application/json' }); });
+  const out: string[] = [].concat(await upload({ client, files: metas }) as any);
+  const base = out[0].replace(/[^/]+$/, '');
+  if (!/^ipfs:\/\/\w+\/$/.test(base)) throw new Error('Unexpected IPFS response: ' + out[0]);
+  return base;
+}
