@@ -1,1 +1,0 @@
-export{l as getChainMetadata}from"./utils-D2MuULGi.js";

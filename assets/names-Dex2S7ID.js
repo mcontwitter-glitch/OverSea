@@ -1,0 +1,1 @@
+export{n as autoNames}from"./names-Dhr_OnDT.js";

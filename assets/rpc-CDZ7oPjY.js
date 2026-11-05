@@ -1,1 +1,0 @@
-export{t as getRpcClient}from"./rpc-D2y_se2W.js";

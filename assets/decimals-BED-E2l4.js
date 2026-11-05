@@ -1,0 +1,1 @@
+export{t as decimals}from"./decimals-Bzgv4kxB.js";

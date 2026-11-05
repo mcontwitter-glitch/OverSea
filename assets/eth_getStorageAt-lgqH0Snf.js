@@ -1,1 +1,0 @@
-import{n as e}from"./address-2N_tjdIm.js";async function t(t,n){return await t({method:`eth_getStorageAt`,params:[e(n.address),n.position,n.blockTag??`latest`]})}export{t};

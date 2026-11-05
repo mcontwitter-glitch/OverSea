@@ -1,1 +1,0 @@
-export{t as FN_SELECTOR,n as decodeTotalSupplyResult,r as encodeTotalSupply,i as encodeTotalSupplyParams,a as isTotalSupplySupported,o as totalSupply}from"./totalSupply-X6d5T4qZ.js";

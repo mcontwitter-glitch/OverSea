@@ -1,1 +1,0 @@
-import{r as e}from"./address-2N_tjdIm.js";function t(t){if(!t.client)throw Error(`getContract validation error - invalid client: ${t.client}`);if(!e(t.address))throw Error(`getContract validation error - invalid address: ${t.address}`);if(!t.chain||!t.chain.id)throw Error(`getContract validation error - invalid chain: ${t.chain}`);return t}export{t};
