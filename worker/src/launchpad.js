@@ -41,12 +41,23 @@ const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repea
 export const LIMITS_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'attackerCooldown', type: 'uint32' }, { name: 'minTargetAge', type: 'uint32' }, { name: 'grace', type: 'uint32' }, { name: 'minGap', type: 'uint32' }, { name: 'targetCooldown', type: 'uint32' }, { name: 'requestTimeout', type: 'uint32' }];
 export const INFECT_C = [{ name: 'skillBps', type: 'uint16' }, { name: 'cooldown', type: 'uint32' }, { name: 'maxPrice', type: 'uint128' }, { name: 'scoreReward', type: 'uint32' }];
 export const AGENT_T = [{ type: 'tuple', components: [{ name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'treasury', type: 'address' }, { name: 'mintPrice', type: 'uint256' }, { name: 'maxSupply', type: 'uint32' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'royaltyBps', type: 'uint16' }, { name: 'starvationPeriod', type: 'uint32' }, { name: 'deathSkill', type: 'bool' }, { name: 'modelId', type: 'uint256' }, { name: 'limits', type: 'tuple', components: LIMITS_C }, { name: 'fertilityBps', type: 'uint16' }, { name: 'twinBps', type: 'uint16' }, { name: 'mutationBps', type: 'uint16' }, { name: 'mutationSkillBps', type: 'uint16' }, { name: 'infect', type: 'bool' }, { name: 'infectLimits', type: 'tuple', components: INFECT_C }, { name: 'repoBps', type: 'uint16' }, { name: 'queenBps', type: 'uint16' }, { name: 'queenCap', type: 'uint32' }, { name: 'zombieBps', type: 'uint16' }, { name: 'tributeFee', type: 'uint256' }, { name: 'tributePeriod', type: 'uint32' }, { name: 'kit', type: 'bytes' }] }];
-// AgentInit.kit = abi.encode(string mediaBase, string mediaExt, string deathURI, Phase[] phases, uint32 traitRows) for AgentDropKit.
+// AgentInit.kit = abi.encode(string mediaBase, string mediaExt, string deathURI, Phase[] phases, uint32 traitRows,
+// uint16 skillInheritanceBoostBps, bytes growthConfig) for AgentDropKit + AgentGrowth. growthConfig is ABI-encoded
+// AgentGrowth.Config (uint16 mutationBps, uint16[6] xp, uint32[] levels); empty bytes select contract defaults.
 // traitRows > 0 = the creator signed CSV traits for gen-0 ids 1..traitRows: mint stays closed until kit.uploadTraits seals them (or skipTraits)
 // (art + MultiSeaDrop-layout phases). Phase = (uint64 start, uint64 end, uint128 price, uint32 maxPerWallet, uint32 maxSupply, bytes32 merkleRoot).
 export const KIT_PHASE_C = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'maxSupply', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }];
-export const KIT_T = [{ type: 'string' }, { type: 'string' }, { type: 'string' }, { type: 'tuple[]', components: KIT_PHASE_C }, { type: 'uint32' }];
-export const agentKit = ({ mediaBase = '', mediaExt = '', deathURI = '', phases = [], traitRows = 0 }) => encodeAbiParameters(KIT_T, [mediaBase, mediaExt, deathURI, phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end || 0), price: BigInt(p.price), maxPerWallet: p.maxPerWallet || 0, maxSupply: p.maxSupply || 0, merkleRoot: p.merkleRoot || ZH })), traitRows]);
+export const KIT_T = [{ type: 'string' }, { type: 'string' }, { type: 'string' }, { type: 'tuple[]', components: KIT_PHASE_C }, { type: 'uint32' }, { type: 'uint16' }, { type: 'bytes' }];
+export const GROWTH_T = [{ type: 'tuple', components: [{ name: 'mutationBps', type: 'uint16' }, { name: 'xp', type: 'uint16[6]' }, { name: 'levels', type: 'uint32[]' }] }];
+export const DEFAULT_GROWTH = { mutationBps: 500, xp: [10, 50, 25, 100, 5, 20], levels: [0, 100, 300, 600, 1000] };
+export const agentGrowth = (g) => { if (g == null || g === '') return '0x'; const v = { ...DEFAULT_GROWTH, ...g };
+  if (!Number.isInteger(v.mutationBps) || v.mutationBps < 0 || v.mutationBps > 10000) badGrowth('alternate-value chance');
+  if (!Array.isArray(v.xp) || v.xp.length !== 6 || v.xp.some(x => !Number.isInteger(x) || x < 0 || x > 65535)) badGrowth('XP awards');
+  if (!Array.isArray(v.levels) || !v.levels.length || v.levels.length > 255 || v.levels[0] !== 0 || v.levels.some((x, i) => !Number.isInteger(x) || x < 0 || x > 0xffffffff || (i && x <= v.levels[i - 1]))) badGrowth('level thresholds');
+  return encodeAbiParameters(GROWTH_T, [{ mutationBps: v.mutationBps, xp: v.xp, levels: v.levels }]);
+};
+const badGrowth = what => { throw new Error(`${what} is not a valid AgentGrowth config`); };
+export const agentKit = ({ mediaBase = '', mediaExt = '', deathURI = '', phases = [], traitRows = 0, skillInheritanceBoostBps = 1000, growthConfig = '0x' }) => encodeAbiParameters(KIT_T, [mediaBase, mediaExt, deathURI, phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end || 0), price: BigInt(p.price), maxPerWallet: p.maxPerWallet || 0, maxSupply: p.maxSupply || 0, merkleRoot: p.merkleRoot || ZH })), traitRows, skillInheritanceBoostBps, growthConfig]);
 // Death image: one direct image file (not a folder / JSON). Media base: folder of <n><ext> pinned by the create form.
 export const DEATH_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/[\w\-.%]+|https:\/\/[\w\-./%]+)\.(png|jpe?g|gif|webp|svg)$/i;
 export const MEDIA_BASE_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/|https:\/\/[\w\-./%]+\/)$/;
@@ -127,10 +138,13 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     if (deathURI && !DEATH_RE.test(deathURI)) bad('death image must be one image file: ipfs://CID/death.png or https://….png (png, jpg, gif, webp, svg), not a folder or JSON');
     // CSV traits stored onchain by AgentDropKit (dictionary + 1 byte per trait per token); rows = gen-0 tokens 1..N with a CSV line.
     const traitRows = int(a.traitRows ?? 0, 0, base.maxSupply, 'CSV trait rows');
+    const skillInheritanceBoostBps = int(a.skillInheritanceBoostBps ?? 1000, 0, 2000, 'skill inheritance boost (bps)');
+    let growthConfig;
+    try { growthConfig = agentGrowth(a.growthConfig); } catch (e) { bad(e.message); }
     // Pinned copy of the encoded table (dashboard re-loads it for the post-deploy upload); not signed, display only.
     const traitsURI = traitRows ? str(a.traitsURI, 120) : '';
     if (traitsURI && !/^ipfs:\/\/[A-Za-z0-9]+\/[\w.-]+\.json$/.test(traitsURI)) bad('traits table must be one pinned JSON file: ipfs://CID/traits.json');
-    return { mediaBase, mediaExt, deathURI, traitRows, traitsURI, starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, repo, repoPct, queen, queenPct, queenCap, tribDays, tribWei, zombie, zombiePct, modelId: AG.oraModelId ?? 11 };
+    return { mediaBase, mediaExt, deathURI, traitRows, skillInheritanceBoostBps, growthConfig, traitsURI, starveDays, deathSkill, limits, skillPct, fertility, fertPct, twinPct, mutation, mutPct, mutSkillPct, infect, infPct, infCooldownH, infScore, infMaxWei, repo, repoPct, queen, queenPct, queenCap, tribDays, tribWei, zombie, zombiePct, modelId: AG.oraModelId ?? 11 };
   }
 
   function validate(b, creator) {
@@ -199,7 +213,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     infect: !!d.agent.infect, infectLimits: { skillBps: (d.agent.infPct || 0) * 100, cooldown: (d.agent.infCooldownH || 0) * 3600, maxPrice: BigInt(d.agent.infMaxWei || '0'), scoreReward: d.agent.infScore || 0 },
     repoBps: (d.agent.repoPct || 0) * 100, queenBps: (d.agent.queenPct || 0) * 100, queenCap: d.agent.queenCap || 0, zombieBps: (d.agent.zombiePct || 0) * 100,
     tributeFee: BigInt(d.agent.tribWei || '0'), tributePeriod: (d.agent.tribDays || 0) * 86400,
-    kit: agentKit({ mediaBase: d.agent.mediaBase || '', mediaExt: d.agent.mediaBase ? d.agent.mediaExt : '', deathURI: d.agent.deathURI || '', phases: d.phases, traitRows: d.agent.traitRows || 0 }) });
+    kit: agentKit({ mediaBase: d.agent.mediaBase || '', mediaExt: d.agent.mediaBase ? d.agent.mediaExt : '', deathURI: d.agent.deathURI || '', phases: d.phases, traitRows: d.agent.traitRows || 0, skillInheritanceBoostBps: d.agent.skillInheritanceBoostBps ?? 1000, growthConfig: d.agent.growthConfig || '0x' }) });
 
   const initParams = (d, creator, chain) => ({ name: d.name, symbol: d.symbol, owner: creator, payout: d.payout, feeWallet: ZERO, platformFeeBps: 0, maxSupply: d.allocations?.[chain] ?? d.maxSupply, creatorReserve: chain === d.chains[0] ? d.creatorReserve : 0,
     royaltyReceiver: d.royaltyReceiver, royaltyBps: BigInt(d.royaltyBps), baseURI: d.reveal === 'instant' ? d.baseURI : '', preRevealURI: d.reveal === 'delayed' ? d.preRevealURI : '',

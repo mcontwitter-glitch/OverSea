@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { verifyTypedData, keccak256, concat, decodeAbiParameters } from 'viem';
-import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES, agentKit, KIT_T } from '../src/launchpad.js';
+import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES, agentKit, KIT_T, GROWTH_T } from '../src/launchpad.js';
 const CFG = JSON.parse(fs.readFileSync(new URL('../../config/collections.json', import.meta.url)));
 const LP0 = JSON.parse(fs.readFileSync(new URL('../../config/launchpad.json', import.meta.url)));
 const lc = s => String(s || '').toLowerCase();
@@ -167,7 +167,21 @@ test('agentConfigHash matches the Solidity AgentDropFactory.configHash encoding 
     limits: { skillBps: 0, attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 }, fertilityBps: 1000, twinBps: 2000, mutationBps: 500, mutationSkillBps: 1500,
     infect: true, infectLimits: { skillBps: 500, cooldown: 3600, maxPrice: 5n * 10n ** 16n, scoreReward: 25 }, repoBps: 300, queenBps: 200, queenCap: 10, zombieBps: 100, tributeFee: 5n * 10n ** 14n, tributePeriod: 604800,
     kit: agentKit({ mediaBase: 'ipfs://QmMedia/', mediaExt: '.png', deathURI: 'ipfs://QmDeath/death.png', phases: [{ start: 1800000000, end: 1800003600, price: 10n ** 16n, maxPerWallet: 2, maxSupply: 100, merkleRoot: '0x' + '11'.repeat(32) }, { start: 1800003600, end: 0, price: 2n * 10n ** 16n, maxPerWallet: 0, maxSupply: 0 }], traitRows: 1000 }) });
-  assert.equal(h, '0x839050454bb85ee47ce5907160cedd9c6ff8a941dbcfbf015083f16f86d60ba6'); // = AgentDropFactory.t.sol VECTOR (AgentInit + kit bytes incl. traitRows)
+  assert.equal(h, '0x73d929236e5068b4a73d56f477e0fce37e7096d9cd8615e944626ba801f3365a'); // = AgentDropFactory.t.sol VECTOR (AgentInit + kit bytes incl. traitRows)
+});
+
+test('agent growth: kit defaults and validation are signed', async () => {
+  const { call, as } = setup({ LP: { agentDrops: AGON } });
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { skillInheritanceBoostBps: 2001 } })), /skill inheritance boost/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { growthConfig: { mutationBps: 10001 } } })), /alternate-value chance/);
+  await assert.rejects(call('POST', '/launchpad/submit', agentDrop({ agent: { growthConfig: { levels: [0, 100, 50] } } })), /level thresholds/);
+  await call('POST', '/launchpad/submit', agentDrop({ agent: { skillInheritanceBoostBps: 1500, growthConfig: { mutationBps: 250, xp: [1, 2, 3, 4, 5, 6], levels: [0, 25, 100] } } }));
+  as(ADMIN); const approved = await call('POST', '/admin/launchpad/approve/agents-one');
+  assert.equal(approved.drop.agent.skillInheritanceBoostBps, 1500);
+  const [, , , , , boost, cfg] = decodeAbiParameters(KIT_T, agentKit(approved.drop.agent));
+  assert.equal(boost, 1500);
+  const [decoded] = decodeAbiParameters(GROWTH_T, cfg);
+  assert.equal(decoded.mutationBps, 250); assert.deepEqual(decoded.xp, [1, 2, 3, 4, 5, 6]); assert.deepEqual(decoded.levels, [0, 25, 100]);
 });
 
 test('agent drop: Fertility rarity and twin chance reach the signed AgentInit (keys 12/13)', async () => {
@@ -260,7 +274,8 @@ test('agent drop: full phases (times, prices, caps, allowlist root) + media base
   const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
   assert.equal(a.params.mintPrice, '5000000000000000'); // engine price = lowest phase price (only the mint price: spawning was removed)
   assert.equal(a.params.maxPerWallet, 0); // per-wallet caps are per phase in the kit
-  const [mb, ext, death, ph, rows] = decodeAbiParameters(KIT_T, a.params.kit);
+  const [mb, ext, death, ph, rows, boost, growth] = decodeAbiParameters(KIT_T, a.params.kit);
+  assert.equal(boost, 1000); assert.equal(growth, '0x');
   assert.equal(rows, 3);
   assert.equal(mb, 'ipfs://QmMediaFolder/'); assert.equal(ext, '.png'); assert.equal(death, 'ipfs://QmDeathImg/death.png');
   assert.equal(ph.length, 2);
