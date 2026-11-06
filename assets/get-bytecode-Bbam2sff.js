@@ -1,0 +1,1 @@
+import{t as e}from"./rpc-BBlOI8HG.js";async function t(e,t){return e({method:`eth_getCode`,params:[t.address,t.blockTag||`latest`]})}var n=new WeakMap;function r(r){if(n.has(r))return n.get(r);let i=(async()=>{let i=await t(e(r),{address:r.address,blockTag:`latest`});return i===`0x`&&n.delete(r),i})();return n.set(r,i),i}export{t as n,r as t};

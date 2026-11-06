@@ -1,0 +1,1 @@
+import{f as e}from"./hex-COJyibU4.js";function t(t=32){return e(n(t))}function n(e=32){return globalThis.crypto.getRandomValues(new Uint8Array(e))}export{t};

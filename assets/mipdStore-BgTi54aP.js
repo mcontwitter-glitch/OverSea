@@ -1,0 +1,1 @@
+export{o as injectedProvider}from"./injected-BJjmQjt-.js";

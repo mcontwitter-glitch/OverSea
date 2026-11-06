@@ -1,0 +1,1 @@
+export{t as getRpcClient}from"./rpc-BBlOI8HG.js";

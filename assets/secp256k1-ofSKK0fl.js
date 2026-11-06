@@ -1,0 +1,1 @@
+export{t as secp256k1}from"./secp256k1-DAeh7u1B.js";

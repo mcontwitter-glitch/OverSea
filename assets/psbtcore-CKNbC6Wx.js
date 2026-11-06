@@ -1,0 +1,1 @@
+export{n as inscriptionTradable}from"./psbtcore-Cqad61SV.js";

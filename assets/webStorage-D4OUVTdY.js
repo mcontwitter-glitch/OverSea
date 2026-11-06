@@ -1,0 +1,1 @@
+var e={async getItem(e){try{if(typeof window<`u`&&window.localStorage)return localStorage.getItem(e)}catch{}return null},async removeItem(e){typeof window<`u`&&window.localStorage&&localStorage.removeItem(e)},async setItem(e,t){try{typeof window<`u`&&window.localStorage&&localStorage.setItem(e,t)}catch{}}};export{e as t};

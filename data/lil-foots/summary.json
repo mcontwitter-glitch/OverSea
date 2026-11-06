@@ -1,0 +1,301 @@
+{
+ "slug": "lil-foots",
+ "generatedAt": "2026-10-20T03:48:01.087Z",
+ "items": 4404,
+ "owners": 491,
+ "perChain": {
+  "abstract": {
+   "ok": true,
+   "error": null,
+   "address": "0x22Fc5BB9810Ef92db35acCea463693331bcD0A8A",
+   "latestBlock": 87924111,
+   "creationBlock": 18212979,
+   "minted": 4404,
+   "inEscrow": 227,
+   "live": 4177,
+   "holders": 481,
+   "mintedEver": 4404,
+   "transfers": 7613,
+   "historyComplete": true,
+   "scannedFrom": 18212979,
+   "scannedTo": 87924111,
+   "sales": 1530,
+   "volume": {
+    "ETH": 16.7050351210695
+   },
+   "ownerOfErrors": 0,
+   "onchainVolume": {
+    "ETH": 5.3075590112932645,
+    "0x3439153EB7AF838Ad19d56E1571FBD09333C2809": 2.4680185000000017
+   },
+   "osSales": 5688,
+   "osOwners": 482,
+   "osFloor": 0.00379
+  },
+  "ethereum": {
+   "ok": true,
+   "error": null,
+   "address": "0xf12476842cCbE4c7e6847eb67777f29f25419738",
+   "latestBlock": 26231179,
+   "creationBlock": null,
+   "minted": 24,
+   "inEscrow": 0,
+   "live": 24,
+   "holders": 8,
+   "mintedEver": 0,
+   "transfers": 0,
+   "historyComplete": false,
+   "scannedFrom": 25731179,
+   "scannedTo": 25731178,
+   "sales": 0,
+   "volume": {},
+   "ownerOfErrors": 0,
+   "onchainVolume": {},
+   "osSales": 0,
+   "osOwners": 8,
+   "osFloor": 0.01
+  },
+  "base": {
+   "ok": true,
+   "error": null,
+   "address": "0x1Ec054906b4A45DeBa936Aa88492D725cb06508e",
+   "latestBlock": 52839216,
+   "creationBlock": null,
+   "minted": 8,
+   "inEscrow": 0,
+   "live": 8,
+   "holders": 4,
+   "mintedEver": 0,
+   "transfers": 0,
+   "historyComplete": false,
+   "scannedFrom": 52339216,
+   "scannedTo": 52339215,
+   "sales": 0,
+   "volume": {},
+   "ownerOfErrors": 0,
+   "onchainVolume": {},
+   "osSales": 0,
+   "osOwners": 4,
+   "osFloor": 101
+  },
+  "apechain": {
+   "ok": true,
+   "error": null,
+   "address": "0x1Ec054906b4A45DeBa936Aa88492D725cb06508e",
+   "latestBlock": 52536756,
+   "creationBlock": 51204938,
+   "minted": 11,
+   "inEscrow": 0,
+   "live": 11,
+   "holders": 3,
+   "mintedEver": 11,
+   "transfers": 11,
+   "historyComplete": true,
+   "scannedFrom": 51204938,
+   "scannedTo": 52536756,
+   "sales": 0,
+   "volume": {},
+   "ownerOfErrors": 0,
+   "onchainVolume": {},
+   "osSales": 0,
+   "osOwners": 3,
+   "osFloor": 160
+  },
+  "robinhood": {
+   "ok": true,
+   "error": null,
+   "address": "0x1Ec054906b4A45DeBa936Aa88492D725cb06508e",
+   "latestBlock": 93148660,
+   "creationBlock": null,
+   "minted": 181,
+   "inEscrow": 0,
+   "live": 181,
+   "holders": 13,
+   "mintedEver": 0,
+   "transfers": 0,
+   "historyComplete": false,
+   "scannedFrom": 92648660,
+   "scannedTo": 93148660,
+   "sales": 0,
+   "volume": {},
+   "ownerOfErrors": 0,
+   "onchainVolume": {},
+   "osSales": 0,
+   "osOwners": 13,
+   "osFloor": 0.008999
+  },
+  "bnb": {
+   "ok": true,
+   "error": null,
+   "address": "0x1Ec054906b4A45DeBa936Aa88492D725cb06508e",
+   "latestBlock": 128676151,
+   "creationBlock": null,
+   "minted": 2,
+   "inEscrow": 0,
+   "live": 2,
+   "holders": 2,
+   "mintedEver": 0,
+   "transfers": 0,
+   "historyComplete": false,
+   "scannedFrom": 128176151,
+   "scannedTo": 128176150,
+   "sales": 0,
+   "volume": {},
+   "ownerOfErrors": 0,
+   "onchainVolume": {}
+  }
+ },
+ "volume": {
+  "ETH": 16.7050351210695
+ },
+ "volumeSource": "opensea",
+ "listingsAvailable": true,
+ "listingsReason": null,
+ "listedCount": 70,
+ "floor": {
+  "chain": "abstract",
+  "id": 4121,
+  "price": 0.00379,
+  "currency": "ETH",
+  "orderHash": "0x4e8c7031b6f50e651a57cd9a1a475298deb9d8cf86b0706cbdd553b61f11f90d",
+  "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+  "osChain": "abstract",
+  "seller": "0x4f37b6a66a0d3e381a9e474fc0fd5be022208e5c",
+  "endTime": 1807888006,
+  "priceEth": 0.00379
+ },
+ "floorByChain": {
+  "abstract": {
+   "chain": "abstract",
+   "id": 4121,
+   "price": 0.00379,
+   "currency": "ETH",
+   "orderHash": "0x4e8c7031b6f50e651a57cd9a1a475298deb9d8cf86b0706cbdd553b61f11f90d",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "abstract",
+   "seller": "0x4f37b6a66a0d3e381a9e474fc0fd5be022208e5c",
+   "endTime": 1807888006,
+   "priceEth": 0.00379
+  },
+  "ethereum": {
+   "chain": "ethereum",
+   "id": 3348,
+   "price": 0.01,
+   "currency": "ETH",
+   "orderHash": "0xc66f11f4159be0c6e6e766e50504caf98ce5ec1459c4e6230192aec8cfc09deb",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "ethereum",
+   "seller": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+   "endTime": 1799004530,
+   "priceEth": 0.01
+  },
+  "base": {
+   "chain": "base",
+   "id": 1942,
+   "price": 101,
+   "currency": "ETH",
+   "orderHash": "0x76b3f7400cce579b73db72913687f02fe420c0b2ade6167a580deb17e75c278e",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "base",
+   "seller": "0xcfa91e557b07a81d0244cf902e27934b1a9bde74",
+   "endTime": 1806816755,
+   "priceEth": 101
+  },
+  "apechain": {
+   "chain": "apechain",
+   "id": 3751,
+   "price": 160,
+   "currency": "APE",
+   "orderHash": "0x4cf2d0bccf8b6119116398f0025826f30b05221cedc450c9c5101b900d7a126e",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "ape_chain",
+   "seller": "0xca89ae48a5c61d13e78236daa4ac29ee588ea475",
+   "endTime": 1799004465,
+   "priceEth": 0.00979491
+  },
+  "robinhood": {
+   "chain": "robinhood",
+   "id": 3821,
+   "price": 0.008999,
+   "currency": "ETH",
+   "orderHash": "0x96785f132735c65e393de17199ececf57332c028f0f76e446aa76d73665605cc",
+   "protocolAddress": "0x0000000000000068f116a894984e2db1123eb395",
+   "osChain": "robinhood",
+   "seller": "0xb1daf0be0aa88b58bde5dca2aca7b64b14572fed",
+   "endTime": 1807951554,
+   "priceEth": 0.008999
+  }
+ },
+ "rates": {
+  "ETH": {
+   "eth": 1,
+   "source": "unit"
+  },
+  "WETH": {
+   "eth": 1,
+   "source": "unit"
+  },
+  "APE": {
+   "eth": 0.00006121817887488223,
+   "usd": 0.147485,
+   "ethUsd": 2409.17,
+   "source": "coingecko",
+   "at": "2026-10-20T03:48:01.073Z"
+  },
+  "BNB": {
+   "eth": 0.30282628457103483,
+   "usd": 729.56,
+   "ethUsd": 2409.17,
+   "source": "coingecko",
+   "at": "2026-10-20T03:48:01.073Z"
+  }
+ },
+ "openseaStats": {
+  "abstract": {
+   "slug": "lil-foots",
+   "volume": 16.7050351210695,
+   "volume_symbol": "ETH",
+   "sales": 5688,
+   "num_owners": 482,
+   "floor_price": 0.00379,
+   "floor_price_symbol": "ETH"
+  },
+  "ethereum": {
+   "slug": "lilfootseth",
+   "volume": 0,
+   "volume_symbol": "ETH",
+   "sales": 0,
+   "num_owners": 8,
+   "floor_price": 0.01,
+   "floor_price_symbol": "ETH"
+  },
+  "base": {
+   "slug": "lilfootsbase",
+   "volume": 0,
+   "volume_symbol": "ETH",
+   "sales": 0,
+   "num_owners": 4,
+   "floor_price": 101,
+   "floor_price_symbol": "ETH"
+  },
+  "apechain": {
+   "slug": "lilfootsape",
+   "volume": 0,
+   "volume_symbol": "ETH",
+   "sales": 0,
+   "num_owners": 3,
+   "floor_price": 160,
+   "floor_price_symbol": "APE"
+  },
+  "robinhood": {
+   "slug": "lilfootsrh",
+   "volume": 0,
+   "volume_symbol": "ETH",
+   "sales": 0,
+   "num_owners": 13,
+   "floor_price": 0.008999,
+   "floor_price_symbol": "ETH"
+  }
+ },
+ "livePlaced": 4403
+}

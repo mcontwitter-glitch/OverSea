@@ -1,0 +1,1 @@
+function e(e){return typeof e==`object`&&!!e}function t(t,n=[]){return e(t)&&n.every(e=>e in t)}export{t};

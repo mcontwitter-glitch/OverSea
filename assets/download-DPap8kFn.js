@@ -1,0 +1,1 @@
+export{t as download}from"./download-CpTXSfuX.js";

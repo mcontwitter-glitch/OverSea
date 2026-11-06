@@ -1,0 +1,1 @@
+import{M as e,k as t}from"./Bytes-CL0WvzSH.js";function n(n){let r=n.domain;return r?.chainId!==void 0&&e(r.chainId)&&(n.domain={...n.domain,chainId:t(n.domain.chainId)}),n}export{n as t};

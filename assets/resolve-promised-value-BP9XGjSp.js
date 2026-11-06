@@ -1,0 +1,1 @@
+async function e(e){return typeof e==`function`?await e():e}export{e as t};

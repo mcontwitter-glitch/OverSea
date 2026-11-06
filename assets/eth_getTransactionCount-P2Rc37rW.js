@@ -1,0 +1,1 @@
+import{a as e,c as t}from"./hex-COJyibU4.js";async function n(n,r){let i=await n({method:`eth_getTransactionCount`,params:[r.address,r.blockNumber?t(r.blockNumber):r.blockTag||`pending`]});return e(i)}export{n as t};

@@ -1,0 +1,1 @@
+var e={id:`app.getcosine`,name:`Cosine Wallet`,homepage:`https://getcosine.app`,image_id:`886bafb4-351d-40ac-3369-cb51af261900`,app:{browser:``,ios:`https://getcosine.app`,android:``,mac:``,windows:``,linux:``,chrome:``,firefox:``,safari:``,edge:``,opera:``},rdns:``,mobile:{native:`cosine://`,universal:``},desktop:{native:``,universal:``}};export{e as wallet};

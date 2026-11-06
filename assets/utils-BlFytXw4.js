@@ -1,0 +1,1 @@
+async function e(e){await e?.communicator?.waitForPopupLoaded?.()}export{e as t};
