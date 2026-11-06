@@ -9,10 +9,10 @@ import { agentAddValue, agentClaim } from './agentdrop';
 export const GROWTH = parseAbi([
  'function types(address e) view returns (uint8)', 'function typeName(address e,uint8 k) view returns (string)',
  'function values(address e,uint8 k) view returns ((string value,string art,uint16 chanceBps,uint16 minParentLevel,uint32 claimLevel,uint8 reqType,uint8 reqValue)[])',
- 'function xpOf(address e,uint256 id) view returns (uint256)', 'function levelOf(address e,uint256 id) view returns (uint32)',
+ 'function config(address e) view returns ((uint16 mutationBps,uint16[6] xp,uint32[] levels))', 'function xpOf(address e,uint256 id) view returns (uint256)', 'function levelOf(address e,uint256 id) view returns (uint32)',
  'function inheritedRow(address e,uint256 id) view returns (bytes)', 'function claimable(address e,uint256 id,uint8 k,uint8 v) view returns (bool)',
  'function agentOf(uint256 id) view returns ((uint64 birth,uint64 lastFed,uint32 generation,bool dead,bool frozen,int256 score,uint256 latestChild,uint256 parentA,uint256 parentB))',
- 'function originalRow(address e,uint256 n) view returns (bytes)', 'function idPrefix() view returns (uint128)', 'function art(address e) view returns ((string mediaBase,string mediaExt,string deathImage))', 'function ordinalOf(address e,uint256 id) view returns (uint256)', 'function ordinalOf(address e,uint256 id) view returns (uint256)',
+ 'function originalRow(address e,uint256 n) view returns (bytes)', 'function idPrefix() view returns (uint128)',
  'function originalValues(address e,uint8 k) view returns (uint8)', 'function originalName(address e,uint8 k) view returns (string)',
  'function originalValue(address e,uint8 k,uint8 v) view returns (string)', 'function widthOf(address e) view returns (uint8)', 'function tokenURI(uint256) view returns (string)',
 ]);
@@ -35,14 +35,15 @@ export async function rowOf(k: string, e: Address, growth: Address, kit: Address
  return bytes(ord as string);
 }
 async function loadFullToken(k: string, e: Address, growth: Address, id: bigint, kit: Address, thresholds = [0,100,300,600,1000]): Promise<GrowthToken> {
- const pub = readClient(k); const [x,l,row,child,types] = await Promise.all([
+ const pub = readClient(k); const typeCount = Math.max(Number(await pub.readContract({address:growth,abi:GROWTH,functionName:'types',args:[e]})),Number(await pub.readContract({address:growth,abi:GROWTH,functionName:'widthOf',args:[e]}))); const [x,l,row,child,types] = await Promise.all([
   pub.readContract({address:growth,abi:GROWTH,functionName:'xpOf',args:[e,id]}),pub.readContract({address:growth,abi:GROWTH,functionName:'levelOf',args:[e,id]}),rowOf(k,e,growth,kit,id),pub.readContract({address:e,abi:GROWTH,functionName:'agentOf',args:[id]}),
-  Promise.all(Array.from({length:Number(await pub.readContract({address:growth,abi:GROWTH,functionName:'widthOf',args:[e]}))},async(_,i)=>{
+  Promise.all(Array.from({length:typeCount},async(_,i)=>{
    const [name,vs,base]=await Promise.all([pub.readContract({address:growth,abi:GROWTH,functionName:'typeName',args:[e,i]}).catch(()=>pub.readContract({address:growth,abi:GROWTH,functionName:'originalName',args:[e,i]})),pub.readContract({address:growth,abi:GROWTH,functionName:'values',args:[e,i]}),pub.readContract({address:growth,abi:GROWTH,functionName:'originalValues',args:[e,i]})]);
    const vals: GrowthValue[]=(vs as any[]).map((v,n)=>({...v,chanceBps:Number(v.chanceBps),minParentLevel:Number(v.minParentLevel),claimLevel:Number(v.claimLevel),reqType:Number(v.reqType),reqValue:Number(v.reqValue),id:Number(base)+n+1}));
    for(let j=1;j<=Number(base);++j) vals.unshift({value:await pub.readContract({address:growth,abi:GROWTH,functionName:'originalValue',args:[e,i,j]}).catch(()=> ''),art:'',chanceBps:0,minParentLevel:0,claimLevel:0,reqType:0,reqValue:0,id:j});
    return{id:i,name:name as string,values:vals};
   }))]);
+ thresholds = ((await pub.readContract({address:growth,abi:GROWTH,functionName:'config',args:[e]})) as any).levels.map(Number);
  const claimable = (await Promise.all(types.flatMap(t=>t.values.filter(v=>v.claimLevel).map(async v=>({k:t.id,v,ok:await pub.readContract({address:growth,abi:GROWTH,functionName:'claimable',args:[e,id,t.id,v.id]}).catch(()=>false)}))))).filter(x=>x.ok).map(({k,v})=>({k,v}));
  const a=String((child as any).parentA),b=String((child as any).parentB); const parents=(a==='0'||b==='0')?[]:[BigInt(a),BigInt(b)]; const source: string[]= [];
  if(parents.length){const [ma,mb]=await Promise.all([rowOf(k,e,growth,kit,parents[0]),rowOf(k,e,growth,kit,parents[1])]); row.forEach((v,i)=>source[i]=v===ma[i]&&v!==mb[i]?'Mother':v===mb[i]&&v!==ma[i]?'Father':'Shared / rolled');}

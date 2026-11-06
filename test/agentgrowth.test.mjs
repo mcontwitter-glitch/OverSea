@@ -11,7 +11,10 @@ try {
  const decoded = decodeURIComponent(gatewaySvg(meta).split(',')[1]);
  assert(decoded.includes('https://w3s.link/ipfs/base/1.png'));
  assert(decoded.indexOf('base/1.png') < decoded.indexOf('a/1.png'));
+ const meta64 = 'data:application/json;base64,' + Buffer.from(JSON.stringify({ image: 'data:image/svg+xml;base64,' + Buffer.from('<svg><image href="ipfs://base.png"/><image href="ipfs://layer.png"/></svg>').toString('base64') })).toString('base64');
+ const decoded64 = decodeURIComponent(gatewaySvg(meta64).split(',')[1]);
+ assert(decoded64.indexOf('w3s.link/ipfs/base.png') < decoded64.indexOf('w3s.link/ipfs/layer.png'));
  assert.equal(WORLD_ID((1n << 128n) | 42n), '42');
  assert.deepEqual(inheritedAttribution([2,1], [1,3], [2,3]).map(x => x.parent), ['Father','Shared / rolled']);
- console.log('agent growth metadata, gateway conversion, child attribution: 4 assertions passed');
+ console.log('agent growth metadata, gateway conversion, child attribution: 5 assertions passed');
 } finally { rm(out, { recursive: true, force: true }); }
