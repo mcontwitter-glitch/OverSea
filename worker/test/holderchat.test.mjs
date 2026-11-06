@@ -35,12 +35,13 @@ test('chat: sign-in gate is cached, reads/writes require current holder, HTML st
 });
 test('chat: pagination newest last, admin delete and mute, non-admin forbidden', async () => {
   const x = setup(); x.sessions.U = USER; x.sessions.A = ADMIN; x.balances.set(lc(USER), 1);
-  const ids = []; for (let i = 0; i < 6; i++) ids.push((await x.call(x.chat, 'POST', '/holders/lil-foots/messages', { text: 'message ' + i }, 'U')).j.message.id);
+  let clock = Date.now(); const realNow = Date.now; Date.now = () => clock;
+  const ids = []; for (let i = 0; i < 6; i++) { clock++; ids.push((await x.call(x.chat, 'POST', '/holders/lil-foots/messages', { text: 'message ' + i }, 'U')).j.message.id); }
   assert.equal((await x.call(x.chat, 'POST', `/holders/lil-foots/messages/${ids[0]}/delete`, {}, 'U')).s, 403);
   assert.equal((await x.call(x.chat, 'POST', `/holders/lil-foots/messages/${ids[0]}/delete`, {}, 'A')).s, 200);
   const list = await x.call(x.chat, 'GET', '/holders/lil-foots/messages', null, 'U'); assert.equal(list.j.messages.length, 5); assert.equal(list.j.messages.at(-1).text, 'message 5');
   await x.call(x.chat, 'POST', '/holders/lil-foots/mute', { address: USER, minutes: 30 }, 'A');
-  assert.equal((await x.call(x.chat, 'POST', '/holders/lil-foots/messages', { text: 'muted' }, 'U')).s, 403);
+  assert.equal((await x.call(x.chat, 'POST', '/holders/lil-foots/messages', { text: 'muted' }, 'U')).s, 403); Date.now = realNow;
 });
 test('profiles: authed owner-verified NFT avatar, name uniqueness, batch reads, removal', async () => {
   const x = setup(); x.sessions.U = USER; const other = privateKeyToAccount(generatePrivateKey()).address; x.sessions.O = other;

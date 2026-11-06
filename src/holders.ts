@@ -29,7 +29,6 @@ function draw() {
   if (!slug || !gates[slug]) {
     el.innerHTML = `<div class="gate"><h1>Holder areas</h1><p class="mut">Holder-only pages for collections on MultiSea.</p>${Object.entries(gates).map(([s, g]) => `<a class="fcard" style="display:block" href="/holders/${s}"><b>${esc(g.title)}</b><div class="mut small">${esc(CFG.collections.find(c => c.slug === s)?.name || s)} · hold ${g.minBalance}+ on any chain</div></a>`).join('')}</div>`; return;
   }
-  if (previewAs && Object.keys(res).length && !checking) { const host = document.getElementById('holder-chat'); if (host) host.innerHTML = '<p class="mut small">Chat is disabled in read-only address previews.</p>'; }
   const g = gates[slug]; const col = CFG.collections.find(c => c.slug === slug)!; const a = who();
   const total = Object.values(res).reduce<number>((s, v) => s + (v || 0), 0); const ok = total >= g.minBalance;
   const chips = col.deployments.map(d => `<span>${logo(d.chain)} ${esc(chains[d.chain].name)}: ${res[d.chain] === undefined ? (a ? '…' : '-') : res[d.chain] === null ? '<i class="mut">unavailable</i>' : `<b>${res[d.chain]}</b>`}</span>`).join('');
@@ -37,7 +36,7 @@ function draw() {
     ${previewAs ? `<p class="mut small">Previewing as ${addrHtml(previewAs)} (read-only check).</p>` : ''}
     ${!a ? `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">Connect the wallet that holds your ${esc(col.name)}. We check every chain it lives on.</p><button class="bbtn" data-act="connect">Connect wallet</button> <a class="obtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`
       : `<div class="chk">${chips}</div>
-    ${ok ? `<p class="ok">Welcome, ${addrHtml(a)}: you hold <b>${total}</b> ${esc(col.name)}.</p><div id="holder-chat"></div><div class="perks">${g.perks.map(p => `<div class="perk"><b>${esc(p.title)}</b><p class="mut small">${esc(p.body)}</p></div>`).join('')}</div>`
+    ${ok ? `${previewAs ? '<p class="mut small">Chat is disabled in read-only address previews.</p>' : ''}<p class="ok">Welcome, ${addrHtml(a)}: you hold <b>${total}</b> ${esc(col.name)}.</p><div id="holder-chat"></div><div class="perks">${g.perks.map(p => `<div class="perk"><b>${esc(p.title)}</b><p class="mut small">${esc(p.body)}</p></div>`).join('')}</div>`
       : checking ? '<p><span class="spin"></span> Checking your wallet on every chain…</p>'
       : `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">${addrHtml(a)} holds ${total} on the chains we could read${Object.values(res).includes(null) ? ' (some chains could not be read; try again)' : ''}.</p><a class="bbtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`}`}
     <p class="mut small" style="margin-top:22px">Holder status is checked on every chain. Chat access and posting are verified again by the MultiSea server.</p></div>`;
