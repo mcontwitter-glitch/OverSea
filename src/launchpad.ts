@@ -307,8 +307,32 @@ function traitsBox(d: Drop) {
    <div class="agbtns"><button class="bbtn sm" data-agtr="up" ${!trEnc || busy ? 'disabled' : ''}>${agBusy === 'traits' ? '<span class="spin"></span> Uploading…' : `Upload traits on-chain (${n} tx)`}</button><button class="obtn sm" data-agtr="skip" ${busy ? 'disabled' : ''}>Skip CSV traits</button></div></div>`;
 }
 async function loadGrowth(d: Drop) {
- const k = d.chains[0].chain; const engine = (d as any).addresses?.[k]; if (!engine) { growthAddress = null; return; }
- const mod = await import('./agentgrowth'); const { kitOf } = await import('./agentdrop'); const kit = await kitOf(k, engine);
+ const k = d.chains[0].chain; const engine = (d as any).addresses?.[k];
+ if ((d as any).demo) {
+  const mod = await import('./agentgrowth');
+  (window as any).__creatorGrowth = mod.creatorGrowthHtml(growthTypes);
+  (window as any).__growthHtml = (id: number) => growthData[id] ? mod.growthHtml(growthData[id]) : '';
+  const [baseSvg,auroraSvg,haloSvg] = await Promise.all(['base.svg','layer-aurora.svg','layer-halo.svg'].map(async f => 'data:image/svg+xml;base64,' + btoa(await (await fetch('/img/growth-demo/'+f)).text())));
+ const artData: Record<string,string> = {'layer-aurora.svg':auroraSvg,'layer-halo.svg':haloSvg};
+ const claimed = new URLSearchParams(location.search).has('claimed');
+  growthAddress = null; growthTypes = mod.demoGrowth(claimed).types;
+  for (const a of (agents || []).filter(a => !a.dead)) {
+   const g = mod.demoGrowth(claimed);
+   if (a.id === 44) { g.parents = [7n,12n]; g.source = ['Mother','Father']; }
+   const arts = g.types.map((t: any,i: number) => t.values[g.row[i]-1]?.art || '').filter(Boolean).map((u: string) => artData[u]);
+   g.image = mod.layerPreview(baseSvg,arts);
+   g.level = (g.claimable.length ? 1 : 2); g.xp = BigInt(g.claimable.length ? 100 : 300); growthData[a.id] = g;
+   const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) el.innerHTML = mod.growthHtml(g);
+  }
+  const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);
+  return;
+ }
+ if (growthAddress === null) return;
+ if (!engine) { growthAddress = null; return; }
+ const mod = await import('./agentgrowth');
+ (window as any).__growthHtml = (id: number) => growthData[id] ? mod.growthHtml(growthData[id]) : '';
+ (window as any).__creatorGrowth = mod.creatorGrowthHtml(growthTypes);
+ const { kitOf } = await import('./agentdrop'); const kit = await kitOf(k, engine);
  if (!kit) { growthAddress = null; return; }
  try { growthAddress = await (await import('./wallet')).readClient(k).readContract({ address: kit, abi: (await import('viem')).parseAbi(['function growth() view returns (address)']), functionName: 'growth' }); } catch { growthAddress = null; return; }
  if (!growthAddress || /^0x0+$/.test(growthAddress)) return;
@@ -316,7 +340,7 @@ async function loadGrowth(d: Drop) {
  for (const a of (agents || []).filter(a => !a.dead)) try {
   const g = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id, kit); growthData[a.id] = g;
   const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) { el.innerHTML = mod.growthHtml(g); const p = el.querySelector('[data-preview]');
-   if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id))).then(uri => { p.innerHTML = `<details><summary>Layered NFT image</summary><img src="${uri}" alt="Layered agent #${a.id}"></details>`; }).catch(() => {});
+   if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id))).then(uri => { const g = growthData[a.id]; if (g) g.image = uri; render(); }).catch(() => {});
   }
  } catch {}
  const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);
@@ -334,7 +358,7 @@ function agentBox(d: Drop) {
    <p class="mut small">Starvation is always on for every agent: unfed for ${A.starveDays || 30} days, anyone can starve it (NFT burned, wallet to its heir or the treasury). It survives transfers and holders can't turn it off. Feed an agent (any amount into its wallet) to reset the clock. ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
    ${agents?.length ? agents.map(a => agentCard(a, o)).join('') : `<p class="mut small">${wallet.address ? 'No agents loaded yet.' : 'Connect a wallet to see your agents.'}</p>`}
    ${(d as any).demo ? '' : `<div class="agbtns"><input data-agid type="number" min="1" placeholder="Agent #"><button class="obtn sm" data-agload>Load agent</button></div>`}
-   ${mine.has(d.slug) ? '<div data-gcreator><span class="mut small">Loading creator growth…</span></div>' : ''}${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
+  ${mine.has(d.slug) || (d as any).demo ? `<div data-gcreator>${(window as any).__creatorGrowth || ''}</div>` : ''}${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
 }
 function lockBox(d: Drop) {
   const demo = !!(d as any).demo;
