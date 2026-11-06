@@ -65,3 +65,4 @@ export async function loadComposite(k:string,e:Address,id:bigint,g:Address,kit:A
  const arts=await Promise.all(row.map(async(v,i)=>v?((await pub.readContract({address:g,abi:GROWTH,functionName:'values',args:[e,i]})) as GrowthValue[]).find(x=>x.id===v)?.art||'':''));
  return layerPreview(base,arts);
 }
+export async function tokenId(k:string,e:Address,id:number){const p=await readClient(k).readContract({address:e,abi:GROWTH,functionName:'idPrefix'});return (p as bigint<<128n)|BigInt(id);}

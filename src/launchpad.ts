@@ -306,13 +306,21 @@ function traitsBox(d: Drop) {
    <div class="agbtns"><button class="bbtn sm" data-agtr="up" ${!trEnc || busy ? 'disabled' : ''}>${agBusy === 'traits' ? '<span class="spin"></span> Uploading…' : `Upload traits on-chain (${n} tx)`}</button><button class="obtn sm" data-agtr="skip" ${busy ? 'disabled' : ''}>Skip CSV traits</button></div></div>`;
 }
 async function loadGrowth(d: Drop) {
- const k = d.chains[0].chain; const engine = (d as any).addresses?.[k]; if (!engine) return;
- if (!growthAddress) { growthAddress = null; try { const kit = await import('./agentdrop').then(m => m.kitOf(k, engine)); if (!kit) return; growthAddress = await (await import('viem')).parseAbi ? await (await import('./wallet')).readClient(k).readContract({ address: kit, abi: (await import('viem')).parseAbi(['function growth() view returns (address)']), functionName: 'growth' }) : null; } catch {} }
+ const k = d.chains[0].chain; const engine = (d as any).addresses?.[k]; if (!engine) { growthAddress = null; return; }
+ const mod = await import('./agentgrowth'); const { kitOf } = await import('./agentdrop'); const kit = await kitOf(k, engine);
+ if (!kit) { growthAddress = null; return; }
+ try { growthAddress = await (await import('./wallet')).readClient(k).readContract({ address: kit, abi: (await import('viem')).parseAbi(['function growth() view returns (address)']), functionName: 'growth' }); } catch { growthAddress = null; return; }
  if (!growthAddress || /^0x0+$/.test(growthAddress)) return;
- const mod = await import('./agentgrowth'); growthTypes = await mod.growthTypes(k, engine, growthAddress as any, (await import('./agentdrop').then(m=>m.kitOf(k,engine)))!);
- for (const a of (agents || []).filter(a => !a.dead)) try { growthData[a.id] = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id, (await import('./agentdrop').then(m=>m.kitOf(k,engine)))!); const el = document.querySelector(`[data-growth="${a.id}"]`); if(el){el.innerHTML=mod.growthHtml(growthData[a.id]);const p=el.querySelector('[data-preview]');if(p)mod.loadComposite(k,engine,(await (await import('./wallet')).readClient(k).readContract({address:engine,abi:(await import('viem')).parseAbi(['function idPrefix() view returns (uint128)']),functionName:'idPrefix'}) as bigint<<128n)|BigInt(a.id),growthAddress! as any,growthData[a.id].kit,growthData[a.id].row).then(uri=>{p.innerHTML=`<details><summary>Layered NFT image</summary><img src="${uri}" alt="Layered agent #${a.id}"></details>`}).catch(()=>{});} } catch {}
+ try { growthTypes = await mod.growthTypes(k, engine, growthAddress as any, kit); } catch { growthAddress = null; return; }
+ for (const a of (agents || []).filter(a => !a.dead)) try {
+  const g = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id, kit); growthData[a.id] = g;
+  const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) { el.innerHTML = mod.growthHtml(g); const p = el.querySelector('[data-preview]');
+   if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id)), growthAddress as any, g.kit, g.row).then(uri => { p.innerHTML = `<details><summary>Layered NFT image</summary><img src="${uri}" alt="Layered agent #${a.id}"></details>`; }).catch(() => {});
+  }
+ } catch {}
  const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);
 }
+
 function agentBox(d: Drop) {
   const now = Math.floor(Date.now() / 1000); const A: any = (d as any).agent || (d as any).raw?.agent || {}; const k = d.chains[0].chain; const native = chains[k]?.native || 'ETH';
   if (agents === null && (d as any).demo) agents = demoAgents(now);
@@ -448,7 +456,12 @@ app.addEventListener('click', e => {
 async function onGrowth(d: Drop, el: HTMLElement) {
  const k = d.chains[0].chain; const engine = (d as any).addresses[k]; const mod = await import('./agentgrowth');
  try { agBusy = 'growth';
-  if (el.hasAttribute('data-agclaim')) { const id = +(el.closest('[data-growth]') as HTMLElement).dataset.growth!; for (const v of growthData[id].claimable) await mod.claimGrowthValue(k, engine, growthAddress! as any, (await (await import('./wallet')).readClient(k).readContract({address:engine,abi:(await import('viem')).parseAbi(['function idPrefix() view returns (uint128)']),functionName:'idPrefix'}) as bigint<<128n)|BigInt(id),v.k,v.v.id, h => { agMsg = `Claim submitted ${txLink(k, h)}`; render(); }); agMsg = '✓ Traits claimed'; }
+  if (el.hasAttribute('data-agclaim')) {
+   const id = +(el.closest('[data-growth]') as HTMLElement).dataset.growth!; const token = await mod.tokenId(k, engine, id);
+   for (const v of growthData[id].claimable) await mod.claimGrowthValue(k, engine, growthAddress! as any, token, v.k, v.v.id, h => { agMsg = `Claim submitted ${txLink(k, h)}`; render(); });
+   agMsg = '✓ Traits claimed';
+  }
+
   else { const f = (document.querySelector('[data-gart]') as HTMLInputElement).files?.[0]; if (!f) throw new Error('Select the trait artwork.'); const typeId = +(document.querySelector('[data-gtype]') as HTMLSelectElement).value; const typeName = (document.querySelector('[data-gtypename]') as HTMLInputElement).value; const name = (document.querySelector('[data-gname]') as HTMLInputElement).value; if (!name || typeId < 0 && !typeName) throw new Error('Name the type and value.'); const breeding = (document.querySelector('[data-grule]') as HTMLSelectElement).value === 'breeding'; const req = (document.querySelector('[data-greq]') as HTMLInputElement).value.split(':'); await mod.createGrowthValue(k, engine, growthAddress! as any, typeId < 0 ? growthTypes.length : typeId, typeName, name, f, { kind: breeding ? 'breeding' : 'level', level: +(document.querySelector('[data-glevel]') as HTMLInputElement).value, chanceBps: Math.round(+(document.querySelector('[data-gchance]') as HTMLInputElement).value * 100), parent: +(document.querySelector('[data-gparent]') as HTMLInputElement).value, reqType: req[0] ? +req[0] : 255, reqValue: +req[1] || 0 }, h => { agMsg = `Trait submitted ${txLink(k, h)}`; render(); }); agMsg = '✓ New trait added'; }
   await loadGrowth(d);
  } catch (err: any) { agMsg = `<span class="err">${esc(err?.message || err)}</span>`; render(); }
