@@ -1,1 +1,0 @@
-export{t as handleSwitchChain}from"./switch-chain-eB90osfE.js";

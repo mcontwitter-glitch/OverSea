@@ -1,1 +1,0 @@
-async function e(e,t){return await e({method:`eth_sendRawTransaction`,params:[t]})}export{e as t};

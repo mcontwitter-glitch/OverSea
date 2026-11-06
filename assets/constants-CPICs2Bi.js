@@ -1,1 +1,0 @@
-var e=`08c4b07e3ad25f1a27c14a4e8cecb6f0`,t=`eip155`;export{t as n,e as t};

@@ -1,1 +1,0 @@
-var e=new Map,t={getItem:async t=>e.get(t)??null,removeItem:async t=>{e.delete(t)},setItem:async(t,n)=>{e.set(t,n)}};export{t};

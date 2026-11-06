@@ -1,1 +1,0 @@
-var e=[`google`,`apple`,`facebook`,`discord`,`line`,`x`,`tiktok`,`epic`,`coinbase`,`farcaster`,`telegram`,`github`,`twitch`,`steam`],t=[...e,`guest`,`backend`,`email`,`phone`,`passkey`,`wallet`];export{e as n,t};

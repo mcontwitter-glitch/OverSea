@@ -1,1 +1,0 @@
-import{o as e}from"./to-bytes-wtgJLu9S.js";import{a as t}from"./hex-COJyibU4.js";function n(n){return typeof n==`number`?n:e(n)?t(n):typeof n==`bigint`?Number(n):Number.parseInt(n,10)}export{n as t};
