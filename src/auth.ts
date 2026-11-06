@@ -20,9 +20,9 @@ export async function signIn(statement = 'Sign in to MultiSea'): Promise<Sess> {
   sessionStorage.setItem(KEY, JSON.stringify(s)); return s;
 }
 const toHex = (s: string) => '0x' + [...new TextEncoder().encode(s)].map(b => b.toString(16).padStart(2, '0')).join('');
-export async function api(path: string, opts: { method?: string; body?: any; raw?: Blob; auth?: boolean } = {}) {
+export async function api(path: string, opts: { method?: string; body?: any; raw?: Blob; auth?: boolean; statement?: string } = {}) {
   const h: Record<string, string> = {};
-  if (opts.auth) { const s = await signIn(); h.authorization = 'Bearer ' + s.token; }
+  if (opts.auth) { const s = await signIn(opts.statement); h.authorization = 'Bearer ' + s.token; }
   if (opts.body) h['content-type'] = 'application/json';
   if (opts.raw) h['content-type'] = opts.raw.type;
   const r = await fetch(API + path, { method: opts.method || (opts.body || opts.raw ? 'POST' : 'GET'), headers: h, body: opts.raw || (opts.body ? JSON.stringify(opts.body) : undefined) });

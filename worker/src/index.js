@@ -10,6 +10,8 @@ import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeGrowth } from './growth.js';
 import { makeLaunchpad } from './launchpad.js';
 import { makeBtcRoutes } from './btc.js';
+import { makeHolderChat } from './holderchat.js';
+import { makeProfiles } from './profiles.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -230,6 +232,8 @@ const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) 
 const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain }));
+let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout }));
+let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
@@ -238,8 +242,10 @@ async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
+  { const pr = await profiles().handle(req, env, url, p, M, body); if (pr !== undefined) return pr; }
+  { const h = await holderChat().handle(req, env, url, p, M, body); if (h !== undefined) return h; }
   { const b = await btcRoutes().handle(req, env, url, p, M, body); if (b !== undefined) return b; }
   { const l = await launchpad(env).handle(req, env, url, p, M, body); if (l !== undefined) return l; }
 
@@ -261,6 +267,7 @@ async function handle(req, env, url) {
       valid = await createPublicClient({ transport: http(chains[key].rpc) }).verifyMessage({ address: f.address, message, signature }).catch(() => false);
     }
     if (!valid) bad('bad signature', 401);
+    await holderChat().verifyHolderSignature(env, f);
     await env.NONCES.delete('n:' + f.nonce);
     const token = rand(32); const address = lc(f.address);
     const ttl = Math.max(60, Math.min(86400, Math.floor((f.expirationTime.getTime() - Date.now()) / 1000)));

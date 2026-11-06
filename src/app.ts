@@ -19,6 +19,7 @@ else if (path === '/referrals') import('./referrals');
 else if (path === '/revenue-share') import('./revshare');
 else if (path === '/cart') import('./cartpage');
 else if (path === '/holders' || /^\/holders\/[a-z0-9-]+$/.test(path)) import('./holders');
+else if (path === '/me/profile') import('./profile');
 else if (path === '/me') import('./me');
 else if (path === '/bundles') import('./bundles');
 else if (/^\/w\/\d{1,5}$/.test(path)) import('./footwallet');
