@@ -1,0 +1,1 @@
+var e=`0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`,t=`0x0000000000000000000000000000000000000000`;export{t as n,e as t};

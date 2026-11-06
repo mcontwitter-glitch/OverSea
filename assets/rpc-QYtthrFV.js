@@ -1,0 +1,1 @@
+export{t as getRpcClient}from"./rpc-CPr_Qcd7.js";

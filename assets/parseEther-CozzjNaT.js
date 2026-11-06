@@ -1,0 +1,1 @@
+import{Wt as e}from"./ccip-BMwBQ1qp.js";function t(t,n=`wei`){return e(t,n)}export{t};

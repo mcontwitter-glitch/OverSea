@@ -1,0 +1,1 @@
+import{s as e}from"./utils-BPR-QD3a.js";async function t(t){let n=await e();if(!t.every(e=>n.includes(e.id)))throw Error(`Insight is not available for chains ${t.filter(e=>!n.includes(e.id)).map(e=>e.id).join(`, `)}`)}export{t as assertInsightEnabled};
