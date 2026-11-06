@@ -27,11 +27,13 @@ async function check() {
 }
 function draw() {
   if (!slug || !gates[slug]) {
-    el.innerHTML = `<div class="gate"><h1>Holder areas</h1><p class="mut">Holder-only pages for collections on MultiSea.</p>${Object.entries(gates).map(([s, g]) => `<a class="fcard" style="display:block" href="/holders/${s}"><b>${esc(g.title)}</b><div class="mut small">${esc(CFG.collections.find(c => c.slug === s)?.name || s)} · hold ${g.minBalance}+ on any chain</div></a>`).join('')}</div>`; return;
+    const existingChat = el.querySelector('#holder-chat');
+  el.innerHTML = `<div class="gate"><h1>Holder areas</h1><p class="mut">Holder-only pages for collections on MultiSea.</p>${Object.entries(gates).map(([s, g]) => `<a class="fcard" style="display:block" href="/holders/${s}"><b>${esc(g.title)}</b><div class="mut small">${esc(CFG.collections.find(c => c.slug === s)?.name || s)} · hold ${g.minBalance}+ on any chain</div></a>`).join('')}</div>`; return;
   }
   const g = gates[slug]; const col = CFG.collections.find(c => c.slug === slug)!; const a = who();
   const total = Object.values(res).reduce<number>((s, v) => s + (v || 0), 0); const ok = total >= g.minBalance;
   const chips = col.deployments.map(d => `<span>${logo(d.chain)} ${esc(chains[d.chain].name)}: ${res[d.chain] === undefined ? (a ? '…' : '-') : res[d.chain] === null ? '<i class="mut">unavailable</i>' : `<b>${res[d.chain]}</b>`}</span>`).join('');
+  const existingChat = el.querySelector('#holder-chat');
   el.innerHTML = `<div class="gate" data-gate="${ok ? 'open' : a ? (checking ? 'checking' : 'locked') : 'noconnect'}"><h1>${esc(g.title)}</h1>
     ${previewAs ? `<p class="mut small">Previewing as ${addrHtml(previewAs)} (read-only check).</p>` : ''}
     ${!a ? `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">Connect the wallet that holds your ${esc(col.name)}. We check every chain it lives on.</p><button class="bbtn" data-act="connect">Connect wallet</button> <a class="obtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`
@@ -40,7 +42,8 @@ function draw() {
       : checking ? '<p><span class="spin"></span> Checking your wallet on every chain…</p>'
       : `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">${addrHtml(a)} holds ${total} on the chains we could read${Object.values(res).includes(null) ? ' (some chains could not be read; try again)' : ''}.</p><a class="bbtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`}`}
     <p class="mut small" style="margin-top:22px">Holder status is checked on every chain. Chat access and posting are verified again by the MultiSea server.</p></div>`;
-  if (ok && !previewAs) mountHolderChat(el.querySelector('#holder-chat')!, slug, col.name);
+  if (existingChat && ok && !previewAs) el.querySelector('#holder-chat')!.replaceWith(existingChat);
+  if (ok && !previewAs && !el.querySelector('.holderchat')) mountHolderChat(el.querySelector('#holder-chat')!, slug, col.name);
 }
 el.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="connect"]')) openConnect(); });
 onWallet(() => { if (!previewAs) { checkedFor = ''; check(); } });
