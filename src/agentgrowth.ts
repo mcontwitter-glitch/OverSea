@@ -3,6 +3,7 @@ import { parseAbi, type Address } from 'viem';
 import { readClient } from './wallet';
 import { esc } from './shell';
 import { pinImage } from './lpmedia';
+import { WORLD_ID, mediaURL, gatewaySvg } from './growthart';
 import { agentAddValue, agentClaim } from './agentdrop';
 
 export const GROWTH = parseAbi([
@@ -18,8 +19,6 @@ export const GROWTH = parseAbi([
 export type GrowthValue = { value: string; art: string; chanceBps: number; minParentLevel: number; claimLevel: number; reqType: number; reqValue: number; id: number };
 export type GrowthType = { id: number; name: string; values: GrowthValue[] };
 export type GrowthToken = { xp: bigint; level: number; row: number[]; types: GrowthType[]; parents: bigint[]; source: string[]; claimable: { k: number; v: GrowthValue }[]; kit: Address; thresholds: number[] };
-export const WORLD_ID = (id: bigint) => String(id & ((1n << 128n) - 1n));
-export const mediaURL = (u: string) => u.replace(/^ipfs:\/\//, 'https://w3s.link/ipfs/');
 const bytes = (s: string) => Array.from(s.slice(2).match(/../g) || [], x => parseInt(x, 16));
 
 export async function growthTypes(k: string, engine: Address, growth: Address, kit: Address) {
@@ -35,7 +34,7 @@ export async function rowOf(k: string, e: Address, growth: Address, kit: Address
  const ord = await readClient(k).readContract({ address: growth, abi: GROWTH, functionName: 'originalRow', args: [e, id] });
  return bytes(ord as string);
 }
-export async function loadGrowthTokenOld(k: string, e: Address, growth: Address, id: bigint, kit: Address, thresholds = [0,100,300,600,1000]): Promise<GrowthToken> {
+async function loadFullToken(k: string, e: Address, growth: Address, id: bigint, kit: Address, thresholds = [0,100,300,600,1000]): Promise<GrowthToken> {
  const pub = readClient(k); const [x,l,row,child,types] = await Promise.all([
   pub.readContract({address:growth,abi:GROWTH,functionName:'xpOf',args:[e,id]}),pub.readContract({address:growth,abi:GROWTH,functionName:'levelOf',args:[e,id]}),rowOf(k,e,growth,kit,id),pub.readContract({address:e,abi:GROWTH,functionName:'agentOf',args:[id]}),
   Promise.all(Array.from({length:Number(await pub.readContract({address:growth,abi:GROWTH,functionName:'widthOf',args:[e]}))},async(_,i)=>{
@@ -56,7 +55,7 @@ export function createGrowthValue(k:string,e:Address,g:Address,type:number,name:
 }
 export const claimGrowthValue=(k:string,e:Address,g:Address,id:bigint,kidx:number,v:number,onTx:(h:string)=>void)=>agentClaim(k,e,g,id,kidx,v,onTx);
 export function layerPreview(base:string,arts:string[]){const escXml=(u:string)=>mediaURL(u).replace(/&/g,'&amp;').replace(/"/g,'&quot;');return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 350"><image href="${escXml(base)}" width="350" height="350"/>${arts.filter(Boolean).map(u=>`<image href="${escXml(u)}" width="350" height="350"/>`).join('')}</svg>`);}
-export async function loadGrowthToken(k:string,e:Address,g:Address,id:number,kit:Address,thresholds=[0,100,300,600,1000]) {const pre=await readClient(k).readContract({address:e,abi:GROWTH,functionName:'idPrefix'});return loadGrowthTokenOld(k,e,g,((pre as bigint) << 128n) | BigInt(id),kit,thresholds);}
+export async function loadGrowthToken(k:string,e:Address,g:Address,id:number,kit:Address,thresholds=[0,100,300,600,1000]) {const pre=await readClient(k).readContract({address:e,abi:GROWTH,functionName:'idPrefix'});return loadFullToken(k,e,g,((pre as bigint) << 128n) | BigInt(id),kit,thresholds);}
 export function growthHtml(g: GrowthToken) {
  const next = g.thresholds[g.level + 1], prev = g.thresholds[g.level] || 0;
  return `${g.parents.length ? `<div class="mut small">Child of #${WORLD_ID(g.parents[0])} × #${WORLD_ID(g.parents[1])}</div>` : ''}<div class="ag-xphead"><b>Level ${g.level} · ${g.xp} XP</b><span class="mut">${next == null ? 'Max level' : 'Next at ' + next}</span></div><div class="ag-xpbar"><i style="width:${next == null ? 100 : Math.max(0, Math.min(100, (Number(g.xp) - prev) * 100 / (next - prev)))}%"></i></div><div class="ag-traitgrid">${g.row.map((id, i) => `<div class="ag-trait"><span>${esc(g.types[i]?.name || 'Trait ' + i)}${g.source.length ? ' · ' + esc(g.source[i]) : ''}</span><b>${esc(g.types[i]?.values.find(v => v.id === id)?.value || '–')}</b></div>`).join('')}</div><div data-preview></div>${g.claimable.length ? `<button class="bbtn sm" data-agclaim>Claim ${g.claimable.length} unlocked traits</button>` : '<span class="mut small">No new claimable traits</span>'}<details><summary>${g.types.reduce((n, t) => n + t.values.length, 0)} trait values</summary>${g.types.flatMap(t => t.values.filter(v => v.claimLevel || v.chanceBps).map(v => `<div class="ag-unlock"><b>${esc(t.name)}: ${esc(v.value)}</b><span class="mut">${v.claimLevel ? 'Level ' + v.claimLevel : 'Breeding ' + v.chanceBps / 100 + '%'}${g.row[t.id] === v.id ? ' · owned' : ''}</span></div>`)).join('')}</details>`;
@@ -65,20 +64,5 @@ export function creatorGrowthHtml(types: GrowthType[]) {
  return `<details class="ag-growth"><summary>Creator · new traits</summary><p class="mut small">Pin art to IPFS, then append it with your creator wallet. Layers follow trait type order; death art overrides.</p><div class="lffrow"><label>Type<select data-gtype><option value="-1">New type</option>${types.map(t => `<option value="${t.id}">${esc(t.name)} (${t.values.length})</option>`).join('')}</select></label><label>New type name<input data-gtypename></label></div><label>Value name<input data-gname></label><label>Artist layer<input type="file" accept="image/*" data-gart></label><label>Unlock by<select data-grule><option value="level">Level</option><option value="breeding">Breeding</option></select></label><div class="lffrow"><label>Level<input type="number" min="1" value="2" data-glevel></label><label>Chance %<input type="number" min="0" max="100" value="5" data-gchance></label><label>Min parent level<input type="number" min="0" value="0" data-gparent></label></div><label>Required parent trait<select data-greq><option value="255:0">None</option>${types.flatMap(t => t.values.map(v => `<option value="${t.id}:${v.id}">${esc(t.name)}: ${esc(v.value)}</option>`)).join('')}</select></label><button class="bbtn sm" data-agadd>Pin &amp; add trait</button></details>`;
 }
 
-export function decodeUri(uri: string): string {
- if (uri.startsWith('data:application/json;base64,')) { const dec = new TextDecoder().decode(Uint8Array.from(atob(uri.split(',')[1]), c => c.charCodeAt(0))); return JSON.parse(dec).image || ''; }
- return uri;
-}
-/** Preserve the actual tokenURI composite but use an HTTP gateway inside SVG image tags. */
-export function gatewaySvg(uri: string): string {
- const image = decodeUri(uri); if (!image.startsWith('data:image/svg+xml,')) return image;
- const svg = decodeURIComponent(image.split(',')[1]); const sources: { url: string; escaped: string }[] = [];
- for (const m of svg.matchAll(/<image\b[^>]*>/gs)) if (m[0].includes('href="ipfs://')) {
-  const url = m[0].split('href="')[1].split('"')[0].replace('&amp;', '&');
-  sources.push({ url, escaped: mediaURL(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;') });
- }
- let i = 0; const changed = svg.replace(/<image\b[^>]*>/gs, tag => tag.includes('href="ipfs://') ? tag.replace(/href="[^"]*"/, `href="${sources[i++].escaped}"`) : tag);
- return 'data:image/svg+xml,' + encodeURIComponent(changed);
-}
 export async function tokenId(k: string, e: Address, id: number) { const p = await readClient(k).readContract({ address: e, abi: GROWTH, functionName: 'idPrefix' }); return ((p as bigint) << 128n) | BigInt(id); }
 export async function loadComposite(k: string, e: Address, id: bigint) { const uri = await readClient(k).readContract({ address: e, abi: GROWTH, functionName: 'tokenURI', args: [id] }); return gatewaySvg(uri as string); }
