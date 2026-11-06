@@ -243,8 +243,9 @@ async function handle(req, env, url) {
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
-  { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
+  // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
   { const pr = await profiles().handle(req, env, url, p, M, body); if (pr !== undefined) return pr; }
+  { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
   { const h = await holderChat().handle(req, env, url, p, M, body); if (h !== undefined) return h; }
   { const b = await btcRoutes().handle(req, env, url, p, M, body); if (b !== undefined) return b; }
   { const l = await launchpad(env).handle(req, env, url, p, M, body); if (l !== undefined) return l; }

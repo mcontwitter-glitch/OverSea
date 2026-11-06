@@ -368,7 +368,7 @@ export function makeGrowth(d) {
       if (M === 'POST' && p[2] === 'verify') { const a = addrParam(p[1]); const rk = 'qv:' + a; if (await env.COLLECTIONS.get(rk)) return quests(env, a); await env.COLLECTIONS.put(rk, '1', { expirationTtl: 60 }); return quests(env, a, true); }
       if (M === 'GET' && p[2] === 'eligibility') return eligibility(env, addrParam(p[1]));
     }
-    if (M === 'GET' && p[0] === 'profile' && p.length === 2) { const a = addrParam(p[1]); const [q, r, bs] = await Promise.all([quests(env, a), refStats(env, a), bundles(env)]); return { address: a, quests: q, referrals: { code: r.code, friends: r.friends.length, earnings: r.earnings }, bundles: bs.filter(x => x.seller === a) }; }
+    if (M === 'GET' && p[0] === 'profile' && p.length === 2 && p[1] !== 'nfts') { const a = addrParam(p[1]); const [q, r, bs] = await Promise.all([quests(env, a), refStats(env, a), bundles(env)]); return { address: a, quests: q, referrals: { code: r.code, friends: r.friends.length, earnings: r.earnings }, bundles: bs.filter(x => x.seller === a) }; }
     // bundles
     if (p[0] === 'bundles') {
       if (M === 'GET' && p.length === 1) return { bundles: await Promise.all((await bundles(env)).map(async r => r)), policy: BUNDLE_POLICY };
