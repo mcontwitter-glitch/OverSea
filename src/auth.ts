@@ -7,12 +7,12 @@ export function getSession(): Sess | null {
   try { const s = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (s && s.exp > Date.now() && s.address === wallet.address?.toLowerCase()) return s; } catch {}
   return null;
 }
-export async function signIn(statement = 'Sign in to MultiSea'): Promise<Sess> {
+export async function signIn(statement = 'Sign in to MultiSea', resources?: string[]): Promise<Sess> {
   if (!wallet.address) { openConnect(); throw new Error('Connect a wallet first'); }
   const cur = getSession(); if (cur) return cur;
   const { nonce } = await (await fetch(API + '/auth/nonce')).json();
   const chainId = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16) || 1;
-  const message = createSiweMessage({ domain: location.host, address: wallet.address as `0x${string}`, statement, uri: location.origin, version: '1', chainId, nonce, issuedAt: new Date(), expirationTime: new Date(Date.now() + 8 * 3600e3) });
+  const message = createSiweMessage({ domain: location.host, address: wallet.address as `0x${string}`, statement, uri: location.origin, version: '1', chainId, nonce, resources, issuedAt: new Date(), expirationTime: new Date(Date.now() + 8 * 3600e3) });
   const signature = await wallet.provider.request({ method: 'personal_sign', params: [toHex(message), wallet.address] });
   const r = await fetch(API + '/auth/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Sign-in failed');

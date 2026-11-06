@@ -65,7 +65,7 @@ export function hydrateNames(root: ParentNode = document) {
   const want = new Set<string>();
   root.querySelectorAll<HTMLElement>('[data-addr]').forEach(el => { const a = el.dataset.addr!.toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return; loadProfile(a);
     if (fresh(cache[a])) paintEl(el, cache[a]); else if (want.size < 60) want.add(a); });
-  if (CID) want.forEach(a => { if (!inflight.has(a) && !queue.includes(a)) queue.push(a); }); pump();
+  want.forEach(a => { if (!inflight.has(a) && !queue.includes(a)) queue.push(a); }); pump();
 }
 let started = false;
 /** Auto-hydrate on DOM changes (debounced). Called once by the shell. */

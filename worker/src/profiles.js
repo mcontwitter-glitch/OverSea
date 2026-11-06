@@ -35,7 +35,7 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout }) 
       let avatar = '', nft = null;
       if (b.nft && typeof b.nft === 'object') {
         await owned(b.nft.chain, b.nft.contract, b.nft.id, s.address);
-        avatar = String(b.nft.image || ''); if (!/^https:\/\//.test(avatar) && !MEDIA.test(avatar)) bad('NFT image must be a verified media or HTTPS URL');
+        avatar = String(b.nft.image || ''); if (!MEDIA.test(avatar)) bad('NFT image must use the MultiSea media path');
         nft = { chain: String(b.nft.chain), contract: lc(b.nft.contract), id: String(b.nft.id) };
       } else if (b.avatar) { avatar = String(b.avatar); if (!MEDIA.test(avatar)) bad('invalid profile image'); }
       const rec = { address: lc(s.address), name, avatar, nft, updatedAt: Date.now() };

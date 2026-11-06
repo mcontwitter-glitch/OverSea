@@ -27,11 +27,12 @@ async function load() {
   draw();
 }
 async function pickNft() {
-  const m = (await import('./wallet')).overlay(`<h3>Choose your NFT</h3><p class="mut small">Your ownership is checked on-chain when you save.</p><div class="nftpick"><label>Collection deployment<select>${deployments.map((d, i) => `<option value="${i}">${esc(d.collection)} · ${logo(d.chain)} ${esc(chains[d.chain].name)}</option>`).join('')}</select></label><label>Token ID<input type="number" min="0" step="1" placeholder="e.g. 42"></label><label>Image URL<input type="url" placeholder="https://…"><span class="mut small">HTTPS image URL from the NFT metadata.</span></label><button class="bbtn">Use this NFT</button></div>`);
-  m.querySelector('button')!.addEventListener('click', () => {
+  const m = (await import('./wallet')).overlay(`<h3>Choose your NFT</h3><p class="mut small">Your ownership is checked on-chain when you save.</p><div class="nftpick"><label>Collection deployment<select>${deployments.map((d, i) => `<option value="${i}">${esc(d.collection)} · ${logo(d.chain)} ${esc(chains[d.chain].name)}</option>`).join('')}</select></label><label>Token ID<input type="number" min="0" step="1" placeholder="e.g. 42"></label><label>NFT image <span class="mut small">Square crop</span><input type="file" accept="image/*"><span class="mut small">Upload the NFT artwork; ownership is checked before it becomes your pfp.</span></label><button class="bbtn">Use this NFT</button></div>`);
+  m.querySelector('button')!.addEventListener('click', async () => {
     const d = deployments[+(m.querySelector('select') as HTMLSelectElement).value], ins = m.querySelectorAll('input');
-    if (!ins[0].value || !/^https:\/\//.test(ins[1].value)) { ins[1].setCustomValidity('Enter an HTTPS image URL'); ins[1].reportValidity(); return; }
-    nft = { chain: d.chain, contract: d.address, id: ins[0].value, image: ins[1].value }; avatar = nft.image; m.remove(); draw();
+    if (!ins[0].value || !ins[1].files?.[0]) { ins[1].setCustomValidity('Choose the NFT image'); ins[1].reportValidity(); return; }
+    const btn=m.querySelector('button')!; btn.textContent='Cropping and uploading…'; btn.disabled=true;
+    try { const file=await square(ins[1].files[0]); const image=await uploadImage(file,512); nft = { chain: d.chain, contract: d.address, id: ins[0].value, image }; avatar = image; m.remove(); draw(); } catch(e:any) { btn.textContent=e?.message||'Upload failed'; btn.disabled=false; }
   });
 }
 el.addEventListener('click', async e => {
@@ -41,7 +42,7 @@ el.addEventListener('click', async e => {
     if (b.dataset.p === 'nft') await pickNft();
     if (b.dataset.p === 'remove') { avatar = ''; nft = null; draw(); }
     if (b.dataset.p === 'save') {
-      if (!getSession()) await signIn('Save your MultiSea profile.');
+      if (!getSession()) await signIn('Save your MultiSea profile.', ['multisea:profile']);
       b.textContent = 'Saving…';
       const j = await api('/profile', { auth: true, body: { name: (el.querySelector('[data-p=name]') as HTMLInputElement).value, avatar: nft ? '' : avatar, nft } });
       current = j.profile; avatar = current.avatar; nft = current.nft; msg = '✓ Profile saved';

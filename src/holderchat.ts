@@ -16,7 +16,7 @@ export function mountHolderChat(root: HTMLElement, slug: string, title: string) 
   async function load() {
     if (busy) return; busy = true;
     try { page = await api(`/holders/${encodeURIComponent(slug)}/messages`, { auth: true }); joined = true; draw(); start(); }
-    catch (e: any) { if (e?.message?.includes('sign in')) { joined = false; stop(); } drawErr(e); }
+    catch (e: any) { if (e?.message?.includes('sign in')) { joined = false; stop(); draw(); } drawErr(e); }
     finally { busy = false; }
   }
   function drawErr(e: any) {
@@ -50,10 +50,7 @@ export function mountHolderChat(root: HTMLElement, slug: string, title: string) 
   root.addEventListener('click', async e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-chat],[data-delete]'); if (!b) return;
     try {
-      if (b.dataset.chat === 'join') { b.textContent = 'Check your wallet…'; await signIn(`Join the ${title} holder group chat on MultiSea.
-
-Resources:
-- multisea:holders:${slug}`); await load(); }
+      if (b.dataset.chat === 'join') { b.textContent = 'Check your wallet…'; await signIn(`Join the ${title} holder group chat on MultiSea.`, [`multisea:holders:${slug}`]); await load(); }
       if (b.dataset.chat === 'refresh') await load();
       if (b.dataset.chat === 'older' && page?.next) {
         b.textContent = 'Loading…'; const old = await api(`/holders/${encodeURIComponent(slug)}/messages?before=${encodeURIComponent(page.next)}`, { auth: true });

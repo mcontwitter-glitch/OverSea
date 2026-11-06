@@ -36,11 +36,11 @@ function draw() {
     ${previewAs ? `<p class="mut small">Previewing as ${addrHtml(previewAs)} (read-only check).</p>` : ''}
     ${!a ? `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">Connect the wallet that holds your ${esc(col.name)}. We check every chain it lives on.</p><button class="bbtn" data-act="connect">Connect wallet</button> <a class="obtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`
       : `<div class="chk">${chips}</div>
-    ${ok ? `${previewAs ? '<p class="mut small">Chat is disabled in read-only address previews.</p>' : ''}<p class="ok">Welcome, ${addrHtml(a)}: you hold <b>${total}</b> ${esc(col.name)}.</p><div id="holder-chat"></div><div class="perks">${g.perks.map(p => `<div class="perk"><b>${esc(p.title)}</b><p class="mut small">${esc(p.body)}</p></div>`).join('')}</div>`
+    ${ok ? `<div id="holder-chat"></div>${previewAs ? '<p class="mut small">Chat is disabled in read-only address previews.</p>' : ''}<p class="ok">Welcome, ${addrHtml(a)}: you hold <b>${total}</b> ${esc(col.name)}.</p><div class="perks">${g.perks.map(p => `<div class="perk"><b>${esc(p.title)}</b><p class="mut small">${esc(p.body)}</p></div>`).join('')}</div>`
       : checking ? '<p><span class="spin"></span> Checking your wallet on every chain…</p>'
       : `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">${addrHtml(a)} holds ${total} on the chains we could read${Object.values(res).includes(null) ? ' (some chains could not be read; try again)' : ''}.</p><a class="bbtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`}`}
     <p class="mut small" style="margin-top:22px">Holder status is checked on every chain. Chat access and posting are verified again by the MultiSea server.</p></div>`;
-  if (ok && !previewAs && !el.querySelector('.holderchat')) mountHolderChat(el.querySelector('#holder-chat')!, slug, col.name);
+  if (ok && !previewAs) mountHolderChat(el.querySelector('#holder-chat')!, slug, col.name);
 }
 el.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="connect"]')) openConnect(); });
 onWallet(() => { if (!previewAs) { checkedFor = ''; check(); } });

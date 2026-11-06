@@ -46,9 +46,9 @@ test('chat: pagination newest last, admin delete and mute, non-admin forbidden',
 test('profiles: authed owner-verified NFT avatar, name uniqueness, batch reads, removal', async () => {
   const x = setup(); x.sessions.U = USER; const other = privateKeyToAccount(generatePrivateKey()).address; x.sessions.O = other;
   const col = CFG.collections[0].deployments[0];
-  assert.equal((await x.call(x.profiles, 'POST', '/profile', { name: 'Sea Fan', nft: { chain: col.chain, contract: col.address, id: '9', image: 'https://images.example/9.png' } }, 'U')).s, 403);
+  assert.equal((await x.call(x.profiles, 'POST', '/profile', { name: 'Sea Fan', nft: { chain: col.chain, contract: col.address, id: '9', image: '/media/' + 'ab'.repeat(32) + '.png' } }, 'U')).s, 403);
   x.owners.set(`${col.chain}:${lc(col.address)}:9`, lc(USER));
-  const saved = await x.call(x.profiles, 'POST', '/profile', { name: 'Sea Fan', nft: { chain: col.chain, contract: col.address, id: '9', image: 'https://images.example/9.png' } }, 'U');
+  const saved = await x.call(x.profiles, 'POST', '/profile', { name: 'Sea Fan', nft: { chain: col.chain, contract: col.address, id: '9', image: '/media/' + 'ab'.repeat(32) + '.png' } }, 'U');
   assert.equal(saved.s, 200); assert.equal(saved.j.profile.name, 'Sea Fan');
   assert.equal((await x.call(x.profiles, 'POST', '/profile', { name: 'sea fan' }, 'O')).s, 409);
   const batch = await x.call(x.profiles, 'GET', `/profiles?addresses=${USER},${other}`); assert.equal(batch.j.profiles[lc(USER)].name, 'Sea Fan');

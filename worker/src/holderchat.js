@@ -1,4 +1,4 @@
-import GATES from '../../config/gates.json' with { type: 'json' };
+import GATES from './gates.js';
 
 const MAX_MESSAGES = 50;
 const MAX_TEXT = 500;
