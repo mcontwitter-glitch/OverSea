@@ -315,7 +315,7 @@ async function loadGrowth(d: Drop) {
  for (const a of (agents || []).filter(a => !a.dead)) try {
   const g = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id, kit); growthData[a.id] = g;
   const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) { el.innerHTML = mod.growthHtml(g); const p = el.querySelector('[data-preview]');
-   if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id)), growthAddress as any, g.kit, g.row).then(uri => { p.innerHTML = `<details><summary>Layered NFT image</summary><img src="${uri}" alt="Layered agent #${a.id}"></details>`; }).catch(() => {});
+   if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id))).then(uri => { p.innerHTML = `<details><summary>Layered NFT image</summary><img src="${uri}" alt="Layered agent #${a.id}"></details>`; }).catch(() => {});
   }
  } catch {}
  const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);

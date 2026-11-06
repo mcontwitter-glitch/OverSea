@@ -247,9 +247,3 @@ export async function agentClaim(k: string, engine: Address, growth: Address, id
   const sim = await readClient(k).simulateContract(req);
   const hash = await cli.writeContract({ ...sim.request, account, chain: vchain(k) }); onTx(hash); await readClient(k).waitForTransactionReceipt({ hash }); return hash;
 }
-export async function agentKit(chain: string, coll: Address) {
-  const kit = await readClient(chain).readContract({ address: coll, abi: KIT, functionName: 'kit' });
-  if (!kit || !/^0x[0-9a-fA-F]{40}$/.test(kit)) throw new Error('Collection is not an ERC-463N7 AgentDropKit.');
-  return kit;
-}
-declare global { interface Window { __agentgrowth?: any; __agentgrowthAdd?: (o: any) => Promise<void>; } }
