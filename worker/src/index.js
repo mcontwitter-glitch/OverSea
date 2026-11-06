@@ -232,7 +232,7 @@ const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) 
 const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain }));
-let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout }));
+let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));

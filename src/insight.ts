@@ -43,3 +43,17 @@ export async function walletTransfers(chain: string, owner: string, days = 365, 
   const v = (await get('/v1/nfts/transfers', { chain_id: chains[chain].chainId, owner_address: owner, block_timestamp_from: Math.floor(Date.now() / 1000 - days * 86400), sort_order: 'desc', limit, metadata: 'false' }, 45_000)).map(toX(chain));
   cacheSet(k, v); return v;
 }
+
+export type OwnedNft = { chain: string; contract: string; id: string; name: string | null; collection: string | null; image: string | null; standard: string | null };
+/** NFTs currently held by `owner` on one Insight-covered chain (paginated). Used for BNB in the profile pfp gallery (OpenSea has no BNB slug). */
+export async function ownedNfts(chain: string, owner: string, page = 0, limit = 50): Promise<{ nfts: OwnedNft[]; more: boolean }> {
+  if (!insightOn(chain)) return { nfts: [], more: false };
+  const d = await get('/v1/nfts', { chain_id: chains[chain].chainId, owner_address: owner, limit, page, metadata: 'true' }, 30_000);
+  const nfts: OwnedNft[] = (Array.isArray(d) ? d : []).map((n: any) => ({
+    chain, contract: String(n.contract_address || n.token_address || '').toLowerCase(), id: String(n.token_id ?? n.tokenId ?? ''),
+    name: n.name || n.metadata?.name || null, collection: n.collection_name || n.contract?.name || null,
+    image: n.image_url || n.extra_metadata?.image_url || n.metadata?.image || n.image || null,
+    standard: (n.token_type || n.token_standard || '').toLowerCase() || null,
+  })).filter((n: OwnedNft) => n.contract && n.id !== '');
+  return { nfts, more: (Array.isArray(d) ? d : []).length >= limit };
+}
