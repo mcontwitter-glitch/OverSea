@@ -241,7 +241,7 @@ export async function agentAddValue(k: string, engine: Address, growth: Address,
   const sim = await readClient(k).simulateContract(req);
   const hash = await cli.writeContract({ ...sim.request, account, chain: vchain(k) }); onTx(hash); await readClient(k).waitForTransactionReceipt({ hash }); return hash;
 }
-export async function agentClaim(k: string, engine: Address, growth: Address, id: number, typeId: number, valueId: number, onTx: (h: string) => void) {
+export async function agentClaim(k: string, engine: Address, growth: Address, id: bigint, typeId: number, valueId: number, onTx: (h: string) => void) {
   const account = wallet.address as Address; const cli = await walletOn(k);
   const req = { address: growth, abi: GROWTH_WRITE_ABI, functionName: 'claim' as const, args: [engine, BigInt(id), typeId, valueId], account } as const;
   const sim = await readClient(k).simulateContract(req);
