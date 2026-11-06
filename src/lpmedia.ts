@@ -146,6 +146,16 @@ export async function pinAll(project: { description?: string; website?: string }
   return base;
 }
 
+/** Pins one creator-uploaded image for AgentGrowth.Value.art. */
+export async function pinImage(f: File): Promise<string> {
+  if (!pinningReady()) throw new Error('IPFS pinning is not configured on this site (thirdweb client id missing).');
+  if (!/^image\//.test(f.type) || f.size > 20 * 1048576) throw new Error('Trait art must be an image of at most 20 MB.');
+  const { client, upload } = await tw();
+  const u: string = [].concat(await upload({ client, files: [f] }) as any)[0] as any;
+  if (!/^ipfs:\/\/\w+\//.test(u)) throw new Error('Unexpected IPFS response: ' + u);
+  return u;
+}
+
 /** Pins one JSON file (e.g. the agent CSV-traits encoding) and returns its ipfs://CID/<name> URI. */
 export async function pinJson(name: string, obj: unknown): Promise<string> {
   const { client, upload } = await tw();

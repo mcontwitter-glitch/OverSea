@@ -233,3 +233,23 @@ export const demoAgents = (now: number): AgentView[] => [
   { id: 31, wallet: '0x31dead00000000000000000000000000000a9e31', lastFed: now - 40 * 86400, dead: true, skill: false, strikeAt: 0, graceEnd: 0, mine: true, custodian: '0x2fee00000000000000000000000000000000a9e7', heirIsTreasury: true },
   { id: 44, wallet: '0x44f00d00000000000000000000000000000a9e44', balEth: 0.0004, lastFed: now - 31 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 1, mutated: true, mutation: true },
   { id: 58, wallet: '0x58b0a1000000000000000000000000000000a9e58', balEth: 0.003, lastFed: now - 90 * 86400, dead: false, skill: false, strikeAt: 0, graceEnd: 0, mine: false, sex: 2, zombie: true }];
+
+export const GROWTH_WRITE_ABI = parseAbi(['function addValue(address engine,uint8 typeId,string typeName,string name,(string value,string art,uint16 chanceBps,uint16 minParentLevel,uint32 claimLevel,uint8 reqType,uint8 reqValue) value)','function claim(address engine,uint256 id,uint8 typeId,uint8 valueId)']);
+export async function agentAddValue(k: string, engine: Address, growth: Address, typeId: number, typeName: string, name: string, value: unknown, onTx: (h: string) => void) {
+  const account = wallet.address as Address; const cli = await walletOn(k);
+  const req = { address: growth, abi: GROWTH_WRITE_ABI, functionName: 'addValue' as const, args: [engine, typeId, typeName, name, value], account } as any;
+  const sim = await readClient(k).simulateContract(req);
+  const hash = await cli.writeContract({ ...sim.request, account, chain: vchain(k) }); onTx(hash); await readClient(k).waitForTransactionReceipt({ hash }); return hash;
+}
+export async function agentClaim(k: string, engine: Address, growth: Address, id: number, typeId: number, valueId: number, onTx: (h: string) => void) {
+  const account = wallet.address as Address; const cli = await walletOn(k);
+  const req = { address: growth, abi: GROWTH_WRITE_ABI, functionName: 'claim' as const, args: [engine, BigInt(id), typeId, valueId], account } as const;
+  const sim = await readClient(k).simulateContract(req);
+  const hash = await cli.writeContract({ ...sim.request, account, chain: vchain(k) }); onTx(hash); await readClient(k).waitForTransactionReceipt({ hash }); return hash;
+}
+export async function agentKit(chain: string, coll: Address) {
+  const kit = await readClient(chain).readContract({ address: coll, abi: KIT, functionName: 'kit' });
+  if (!kit || !/^0x[0-9a-fA-F]{40}$/.test(kit)) throw new Error('Collection is not an ERC-463N7 AgentDropKit.');
+  return kit;
+}
+declare global { interface Window { __agentgrowth?: any; __agentgrowthAdd?: (o: any) => Promise<void>; } }

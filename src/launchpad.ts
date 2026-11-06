@@ -285,7 +285,7 @@ function ordBox(d: Drop) {
    <div class="gh" style="margin-top:12px">Your orders <span class="ldtag xp">Preview data</span></div>${rows}</div>`;
 }
 // ---- ERC-463N7 agent drops: your agents (wallet, last fed, Feed, Starve), Death-skill attack with strike/grace, burned tombstones, creator lock ----
-let agents: AgentView[] | null = null; let atkFrom = 0; let agMsg = ''; let agBusy = ''; let demoLocked = false;
+let agents: AgentView[] | null = null; let growthData: Record<number, any> = {}; let growthAddress: string | null | undefined; let growthTypes: any[] = []; let growthSlug = ''; let atkFrom = 0; let agMsg = ''; let agBusy = ''; let demoLocked = false;
 // Onchain CSV traits (AgentDropKit): table from this browser (create form), the pinned traitsURI, or a re-uploaded CSV.
 let trEnc: TraitEnc | null = null; let trSlug = ''; let trState: { expected: number; rows: number; done: boolean; dict: boolean } | null | undefined; let trMsg = ''; let demoTraits = '';
 const demoEnc = (n: number) => encodeTraits(Array.from({ length: n }, (_, i) => ({ tokenID: String(i + 1), attrs: [['Background', ['Mint', 'Peach', 'Night', 'Sand', 'Lilac'][i % 5]], ['Fur', ['Gold', 'Ash', 'Cream', 'Ink'][(i * 7) % 4]], ['Eyes', ['Laser', 'Sleepy', 'Wide', 'Wink', 'Hypno', 'X'][(i * 3) % 6]], ['Mouth', ['Grin', 'Fang', 'Pipe'][(i * 5) % 3]], ['Hat', i % 4 ? ['Cap', 'Crown', 'Halo', 'Beanie'][(i * 11) % 4] : ''], ['Status', ['Common', 'Rare'][i % 9 ? 0 : 1]]].map(([trait_type, value]) => ({ trait_type, value })) }))) as TraitEnc;
@@ -305,17 +305,27 @@ function traitsBox(d: Drop) {
    ${trMsg ? `<p class="small">${trMsg}</p>` : ''}
    <div class="agbtns"><button class="bbtn sm" data-agtr="up" ${!trEnc || busy ? 'disabled' : ''}>${agBusy === 'traits' ? '<span class="spin"></span> Uploading…' : `Upload traits on-chain (${n} tx)`}</button><button class="obtn sm" data-agtr="skip" ${busy ? 'disabled' : ''}>Skip CSV traits</button></div></div>`;
 }
+async function loadGrowth(d: Drop) {
+ const k = d.chains[0].chain; const engine = (d as any).addresses?.[k]; if (!engine) return;
+ if (!growthAddress) { growthAddress = null; try { const kit = await import('./agentdrop').then(m => m.kitOf(k, engine)); if (!kit) return; growthAddress = await (await import('viem')).parseAbi ? await (await import('./wallet')).readClient(k).readContract({ address: kit, abi: (await import('viem')).parseAbi(['function growth() view returns (address)']), functionName: 'growth' }) : null; } catch {} }
+ if (!growthAddress || /^0x0+$/.test(growthAddress)) return;
+ const mod = await import('./agentgrowth'); growthTypes = await mod.growthTypes(k, engine, growthAddress as any);
+ for (const a of agents || []) try { growthData[a.id] = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id); const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) el.innerHTML = mod.growthHtml(growthData[a.id]); } catch {}
+ const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);
+}
 function agentBox(d: Drop) {
   const now = Math.floor(Date.now() / 1000); const A: any = (d as any).agent || (d as any).raw?.agent || {}; const k = d.chains[0].chain; const native = chains[k]?.native || 'ETH';
   if (agents === null && (d as any).demo) agents = demoAgents(now);
   const feeEth = ORA_FEE_WEI[k] ? Number(BigInt(ORA_FEE_WEI[k])) / 1e18 : undefined;
   const o = { symbol: d.symbol, periodS: (A.starveDays || 30) * 86400, now, feeEth, native, busy: agBusy };
+  if (growthSlug !== d.slug) { growthSlug = d.slug; growthData = {}; growthAddress = undefined; }
+  if (growthAddress === undefined) setTimeout(() => loadGrowth(d), 0);
   return `<div class="fcard ldagents"><div class="gh">Your agents ${(d as any).demo ? '<span class="mut small">demo</span>' : ''}</div>
    ${A.traitRows && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? traitsBox(d) : ''}${A.deathSkill && ((d as any).demo || (!!getSession() && mine.has(d.slug))) ? lockBox(d) : ''}
    <p class="mut small">Starvation is always on for every agent: unfed for ${A.starveDays || 30} days, anyone can starve it (NFT burned, wallet to its heir or the treasury). It survives transfers and holders can't turn it off. Feed an agent (any amount into its wallet) to reset the clock. ${A.deathSkill ? `Agents with the ☠ Death skill (${A.skillPct || 5}% of supply) can ask ORA to judge a kill on another agent.` : ''}</p>
    ${agents?.length ? agents.map(a => agentCard(a, o)).join('') : `<p class="mut small">${wallet.address ? 'No agents loaded yet.' : 'Connect a wallet to see your agents.'}</p>`}
    ${(d as any).demo ? '' : `<div class="agbtns"><input data-agid type="number" min="1" placeholder="Agent #"><button class="obtn sm" data-agload>Load agent</button></div>`}
-   ${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
+   ${mine.has(d.slug) ? '<div data-gcreator><span class="mut small">Loading creator growth…</span></div>' : ''}${atkFrom ? attackBox(atkFrom, { symbol: d.symbol, feeEth, native, limits: A.limits }) : ''}${agMsg ? `<p class="small">${agMsg}</p>` : ''}</div>`;
 }
 function lockBox(d: Drop) {
   const demo = !!(d as any).demo;
@@ -364,8 +374,8 @@ function render() {
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
-  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr]') as HTMLElement | null;
-  if (ag) { const d = findDrop(slug); if (d) onAgent(d, ag); return; }
+  const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr],[data-agclaim],[data-agadd]') as HTMLElement | null;
+  if (ag) { const d = findDrop(slug); if (d) (ag.hasAttribute('data-agclaim') || ag.hasAttribute('data-agadd') ? onGrowth(d, ag) : onAgent(d, ag)); return; }
   const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
   const d = findDrop(slug); if (!d) return;
@@ -435,6 +445,15 @@ app.addEventListener('click', e => {
     render();
   }
 });
+async function onGrowth(d: Drop, el: HTMLElement) {
+ const k = d.chains[0].chain; const engine = (d as any).addresses[k]; const mod = await import('./agentgrowth');
+ try { agBusy = 'growth';
+  if (el.hasAttribute('data-agclaim')) { const id = +(el.closest('[data-growth]') as HTMLElement).dataset.growth!; for (const v of growthData[id].claimable) await mod.claimGrowthValue(k, engine, growthAddress! as any, id, v.typeId, v.valueId, h => { agMsg = `Claim submitted ${txLink(k, h)}`; render(); }); agMsg = '✓ Traits claimed'; }
+  else { const f = (document.querySelector('[data-gart]') as HTMLInputElement).files?.[0]; if (!f) throw new Error('Select the trait artwork.'); const typeId = +(document.querySelector('[data-gtype]') as HTMLSelectElement).value; const typeName = (document.querySelector('[data-gtypename]') as HTMLInputElement).value; const name = (document.querySelector('[data-gname]') as HTMLInputElement).value; if (!name || typeId < 0 && !typeName) throw new Error('Name the type and value.'); const breeding = (document.querySelector('[data-grule]') as HTMLSelectElement).value === 'breeding'; const req = (document.querySelector('[data-greq]') as HTMLInputElement).value.split(':'); await mod.createGrowthValue(k, engine, growthAddress! as any, typeId < 0 ? growthTypes.length : typeId, typeName, name, f, { kind: breeding ? 'breeding' : 'level', level: +(document.querySelector('[data-glevel]') as HTMLInputElement).value, chanceBps: Math.round(+(document.querySelector('[data-gchance]') as HTMLInputElement).value * 100), minParentLevel: +(document.querySelector('[data-gparent]') as HTMLInputElement).value, reqType: req[0] ? +req[0] : 255, reqValue: +req[1] || 0 }, h => { agMsg = `Trait submitted ${txLink(k, h)}`; render(); }); agMsg = '✓ New trait added'; }
+  await loadGrowth(d);
+ } catch (err: any) { agMsg = `<span class="err">${esc(err?.message || err)}</span>`; render(); }
+ finally { agBusy = ''; }
+}
 function onAgent(d: Drop, el: HTMLElement) {
   const demo = !!(d as any).demo; const k = d.chains[0].chain; const eng = (d as any).addresses?.[k];
   const m2 = (id: number) => import('./agentdrop').then(m => m.loadAgent(k, eng, id)).then(a => { agents = (agents || []).map(x => (x.id === id ? a : x)); });
