@@ -1,10 +1,15 @@
 import { api, getSession, signIn } from './auth';
 import { API } from './wallet';
 import { esc } from './gx';
-import { addrHtml, hydrateNames, shortAddr } from './names';
+import { addrHtml, hydrateNames, loadProfile, profileAvatar, shortAddr } from './names';
 
 type Message = { id: string; address: string; name: string; text: string; at: number };
 type Page = { messages: Message[]; next: string | null; isAdmin: boolean; isOwner?: boolean; muted: boolean; address: string };
+
+function setAvatar(av: HTMLElement, address: string) {
+  const put = (src?: string) => { if (!src) return; const img = new Image(); img.alt = ''; img.src = src.startsWith('/media/') ? API + src : src; img.onload = () => { av.textContent = ''; av.style.background = 'none'; av.append(img); }; };
+  const hit = profileAvatar(address); if (hit) put(hit); else loadProfile(address).then(p => put(p?.avatar));
+}
 
 /** SIWE authorizes reads and writes; this UI deliberately renders every message as text, never HTML. */
 export function mountHolderChat(root: HTMLElement, slug: string, title: string) {
@@ -51,7 +56,7 @@ export function mountHolderChat(root: HTMLElement, slug: string, title: string) 
     items.forEach(m => {
       const mine = m.address === page?.address;
       const row = document.createElement('article'); row.className = 'hchatmsg' + (mine ? ' mine' : '');
-      if (!mine) { const av = document.createElement('div'); av.className = 'hchatav'; av.style.background = `hsl(${hue(m.address)} 55% 38%)`; av.textContent = initial(m); row.append(av); }
+      if (!mine) { const av = document.createElement('div'); av.className = 'hchatav'; av.style.background = `hsl(${hue(m.address)} 55% 38%)`; av.textContent = initial(m); setAvatar(av, m.address); row.append(av); }
       const col = document.createElement('div'); col.className = 'hchatcol';
       if (!mine) { const who = document.createElement('span'); who.className = 'hchatauthor'; if (m.name) who.textContent = m.name; else who.innerHTML = addrHtml(m.address); col.append(who); }
       const body = document.createElement('p'); body.className = 'hchattext'; body.textContent = m.text;
