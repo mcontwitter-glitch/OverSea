@@ -1,0 +1,1 @@
+export{t as autoConnectInAppWallet,n as connectInAppWallet}from"./wallet-QJcNYqzs.js";
