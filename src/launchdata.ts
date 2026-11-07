@@ -2,7 +2,7 @@
 // see src/lpchain.ts); drops in this file are demo data (clearly labeled) or local preview submissions saved in this browser.
 import LP from '../config/launchpad.json';
 import APP from '../config/app.json';
-export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; prices?: Record<string, number>; maxPerWallet: number; maxSupply?: number; merkleRoot?: string; allowlist?: string[]; allowCount?: number }; // prices: per-chain native price (multichain)
+export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number; end: number; price: number; prices?: Record<string, number>; priceUsd?: number; maxPerWallet: number; maxSupply?: number; merkleRoot?: string; allowlist?: string[]; allowCount?: number }; // prices: per-chain native price (multichain)
 // supply: single-chain = that chain's edition size; multichain = unused (one shared supply, ids assigned by the Base hub).
 // minted: multichain = ids whose minter picked this chain (Active here at mint; escrow copies exist on every other chain).
 export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides public phase price)
