@@ -4,6 +4,7 @@
  "feeWallet": "0x25411039F77529A543344603bD8acdd65fABA4d0",
  "supportedChains": 5,
  "lzGas": 300000,
+ "setupGas": 6232342,
  "chains": {
   "ethereum": {
    "name": "Ethereum",
@@ -13,7 +14,8 @@
    "logo": "ethereum",
    "rpc": "https://ethereum-rpc.publicnode.com",
    "explorer": "https://etherscan.io",
-   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb"
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+   "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb"
   },
   "base": {
    "name": "Base",
@@ -23,7 +25,8 @@
    "logo": "base",
    "rpc": "https://mainnet.base.org",
    "explorer": "https://basescan.org",
-   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb"
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+   "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb"
   },
   "apechain": {
    "name": "ApeChain",
@@ -33,7 +36,8 @@
    "logo": "apechain",
    "rpc": "https://rpc.apechain.com/http",
    "explorer": "https://apescan.io",
-   "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
+   "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "refuel": "0xc12FcB2107fF871f8F48c715f02e72c74B458da9"
   },
   "bnb": {
    "name": "BNB Chain",
@@ -43,7 +47,8 @@
    "logo": "bnb",
    "rpc": "https://bsc-dataseed.bnbchain.org",
    "explorer": "https://bscscan.com",
-   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D"
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+   "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419"
   },
   "robinhood": {
    "name": "Robinhood",
@@ -53,7 +58,8 @@
    "logo": "robinhood",
    "rpc": "https://rpc.mainnet.chain.robinhood.com",
    "explorer": "https://robinhoodchain.blockscout.com",
-   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D"
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+   "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419"
   }
  },
  "collections": []
