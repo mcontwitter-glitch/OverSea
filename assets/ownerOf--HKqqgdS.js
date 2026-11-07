@@ -1,1 +1,0 @@
-import{t as e}from"./read-contract-BPOMeLjj.js";var t=`0x6352211e`,n=[{name:`tokenId`,type:`uint256`}],r=[{type:`address`}];async function i(i){return e({contract:i.contract,method:[t,n,r],params:[i.tokenId]})}export{i as ownerOf};

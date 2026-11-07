@@ -1,0 +1,60 @@
+{
+ "network": "mainnet",
+ "mode": "live",
+ "feeWallet": "0x25411039F77529A543344603bD8acdd65fABA4d0",
+ "supportedChains": 5,
+ "lzGas": 300000,
+ "chains": {
+  "ethereum": {
+   "name": "Ethereum",
+   "chainId": 1,
+   "eid": 30101,
+   "native": "ETH",
+   "logo": "ethereum",
+   "rpc": "https://ethereum-rpc.publicnode.com",
+   "explorer": "https://etherscan.io",
+   "factory": "0xCDc640614D511eE4811b522650B1C5c90B59ddbC"
+  },
+  "base": {
+   "name": "Base",
+   "chainId": 8453,
+   "eid": 30184,
+   "native": "ETH",
+   "logo": "base",
+   "rpc": "https://mainnet.base.org",
+   "explorer": "https://basescan.org",
+   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+  },
+  "apechain": {
+   "name": "ApeChain",
+   "chainId": 33139,
+   "eid": 30312,
+   "native": "APE",
+   "logo": "apechain",
+   "rpc": "https://rpc.apechain.com/http",
+   "explorer": "https://apescan.io",
+   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+  },
+  "bnb": {
+   "name": "BNB Chain",
+   "chainId": 56,
+   "eid": 30102,
+   "native": "BNB",
+   "logo": "bnb",
+   "rpc": "https://bsc-dataseed.bnbchain.org",
+   "explorer": "https://bscscan.com",
+   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+  },
+  "robinhood": {
+   "name": "Robinhood",
+   "chainId": 4663,
+   "eid": 30416,
+   "native": "ETH",
+   "logo": "robinhood",
+   "rpc": "https://rpc.mainnet.chain.robinhood.com",
+   "explorer": "https://robinhoodchain.blockscout.com",
+   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+  }
+ },
+ "collections": []
+}

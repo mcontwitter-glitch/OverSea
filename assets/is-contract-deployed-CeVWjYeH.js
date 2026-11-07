@@ -1,1 +1,0 @@
-import{t as e}from"./get-bytecode-BfyIcIj4.js";var t=new WeakSet;async function n(n){if(t.has(n))return!0;let r=await e(n)!==`0x`;return r&&t.add(n),r}export{n as t};

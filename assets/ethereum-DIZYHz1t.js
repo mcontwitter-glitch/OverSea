@@ -1,1 +1,0 @@
-import{i as e}from"./utils-BPR-QD3a.js";var t=e({blockExplorers:[{name:`Etherscan`,url:`https://etherscan.io`}],id:1,name:`Ethereum`,nativeCurrency:{decimals:18,name:`Ether`,symbol:`ETH`}}),n=t;export{n,t};

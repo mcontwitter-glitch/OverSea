@@ -1,1 +1,0 @@
-export{g as overlay,_ as readClient}from"./wallet-DJkozLqC.js";
