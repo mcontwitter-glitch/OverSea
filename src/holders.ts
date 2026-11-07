@@ -43,6 +43,7 @@ function draw() {
       : `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">${addrHtml(a)} holds ${total} on the chains we could read${Object.values(res).includes(null) ? ' (some chains could not be read; try again)' : ''}.</p><a class="bbtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`}`}
     <p class="mut small" style="margin-top:22px">Holder status is checked on every chain. Chat access and posting are verified again by the MultiSea server.</p></div>`;
   if (existingChat && ok && !previewAs) el.querySelector('#holder-chat')!.replaceWith(existingChat);
+  if (ok && !previewAs) { const t = document.querySelector<HTMLElement>('.top'); if (t) document.documentElement.style.setProperty('--toph', t.offsetHeight + 'px'); }
   if (ok && !previewAs && !el.querySelector('.holderchat')) mountHolderChat(el.querySelector('#holder-chat')!, slug, col.name);
 }
 el.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="connect"]')) openConnect(); });
