@@ -41,7 +41,10 @@ function provider(c: NonNullable<typeof ctx>) {
         case 'eth_signTypedData_v4': return acct().signTypedData(typeof params[1] === 'string' ? JSON.parse(params[1]) : params[1]);
         case 'eth_sendTransaction': {
           const t = params[0];
-          const tx = c.tw.prepareTransaction({ chain: twChain(chainId), client: c.client, to: t.to, data: t.data || '0x', value: t.value ? BigInt(t.value) : 0n, ...(t.gas ? { gas: BigInt(t.gas) } : {}) });
+          // Abstract (zkSync stack): with gas + fees set, thirdweb skips its own estimate, which doubles both gas and fee and can exceed a just-bridged balance.
+          let fees = {};
+          if (t.gas && chainId === 2741) { const gp = BigInt(await c.tw.getRpcClient({ client: c.client, chain: twChain(chainId) })({ method: 'eth_gasPrice', params: [] })); fees = { maxFeePerGas: (gp * 12n) / 10n, maxPriorityFeePerGas: 0n }; }
+          const tx = c.tw.prepareTransaction({ chain: twChain(chainId), client: c.client, to: t.to, data: t.data || '0x', value: t.value ? BigInt(t.value) : 0n, ...(t.gas ? { gas: BigInt(t.gas) } : {}), ...fees });
           const r = await c.tw.sendTransaction({ account: acct(), transaction: tx }); return r.transactionHash;
         }
         default: return c.tw.getRpcClient({ client: c.client, chain: twChain(chainId) })({ method, params });

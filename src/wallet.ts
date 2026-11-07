@@ -206,7 +206,7 @@ export async function ensureChain(k: string) {
 // ---- buy ----
 export type BuyItem = { id: number; name: string; img: string; chain: string; contract: string; listing: { orderHash: string; protocolAddress: string; osChain?: string } };
 const toArr = (v: any): any => (Array.isArray(v) ? v.map(toArr) : v && typeof v === 'object' ? Object.values(v).map(toArr) : v);
-const RPC_FAIL = /RPC Request failed|HTTP request failed|Failed to fetch|fetch failed|NetworkError|Load failed|timed? ?out|TimeoutError|all RPCs failed|rate limit|429|50[234]|Network request failed/i;
+const RPC_FAIL = /RPC Request failed|HTTP request failed|Failed to fetch|fetch failed|NetworkError|Load failed|timed? ?out|TimeoutError|all RPCs failed|rate limit|status (429|50[234])\b|\b(429|50[234]) (Too Many|Bad Gateway|Service Unavailable|Gateway Timeout)|Network request failed/i;
 function chainOfErr(e: any, m: string): string | undefined {
   const all = [m, e?.message, e?.details, e?.cause?.message, e?.url].filter(Boolean).join(' ');
   const viaProxy = all.match(/\/rpc\/([a-z]+)/)?.[1]; if (viaProxy && chains[viaProxy]) return chains[viaProxy].name;
@@ -218,6 +218,7 @@ export function friendly(e: any, chainKey?: string): string {
   if (e?.name === 'AbortError') return API_DOWN_MSG;
   const m = String(e?.shortMessage || e?.details || e?.message || e);
   const full = m + ' ' + String(e?.message || '') + ' ' + String(e?.details || '');
+  if (/insufficient funds|exceeds balance|not enough balance/i.test(full)) return 'Insufficient funds for price + gas on this chain.';
   if (!(e?.code === 4001) && !/user rejected|denied/i.test(full) && (RPC_FAIL.test(full) || e?.name === 'HttpRequestError' || e?.name === 'TimeoutError' || /ContractFunctionExecutionError/.test(String(e?.name)) && RPC_FAIL.test(String(e?.cause?.message || e?.cause?.shortMessage || '')))) {
     const n = (chainKey && chains[chainKey]?.name) || chainOfErr(e, full); return `Couldn't reach the ${n || 'blockchain'} network. Please try again in a moment.`;
   }
