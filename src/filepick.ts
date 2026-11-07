@@ -4,7 +4,7 @@ const names: Record<string, string> = {}; const local: Record<string, string> = 
 export function pickHtml(k: 'logo' | 'banner', src: string, enabled: boolean) {
   const img = local[k] || src;
   return `<div class="pick"><img class="pv ${k === 'logo' ? 'lg' : 'bn'}" src="${esc(img)}" alt="">${enabled
-    ? `<span class="fpick"><input type="file" class="fin" accept="image/*" data-f="${k}"><span class="upbtn" aria-hidden="true">${k === 'logo' ? 'Upload logo' : 'Upload banner'}</span><span class="fname mut small">${esc(names[k] || 'No file chosen')}</span></span>`
+    ? `<label class="fpick"><input type="file" class="fin" accept="image/*" data-f="${k}"><span class="upbtn" aria-hidden="true">${k === 'logo' ? 'Upload logo' : 'Upload banner'}</span><span class="fname mut small">${esc(names[k] || 'No file chosen')}</span></label>`
     : '<span class="mut small">Image uploads coming soon</span>'}</div>`;
 }
 /** Call on change: records the name, shows a local thumbnail immediately. */

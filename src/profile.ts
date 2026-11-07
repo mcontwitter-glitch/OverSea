@@ -2,7 +2,6 @@ import CFG from '../config/collections.json';
 import { wallet, onWallet, openConnect, overlay } from './wallet';
 import { frame, esc, logo, chains } from './gx';
 import { api, getSession, signIn, uploadImage } from './auth';
-import { picked } from './filepick';
 import { profileAvatar, profileName, shortAddr } from './names';
 import { ownedNfts, insightOn } from './insight';
 
@@ -19,7 +18,7 @@ function draw() {
   <div class="profpreview">${avatar ? `<img src="${esc(media(avatar))}" alt="Profile preview">` : '<div class="pava">YOU</div>'}<div><b>${esc(profileName(a) || shortAddr(a))}</b><p class="mut small">${esc(a)}</p></div></div>
   <label>Display name <span class="mut small">Optional · up to 24 characters</span><input data-p="name" maxlength="24" value="${esc(current?.name || '')}" placeholder="Your MultiSea name"></label>
   <div class="fcard"><div class="gh">Profile picture</div><p class="mut small">Upload a square-cropped image, or pick an NFT your wallet owns. Images are stored by MultiSea.</p>
-    <span class="fpick"><input type="file" class="fin" accept="image/*" data-f="logo" data-p="upload"><span class="upbtn" aria-hidden="true">Upload image</span><span class="fname mut small">PNG, JPEG, GIF or WebP</span></span>
+    <label class="lmdrop" data-drop="pfp"><input type="file" class="fin" accept="image/*" data-p="upload"><b>Drag &amp; drop your picture here</b><span class="mut small">or <u>browse files</u> · PNG, JPEG, GIF or WebP</span></label>
     <div class="orline"><span>or</span></div><button class="obtn" data-p="nft">Choose an NFT you own</button>
     ${avatar ? '<button class="lnk small removepfp" data-p="remove">Remove profile picture</button>' : ''}</div>
   <p class="${msg.startsWith('✓') ? 'ok' : 'err'}" data-p="msg">${esc(msg)}</p><button class="bbtn" data-p="save">Save profile</button> <a class="obtn" href="/u/${a}">View profile</a>`}</div>`;
@@ -242,11 +241,18 @@ el.addEventListener('click', async e => {
     }
   } catch (e: any) { msg = e?.message || String(e); draw(); }
 });
+async function uploadPfp(f: File) {
+  try {
+    msg = 'Uploading square crop…'; draw(); const file = await square(f); avatar = await uploadImage(file, 512); nft = null; msg = '✓ Image uploaded. Save your profile to apply it.'; draw();
+  } catch (e: any) { msg = e?.message || String(e); draw(); }
+}
+el.addEventListener('dragover', e => { const z = (e.target as HTMLElement).closest('[data-drop=pfp]'); if (!z) return; e.preventDefault(); z.classList.add('over'); });
+el.addEventListener('dragleave', e => { (e.target as HTMLElement).closest('[data-drop=pfp]')?.classList.remove('over'); });
+el.addEventListener('drop', e => { const z = (e.target as HTMLElement).closest('[data-drop=pfp]'); if (!z) return; e.preventDefault(); z.classList.remove('over');
+  const f = e.dataTransfer?.files?.[0]; if (f) uploadPfp(f); });
 el.addEventListener('change', async e => {
   const inp = e.target as HTMLInputElement; if (inp.dataset.p !== 'upload' || !inp.files?.[0]) return;
-  try {
-    picked(inp); msg = 'Uploading square crop…'; const file = await square(inp.files[0]); avatar = await uploadImage(file, 512); nft = null; msg = '✓ Image uploaded. Save your profile to apply it.'; draw();
-  } catch (e: any) { msg = e?.message || String(e); draw(); }
+  await uploadPfp(inp.files[0]);
 });
 async function square(file: File): Promise<File> {
   const bmp = await createImageBitmap(file), n = Math.min(bmp.width, bmp.height), size = Math.min(1024, n);
