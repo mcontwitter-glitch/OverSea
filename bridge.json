@@ -13,7 +13,7 @@
    "logo": "ethereum",
    "rpc": "https://ethereum-rpc.publicnode.com",
    "explorer": "https://etherscan.io",
-   "factory": "0xCDc640614D511eE4811b522650B1C5c90B59ddbC"
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb"
   },
   "base": {
    "name": "Base",
@@ -23,7 +23,7 @@
    "logo": "base",
    "rpc": "https://mainnet.base.org",
    "explorer": "https://basescan.org",
-   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb"
   },
   "apechain": {
    "name": "ApeChain",
@@ -33,7 +33,7 @@
    "logo": "apechain",
    "rpc": "https://rpc.apechain.com/http",
    "explorer": "https://apescan.io",
-   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+   "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
   },
   "bnb": {
    "name": "BNB Chain",
@@ -43,7 +43,7 @@
    "logo": "bnb",
    "rpc": "https://bsc-dataseed.bnbchain.org",
    "explorer": "https://bscscan.com",
-   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D"
   },
   "robinhood": {
    "name": "Robinhood",
@@ -53,7 +53,7 @@
    "logo": "robinhood",
    "rpc": "https://rpc.mainnet.chain.robinhood.com",
    "explorer": "https://robinhoodchain.blockscout.com",
-   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D"
   }
  },
  "collections": []
