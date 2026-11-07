@@ -5,35 +5,45 @@
    "eid": 30101,
    "chainId": 1,
    "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
-   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
+   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495",
+   "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb",
+   "refuelWired": true
   },
   "base": {
    "feed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
    "eid": 30184,
    "chainId": 8453,
    "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
-   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
+   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495",
+   "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb",
+   "refuelWired": true
   },
   "apechain": {
    "feed": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
    "eid": 30312,
    "chainId": 33139,
    "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
-   "mirrorDeployer": "0x7093bb0e4695098E74e9028C39488E436E52B74c"
+   "mirrorDeployer": "0x7093bb0e4695098E74e9028C39488E436E52B74c",
+   "refuel": "0xc12FcB2107fF871f8F48c715f02e72c74B458da9",
+   "refuelWired": true
   },
   "bnb": {
    "feed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
    "eid": 30102,
    "chainId": 56,
    "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
-   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
+   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419",
+   "refuelWired": true
   },
   "robinhood": {
    "feed": "0x697e794251316B02c16b7Be66bae6c98aB702bE5",
    "eid": 30416,
    "chainId": 4663,
    "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
-   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
+   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419",
+   "refuelWired": true
   }
  },
  "listings": {

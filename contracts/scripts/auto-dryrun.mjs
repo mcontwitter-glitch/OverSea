@@ -3,7 +3,7 @@
 // wires every chain; then a test NFT bridges Base -> ApeChain -> Base (relay simulated as the destination endpoint).
 import fs from 'node:fs'; import path from 'node:path';
 import { ROOT, CFG, MODE, NET, art, deployer, loadDep, clients, deploy, send, eventsOf, PACKET_ABI } from './lib.mjs';
-import { factories, setGasCosts } from './deploy-bridge.mjs';
+import { factories, setGasCosts, refuels } from './deploy-bridge.mjs';
 import { makeBridgeAuto } from '../../worker/src/bridgeauto.js';
 import { parseEther, formatEther, slice, createWalletClient, http, keccak256, toBytes } from 'viem';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
@@ -12,10 +12,10 @@ const E = art('MultiSeaEscrow'), F = art('MultiSeaFactory'), N = art('LilFootsTe
 const keys = Object.keys(CFG.chains); const acct = deployer();
 const srvPk = generatePrivateKey(), srv = privateKeyToAccount(srvPk); const creator = privateKeyToAccount(generatePrivateKey());
 const setBal = (k, a, eth) => clients(k).pub.request({ method: 'anvil_setBalance', params: [a, '0x' + parseEther(eth).toString(16)] });
-for (const k of keys) { await setBal(k, acct.address, '5'); await setBal(k, srv.address, '5'); await setBal(k, creator.address, '5000'); }
+for (const k of keys) { await setBal(k, acct.address, '5'); await setBal(k, srv.address, k === 'base' ? '5' : '0'); await setBal(k, creator.address, '5000'); }
 fs.rmSync(path.join(ROOT, 'deployments/mainnet-fork.json'), { force: true });
 process.env.SERVER_OPERATOR = srv.address;
-await factories(); await setGasCosts();
+await factories(); await refuels(); await setGasCosts();
 const dep = loadDep(); const NAT = 'base'; const slug = 'auto-test-drop';
 // creator: deploy collection, prepay at review
 const cc = clients(NAT, creator);
@@ -27,13 +27,14 @@ await send(cc, dep.chains[NAT].factory, F.abi, 'prepay', [keccak256(toBytes(slug
 const s1 = await cc.pub.getBalance({ address: srv.address });
 // Worker job with fork RPCs
 const kv = new Map(); const K = { get: async (k, t) => (kv.has(k) ? (t === 'json' ? JSON.parse(kv.get(k)) : kv.get(k)) : null), put: async (k, v) => kv.set(k, v), list: async ({ prefix }) => ({ keys: [...kv.keys()].filter(k => k.startsWith(prefix)).map(name => ({ name })) }) };
-const bcfg = { network: 'mainnet', chains: Object.fromEntries(keys.map(k => [k, { name: CFG.chains[k].name, chainId: CFG.chains[k].chainId, eid: CFG.chains[k].eid, native: CFG.chains[k].native, rpc: CFG.chains[k].forkRpc, factory: dep.chains[k].factory }])) };
+const bcfg = { network: 'mainnet', setupGas: 3793754, chains: Object.fromEntries(keys.map(k => [k, { name: CFG.chains[k].name, chainId: CFG.chains[k].chainId, eid: CFG.chains[k].eid, native: CFG.chains[k].native, rpc: CFG.chains[k].forkRpc, factory: dep.chains[k].factory, refuel: dep.chains[k].refuel }])) };
 const env = { COLLECTIONS: K, BRIDGE_OPERATOR_PK: srvPk };
 const before = {}; for (const k of keys) before[k] = await clients(k).pub.getBalance({ address: srv.address });
 const ba = makeBridgeAuto({ fetchImpl: async () => ({ json: async () => bcfg }) });
 const drop = { slug, name: 'Auto Test', symbol: 'AUTO', maxSupply: 100, baseURI: 'ipfs://test/', bridgePrepay: { chain: NAT, dropId: keccak256(toBytes(slug)), eids, tx: '0x' + '1'.repeat(64) } };
 await ba.enqueue(env, drop, NAT, nft);
-let runs = 0, job; do { const r = await ba.run(env); runs++; job = await K.get('bjob:' + slug, 'json'); console.log('run', runs, JSON.stringify(r)); } while (job.step !== 'done' && job.step !== 'failed' && runs < 10);
+let runs = 0, job; do { const r = await ba.run(env); runs++; job = await K.get('bjob:' + slug, 'json'); console.log('run', runs, JSON.stringify(r));
+  if (r[0]?.waiting) { const ps = []; for (const k of keys) if (k !== NAT) ps.push(setBal(k, srv.address, '5')); await Promise.all(ps); console.log('simulated LayerZero gas drops arriving'); } } while (job.step !== 'done' && job.step !== 'failed' && runs < 10);
 const spent = {}; for (const k of keys) spent[k] = formatEther(before[k] - await clients(k).pub.getBalance({ address: srv.address }));
 const col = await K.get('bcol:' + slug, 'json');
 // bridge round trip with the auto-listed collection

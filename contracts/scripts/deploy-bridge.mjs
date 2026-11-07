@@ -3,7 +3,7 @@
 //   node scripts/deploy-bridge.mjs process <chain> <id> -> after a paid listing on <chain>, deploy mirrors on the other selected chains and wire all peers
 import fs from 'node:fs'; import path from 'node:path';
 import { ROOT, CFG, MODE, art, deployer, loadDep, saveDep, clients, deploy, send, b32, eventsOf } from './lib.mjs';
-const F = art('MultiSeaFactory'), M = art('MultiSeaMirror'), N = art('LilFootsTest'); const E = art('MultiSeaEscrow');
+const F = art('MultiSeaFactory'), M = art('MultiSeaMirror'), N = art('LilFootsTest'); const E = art('MultiSeaEscrow'); const R = art('MultiSeaRefuel');
 const byEid = eid => Object.keys(CFG.chains).find(k => CFG.chains[k].eid === Number(eid));
 
 export async function factories() {
@@ -34,6 +34,26 @@ export async function factories() {
 }
 
 const CG = { ETH: 'ethereum', APE: 'apecoin', BNB: 'binancecoin' };
+// Gas courier: one MultiSeaRefuel per chain (owner = admin key), peered to every other chain with the same LZ route as escrows.
+const EPC = [{ type: 'function', name: 'setConfig', stateMutability: 'nonpayable', inputs: [{ name: 'oapp', type: 'address' }, { name: 'lib', type: 'address' }, { name: 'params', type: 'tuple[]', components: [{ name: 'eid', type: 'uint32' }, { name: 'configType', type: 'uint32' }, { name: 'config', type: 'bytes' }] }], outputs: [] }];
+export async function refuels() {
+  const { encodeAbiParameters } = await import('viem');
+  const dep = loadDep(); const acct = deployer(); const keys = Object.keys(CFG.chains);
+  for (const k of keys) if (!dep.chains[k].refuel) { dep.chains[k].refuel = await deploy(clients(k, acct), 'MultiSeaRefuel', [CFG.chains[k].endpoint, acct.address]); saveDep(dep); console.log(k, 'refuel', dep.chains[k].refuel); }
+  const uln = (conf, dvn) => encodeAbiParameters([{ type: 'tuple', components: [{ type: 'uint64' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'address[]' }, { type: 'address[]' }] }], [[BigInt(conf), 1, 0, 0, [dvn], []]]);
+  const exe = ex => encodeAbiParameters([{ type: 'tuple', components: [{ type: 'uint32' }, { type: 'address' }] }], [[10000, ex]]);
+  for (const k of keys) {
+    const cl = clients(k, acct), c = CFG.chains[k], me = dep.chains[k].refuel, others = keys.filter(o => o !== k);
+    if (dep.chains[k].refuelWired) continue;
+    for (const o of others) await send(cl, me, R.abi, 'setPeer', [CFG.chains[o].eid, b32(dep.chains[o].refuel)]);
+    if (c.dvn) {
+      await send(cl, c.endpoint, EPC, 'setConfig', [me, c.sendLib, others.flatMap(o => [{ eid: CFG.chains[o].eid, configType: 1, config: exe(c.executor) }, { eid: CFG.chains[o].eid, configType: 2, config: uln(c.confirmations, c.dvn) }])]);
+      await send(cl, c.endpoint, EPC, 'setConfig', [me, c.receiveLib, others.map(o => ({ eid: CFG.chains[o].eid, configType: 2, config: uln(CFG.chains[o].confirmations, c.dvn) }))]);
+    }
+    dep.chains[k].refuelWired = true; saveDep(dep); console.log(k, 'refuel wired');
+  }
+}
+
 export async function usdPrice(id) {
   const j = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`).then(r => r.json());
   if (!j[id]?.usd) throw new Error('no USD price for ' + id); return j[id].usd;
@@ -50,8 +70,13 @@ export async function gasCosts() {
   const remote = {}, base = {};
   for (const k of keys) { const link = UNITS.wire ? BigInt(UNITS.wire) : peers * BigInt(UNITS.setPeer); remote[k] = usdOf(k, BigInt(UNITS.deployMirror) + link); base[k] = usdOf(k, BigInt(UNITS.list) + link); }
   const toWei = (usdAmt, k) => BigInt(Math.ceil(usdAmt / usd[CFG.chains[k].native] * 1e18)) * mk / 100n;
-  const out = {}; for (const k of keys) { out[k] = { base: toWei(base[k], k), chains: {} }; for (const d of keys) if (d !== k) out[k].chains[CFG.chains[d].eid] = toWei(remote[d], k); }
-  return { out, usd, gp, remoteUsd: remote, baseUsd: base };
+  const setup = BigInt(UNITS.deployMirror) + (UNITS.wire ? BigInt(UNITS.wire) : peers * BigInt(UNITS.setPeer));
+  const drop = d => setup * gp[d] * mk / 100n; const dep = loadDep();
+  const out = {}; for (const k of keys) { out[k] = { base: toWei(base[k], k), chains: {} };
+    for (const d of keys) if (d !== k) out[k].chains[CFG.chains[d].eid] = dep.chains[k]?.refuel
+      ? await clients(k).pub.readContract({ address: dep.chains[k].refuel, abi: R.abi, functionName: 'quote', args: [[CFG.chains[d].eid], [drop(d)], CFG.admin] }) * 105n / 100n
+      : toWei(remote[d], k); }
+  return { out, usd, gp, remoteUsd: remote, baseUsd: base, setup: String(setup) };
 }
 export async function setGasCosts() {
   const dep = loadDep(); const acct = deployer(); const { out, remoteUsd, baseUsd } = await gasCosts();
@@ -112,5 +137,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (cmd === 'factories') await factories();
   else if (cmd === 'process') await processListing(a, b);
   else if (cmd === 'gascosts') await setGasCosts();
+  else if (cmd === 'refuels') await refuels();
   else console.log('usage: factories | gascosts | process <nativeChain> <listingId>');
 }

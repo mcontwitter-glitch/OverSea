@@ -15,6 +15,7 @@ const FAC = parseAbi([
   'event Listed(uint256 indexed id, address indexed nft, address indexed owner, address escrow, uint32[] eids, uint256 fee)',
   'event MirrorDeployed(uint256 indexed listingId, address mirror, address escrow)',
 ]);
+const REF = parseAbi(['function quote(uint32[] dsts, uint128[] amounts, address to) view returns (uint256)', 'function refuel(uint32[] dsts, uint128[] amounts, address to) payable']);
 const ESC = parseAbi(['function peers(uint32) view returns (bytes32)']);
 const lc = s => String(s || '').toLowerCase();
 const MAX_TX_PER_RUN = 8, MAX_TRIES = 6;
@@ -66,11 +67,29 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
       const r = await tx(job.native, 'list', { functionName: 'listPrepaid', args: [job.dropId, job.nft] });
       const ev = parseEventLogs({ abi: FAC, logs: r.logs, eventName: 'Listed' })[0].args;
       job.listingId = Number(ev.id); job.escrows[job.native] = lc(ev.escrow); job.mirrors[job.native] = job.nft; job.fromBlock[job.native] = Number(r.blockNumber);
-      job.step = 'mirrors'; await save();
+      job.step = 'refuel'; await save();
     }
     const keys = () => job.eids.map(e => keyByEid(c, e)).filter(Boolean);
+    const remotes = () => keys().filter(k => k !== job.native);
+    const setupWei = async k => BigInt(c.setupGas || 6300000) * await mk(c, k).pub.getGasPrice() * 13n / 10n;
+    // The creator's prepay (received on the native chain) carries each other chain's setup gas there via LayerZero native drops.
+    if (job.step === 'refuel') {
+      const ref = c.chains[job.native].refuel;
+      if (ref) {
+        const me = privateKeyToAccount(pk).address, dsts = remotes();
+        const amounts = []; for (const k of dsts) { const bal = await mk(c, k).pub.getBalance({ address: me }), need = await setupWei(k); amounts.push(need > bal ? need - bal : 0n); }
+        const send = dsts.map((k, i) => [c.chains[k].eid, amounts[i]]).filter(([, a]) => a > 0n);
+        if (send.length) {
+          const args = [send.map(x => x[0]), send.map(x => x[1]), me];
+          const fee = await mk(c, job.native).pub.readContract({ address: ref, abi: REF, functionName: 'quote', args });
+          await tx(job.native, 'refuel', { address: ref, abi: REF, functionName: 'refuel', args, value: fee * 102n / 100n });
+        }
+      }
+      job.step = 'mirrors'; await save();
+    }
     if (job.step === 'mirrors') {
       for (const k of keys()) { if (job.escrows[k]) continue;
+        if (await mk(c, k).pub.getBalance({ address: privateKeyToAccount(pk).address }) < await setupWei(k)) throw Object.assign(new Error('waiting for gas to arrive on ' + k), { wait: true });
         const r = await tx(k, 'mirror:' + k, { functionName: 'deployMirror', args: [BigInt(job.listingId), job.name, job.symbol, job.baseURI, 1n, BigInt(job.supply)] });
         const ev = parseEventLogs({ abi: FAC, logs: r.logs, eventName: 'MirrorDeployed' })[0].args;
         job.mirrors[k] = lc(ev.mirror); job.escrows[k] = lc(ev.escrow); job.fromBlock[k] = Number(r.blockNumber); await save(); }
@@ -98,6 +117,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
       try { await advance(env, job, budget); out.push({ slug: job.slug, step: job.step }); }
       catch (e) {
         if (e.budget) { out.push({ slug: job.slug, step: job.step, paused: true }); break; }
+        if (e.wait) { out.push({ slug: job.slug, step: job.step, waiting: e.message }); continue; }
         job.tries = (job.tries || 0) + 1; job.err = String(e.shortMessage || e.message || e).slice(0, 300);
         if (e.fatal || job.tries >= MAX_TRIES) job.step = 'failed';
         await K.put(name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, err: job.err });
@@ -124,7 +144,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
   // Admin: retry a failed job from where it stopped.
   async function retry(env, slug) {
     const K = env.COLLECTIONS; const job = await K.get('bjob:' + slug, 'json'); if (!job) return null;
-    if (job.step === 'failed') { job.step = job.listingId ? (Object.keys(job.wired).length ? 'wire' : 'mirrors') : 'list'; job.tries = 0; job.err = undefined; await K.put('bjob:' + slug, JSON.stringify(job)); }
+    if (job.step === 'failed') { job.step = job.listingId ? (!Object.keys(job.escrows).some(k => k !== job.native) && !job.gas?.refuel ? 'refuel' : Object.keys(job.wired).length ? 'wire' : 'mirrors') : 'list'; job.tries = 0; job.err = undefined; await K.put('bjob:' + slug, JSON.stringify(job)); }
     return job;
   }
 
