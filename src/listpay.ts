@@ -1,10 +1,10 @@
-// Submit step 2 (testnet preview): pick chains, see the live tier price, prove ownership with SIWE (wallet must be the
-// contract's owner()/deployer), then pay the listing fee to the MultiSea factory on the native chain.
+// Submit step 2: pick chains, see the live gas-only listing fee (the deploy + wiring gas MultiSea spends on each chain,
+// read from the factory), prove ownership with SIWE (wallet must be the contract's owner()), then pay it on the native chain.
 import { formatEther, recoverMessageAddress, type Address } from 'viem';
 import { createSiweMessage, generateSiweNonce } from 'viem/siwe';
 import { wallet, openConnect, onWallet } from './wallet';
 import { esc } from './shell';
-import { bridgeCfg, pubFor, walletFor, NFT, FACTORY, type BCfg } from './bridgekit';
+import { bridgeCfg, pubFor, walletFor, NFT, FACTORY, sym, type BCfg } from './bridgekit';
 
 let S: any = null;
 export async function mountListPay(el: HTMLElement) {
@@ -12,11 +12,18 @@ export async function mountListPay(el: HTMLElement) {
   if (!cfg0) { el.innerHTML = ''; return; }
   const cfg: BCfg = cfg0;
   const keys = Object.keys(cfg.chains);
-  const s = (S ??= { native: keys[0], nft: '', sel: new Set<string>(keys), verified: '' as string, owner: '' as string, msg: '', cls: 'mut', busy: false, paid: '' });
-  const tier = (n: number) => cfg.tiers.find(t => n >= t.min && n <= t.max);
-  const MAIN = ['Abstract', 'Ethereum', 'Base', 'BNB Chain', 'ApeChain', 'Robinhood'];
+  const s = (S ??= { native: keys[0], nft: '', sel: new Set<string>(keys), verified: '' as string, owner: '' as string, msg: '', cls: 'mut', busy: false, paid: '', fee: null as bigint | null, feeKey: '' });
+  const eidsOf = () => [s.native, ...[...s.sel].filter(k => k !== s.native)].map(k => cfg.chains[k].eid);
+  const N = () => sym(cfg.chains[s.native]);
+  const fmt = (w: bigint) => { const [a, b = ''] = formatEther(w).split('.'); return a + (b ? '.' + b.slice(0, 6).replace(/0+$/, '') : ''); };
+  async function loadFee() {
+    const key = s.native + ':' + [...s.sel].sort().join(','); if (s.feeKey === key) return; s.feeKey = key; s.fee = null; draw();
+    if (s.sel.size < 2) return;
+    try { const c = cfg.chains[s.native]; s.fee = await pubFor(c).readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'listingFee', args: [eidsOf()] }); }
+    catch { s.fee = null; } if (s.feeKey === key) draw();
+  }
   function draw() {
-    const n = s.sel.size; const t = tier(n);
+    const n = s.sel.size; const fee = s.fee;
     const okAddr = /^0x[0-9a-fA-F]{40}$/.test(s.nft);
     const me = wallet.address?.toLowerCase();
     const verified = !!me && s.verified === me && s.owner === me;
@@ -27,9 +34,8 @@ export async function mountListPay(el: HTMLElement) {
       <label>Collection contract on ${esc(cfg.chains[s.native].name)}<input data-k="nft" placeholder="0x…" value="${esc(s.nft)}"></label></div>
      <div class="gh">Chains <span class="mut small">(native chain always included)</span></div>
      <div class="lpchips">${keys.map(k => `<button type="button" class="lpchip ${s.sel.has(k) ? 'on' : ''}" data-chain="${k}" ${k === s.native ? 'disabled' : ''}><img class="cl" src="/logos/${cfg.chains[k].logo}.svg" alt="">${esc(cfg.chains[k].name)}${s.sel.has(k) ? ' ✓' : ''}</button>`).join('')}</div>
-     <p class="mut small">Mainnet (after launch): ${MAIN.join(', ')}.</p>
-     <div class="lptiers">${cfg.tiers.map(x => `<div class="lpt ${t === x ? 'on' : ''}"><b>${x.eth} ETH</b><span>${x.label || (x.min === x.max ? x.min + ' chains' : x.min + '-' + x.max + ' chains')}</span></div>`).join('')}</div>
-     <div class="lpprice"><span>Listing fee for ${n} chain${n > 1 ? 's' : ''}</span><b>${n < 2 ? 'Pick at least 2 chains' : t ? t.eth + ' ETH' : '-'}</b></div>
+     <div class="lpprice"><span>Listing fee for ${n} chain${n > 1 ? 's' : ''}</span><b>${n < 2 ? 'Pick at least 2 chains' : fee != null ? fmt(fee) + ' ' + N() : 'Loading…'}</b></div>
+     <p class="mut small">The listing fee is just the gas MultiSea spends deploying your escrow and mirrors and wiring them together on each chain you pick, updated from live gas prices. There is no markup beyond a small buffer for gas spikes, and any overpayment is refunded in the same transaction.</p>
      <ol class="lpsteps">
       <li class="${wallet.address ? 'done' : ''}">Connect the wallet that deployed / owns the contract ${wallet.address ? '✓' : ''}</li>
       <li class="${verified ? 'done' : ''}">Verify ownership with Sign-In With Ethereum (must match the contract's <code>owner()</code>) ${verified ? '✓' : ''}</li>
@@ -37,7 +43,7 @@ export async function mountListPay(el: HTMLElement) {
      <p class="msg ${s.cls}">${s.msg}</p>
      <div class="lpbtns">${!wallet.address ? '<button type="button" class="bbtn" data-act="lp-connect">Connect wallet</button>'
        : !verified ? `<button type="button" class="bbtn" data-act="lp-verify" ${okAddr && !s.busy ? '' : 'disabled'}>Verify ownership (SIWE)</button>`
-       : s.paid ? '' : `<button type="button" class="bbtn" data-act="lp-pay" ${n >= 2 && !s.busy ? '' : 'disabled'}>Pay ${t ? t.eth : ''} ETH &amp; list</button>`}</div>
+       : s.paid ? '' : `<button type="button" class="bbtn" data-act="lp-pay" ${n >= 2 && fee != null && !s.busy ? '' : 'disabled'}>Pay ${fee != null ? fmt(fee) + ' ' + N() : ''} &amp; list</button>`}</div>
     </div>`;
   }
   async function verify() {
@@ -60,14 +66,14 @@ export async function mountListPay(el: HTMLElement) {
     s.busy = true; s.msg = 'Switching network…'; s.cls = 'mut'; draw();
     try {
       const c = cfg.chains[s.native]; const pub = pubFor(c); const w = await walletFor(c);
-      const eids = [s.native, ...[...s.sel].filter(k => k !== s.native)].map(k => cfg.chains[k].eid);
+      const eids = eidsOf();
       const ex = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'escrowOf', args: [s.nft as Address] });
       if (!/^0x0{40}$/i.test(ex)) throw new Error('This collection is already listed on MultiSea (escrow ' + ex + ').');
-      const fee = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'listingFee', args: [BigInt(eids.length)] });
-      s.msg = `Confirm ${formatEther(fee)} ETH in your wallet…`; draw();
-      const h = await w.writeContract({ address: c.factory as Address, abi: FACTORY, functionName: 'list', args: [s.nft as Address, eids], value: fee });
+      const fee = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'listingFee', args: [eids] });
+      s.msg = `Confirm ${fmt(fee)} ${N()} in your wallet…`; draw();
+      const h = await w.writeContract({ address: c.factory as Address, abi: FACTORY, functionName: 'list', args: [s.nft as Address, eids], value: fee * 103n / 100n }); // 3% buffer, refunded
       const r = await pub.waitForTransactionReceipt({ hash: h }); if (r.status !== 'success') throw new Error('Transaction reverted');
-      s.paid = h; s.msg = `✓ Paid ${formatEther(fee)} ETH. The MultiSea deployer is now deploying mirrors and wiring LayerZero peers…`; s.cls = 'ok'; draw();
+      s.paid = h; s.msg = `✓ Paid ${fmt(fee)} ${N()} (any extra was refunded). The MultiSea deployer is now deploying mirrors and wiring LayerZero peers…`; s.cls = 'ok'; draw();
       for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 3000));
         const j = await fetch('/bridge.json', { cache: 'no-cache' }).then(r => r.json()).catch(() => null);
         const col = j?.collections?.find((x: any) => x.contracts[s.native]?.toLowerCase() === s.nft.toLowerCase());
@@ -76,11 +82,11 @@ export async function mountListPay(el: HTMLElement) {
     s.busy = false; draw();
   }
   el.addEventListener('input', e => { const t = e.target as HTMLInputElement; if (t.dataset.k === 'nft') { s.nft = t.value.trim(); s.verified = ''; } });
-  el.addEventListener('change', e => { const t = e.target as HTMLInputElement; if (t.dataset.k === 'native') { s.native = t.value; s.sel.add(t.value); s.verified = ''; draw(); } if (t.dataset.k === 'nft') setTimeout(draw); });
+  el.addEventListener('change', e => { const t = e.target as HTMLInputElement; if (t.dataset.k === 'native') { s.native = t.value; s.sel.add(t.value); s.verified = ''; draw(); loadFee(); } if (t.dataset.k === 'nft') setTimeout(draw); });
   el.addEventListener('click', e => { const t = e.target as HTMLElement; const ch = t.closest('[data-chain]') as HTMLElement | null; const a = t.closest('[data-act]') as HTMLElement | null;
-    if (ch) { e.stopPropagation(); const k = ch.dataset.chain!; if (k !== s.native) { s.sel.has(k) ? s.sel.delete(k) : s.sel.add(k); draw(); } return; }
+    if (ch) { e.stopPropagation(); const k = ch.dataset.chain!; if (k !== s.native) { s.sel.has(k) ? s.sel.delete(k) : s.sel.add(k); draw(); loadFee(); } return; }
     if (!a) return; e.stopPropagation();
     if (a.dataset.act === 'lp-connect') openConnect(); if (a.dataset.act === 'lp-verify') verify(); if (a.dataset.act === 'lp-pay') pay(); });
   onWallet(() => el.isConnected && draw());
-  draw();
+  draw(); loadFee();
 }

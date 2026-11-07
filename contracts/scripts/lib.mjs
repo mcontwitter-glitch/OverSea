@@ -3,16 +3,21 @@ import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath }
 import { createPublicClient, createWalletClient, http, defineChain, parseAbi, decodeEventLog, getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const CFG = JSON.parse(fs.readFileSync(path.join(ROOT, 'config/testnet.json'), 'utf8'));
+export const NET = process.env.NET || 'testnet'; // 'testnet' | 'mainnet'
+export const CFG = JSON.parse(fs.readFileSync(path.join(ROOT, `config/${NET}.json`), 'utf8'));
 export const MODE = process.env.MODE || 'fork'; // 'fork' (local anvil forks) or 'live' (public testnets)
 export const art = n => { const j = JSON.parse(fs.readFileSync(path.join(ROOT, `out/${n}.sol/${n}.json`), 'utf8')); return { abi: j.abi, bytecode: j.bytecode.object }; };
-export const deployer = () => privateKeyToAccount(fs.readFileSync(path.join(ROOT, '.secrets/deployer.key'), 'utf8').trim());
-const depFile = path.join(ROOT, `deployments/${MODE === 'live' ? 'testnet' : 'fork'}.json`);
+// mainnet: the owner key from BRIDGE_OWNER_PK (never printed); testnet: .secrets/deployer.key
+export const deployer = () => {
+  if (NET === 'mainnet') { const k = (process.env.BRIDGE_OWNER_PK || '').trim(); if (!k) throw new Error('BRIDGE_OWNER_PK not set'); return privateKeyToAccount(k.startsWith('0x') ? k : '0x' + k); }
+  return privateKeyToAccount(fs.readFileSync(path.join(ROOT, '.secrets/deployer.key'), 'utf8').trim());
+};
+const depFile = path.join(ROOT, `deployments/${NET === 'mainnet' ? (MODE === 'live' ? 'mainnet' : 'mainnet-fork') : (MODE === 'live' ? 'testnet' : 'fork')}.json`);
 export const loadDep = () => (fs.existsSync(depFile) ? JSON.parse(fs.readFileSync(depFile, 'utf8')) : { chains: {}, listings: {} });
 export const saveDep = d => fs.writeFileSync(depFile, JSON.stringify(d, null, 1) + '\n');
 export function clients(key, account) {
   const c = CFG.chains[key]; const rpc = MODE === 'live' ? c.rpc : c.forkRpc;
-  const chain = defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [rpc] } } });
+  const chain = defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: c.native || 'ETH', symbol: c.native || 'ETH', decimals: 18 }, rpcUrls: { default: { http: [rpc] } } });
   const pub = createPublicClient({ chain, transport: http(rpc) });
   const wal = account ? createWalletClient({ chain, transport: http(rpc), account }) : null;
   return { c, pub, wal, chain, rpc };

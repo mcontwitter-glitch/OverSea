@@ -9,6 +9,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { MultiSeaEscrow } from "../src/MultiSeaEscrow.sol";
 import { MultiSeaMirror } from "../src/MultiSeaMirror.sol";
 import { MultiSeaFactory } from "../src/MultiSeaFactory.sol";
+import { MultiSeaPriceFeed } from "../src/MultiSeaPriceFeed.sol";
 
 contract MockFeed {
     int256 public answer; uint256 public updatedAt; uint8 public decimals = 8;
@@ -55,8 +56,11 @@ contract MultiSeaTest is TestHelperOz5 {
         nft = new TestNFT(ADMIN);
         nft.mint(holder, 7); nft.mint(holder, 8);
         uint32[] memory eids = new uint32[](2); eids[0] = A; eids[1] = B;
+        { uint32[] memory ge = new uint32[](3); ge[0] = 0; ge[1] = B; ge[2] = 3;
+          uint256[] memory gc = new uint256[](3); gc[0] = 0.0002 ether; gc[1] = 0.0003 ether; gc[2] = 0.0004 ether;
+          vm.prank(op); facA.setGasCosts(ge, gc); }
         vm.deal(ADMIN, 1 ether);
-        vm.prank(ADMIN); (uint256 lid, address e) = facA.list{ value: 0.08 ether }(address(nft), eids);
+        vm.prank(ADMIN); (uint256 lid, address e) = facA.list{ value: 0.0006 ether }(address(nft), eids); // 0.0001 over -> refunded
         escA = MultiSeaEscrow(payable(e));
         vm.prank(op); (address m, address eb) = facB.deployMirror(lid, "LIL FOOTS test", "LFT", "ipfs://x/", 1, 4404);
         mirror = MultiSeaMirror(m); escB = MultiSeaEscrow(payable(eb));
@@ -89,31 +93,85 @@ contract MultiSeaTest is TestHelperOz5 {
         escA.platformFee();
     }
 
-    function test_listingFeeTiers() public view {
-        assertEq(facA.listingFee(2), 0.08 ether);
-        assertEq(facA.listingFee(3), 0.095 ether);
-        assertEq(facA.listingFee(4), 0.095 ether);
-        assertEq(facA.listingFee(6), 0.12 ether);
+    function _e(uint32 x, uint32 y) internal pure returns (uint32[] memory r) { r = new uint32[](2); r[0] = x; r[1] = y; }
+    function _e3(uint32 x, uint32 y, uint32 z) internal pure returns (uint32[] memory r) { r = new uint32[](3); r[0] = x; r[1] = y; r[2] = z; }
+
+    function test_listingFeeIsGasOnly() public view {
+        assertEq(facA.listingFee(_e(A, B)), 0.0005 ether);       // base + B
+        assertEq(facA.listingFee(_e3(A, B, 3)), 0.0009 ether);   // base + B + 3
     }
 
-    function test_listingPaidToFeeWallet() public view {
-        assertEq(FEE.balance, 0.08 ether);
+    function test_listingPaidToGasWalletWithRefund() public view {
+        assertEq(op.balance, 0.0005 ether);                      // gas wallet defaults to the operator
+        assertEq(ADMIN.balance, 1 ether - 0.0005 ether);         // overpayment refunded
+        assertEq(FEE.balance, 0);
         assertEq(facA.getListing(1).owner, ADMIN);
+        assertEq(facA.getListing(1).paid, 0.0005 ether);
     }
 
-    function test_listingRequiresOwnerAndExactFee() public {
+    function test_listingRequiresOwnerFeeAndOfferedChains() public {
         TestNFT other = new TestNFT(ADMIN);
-        uint32[] memory eids = new uint32[](3); eids[0] = A; eids[1] = B; eids[2] = 3;
         vm.deal(bob, 1 ether);
         vm.prank(bob); vm.expectRevert(MultiSeaFactory.NotCollectionOwner.selector);
-        facA.list{ value: 0.095 ether }(address(other), eids);
-        vm.prank(ADMIN); vm.expectRevert(abi.encodeWithSelector(MultiSeaFactory.WrongFee.selector, 0.095 ether));
-        facA.list{ value: 0.08 ether }(address(other), eids);
+        facA.list{ value: 0.001 ether }(address(other), _e3(A, B, 3));
+        vm.prank(ADMIN); vm.expectRevert(abi.encodeWithSelector(MultiSeaFactory.WrongFee.selector, 0.0009 ether));
+        facA.list{ value: 0.0008 ether }(address(other), _e3(A, B, 3));
+        vm.prank(ADMIN); vm.expectRevert(abi.encodeWithSelector(MultiSeaFactory.ChainNotOffered.selector, uint32(9)));
+        facA.list{ value: 0.01 ether }(address(other), _e(A, 9));
         uint32[] memory one = new uint32[](1); one[0] = A;
         vm.prank(ADMIN); vm.expectRevert(MultiSeaFactory.BadChainCount.selector);
         facA.list{ value: 0.08 ether }(address(other), one);
         vm.prank(ADMIN); vm.expectRevert(MultiSeaFactory.AlreadyListed.selector);
-        facA.list{ value: 0.08 ether }(address(nft), new uint32[](2));
+        facA.list{ value: 0.001 ether }(address(nft), _e(A, B));
+    }
+
+    function test_onlyOperatorSetsGasCosts() public {
+        uint32[] memory ge = new uint32[](1); ge[0] = B; uint256[] memory gc = new uint256[](1); gc[0] = 1;
+        vm.prank(bob); vm.expectRevert(MultiSeaFactory.NotOperator.selector);
+        facA.setGasCosts(ge, gc);
+    }
+
+    function test_prepayAtReviewThenOperatorLists() public {
+        bytes32 drop = keccak256("my-drop");
+        TestNFT later = new TestNFT(bob);
+        uint256 opBefore = op.balance;
+        vm.prank(bob); facA.prepay{ value: 0.001 ether }(drop, _e3(A, B, 3));
+        assertEq(op.balance - opBefore, 0.0009 ether);
+        assertEq(bob.balance, 10 ether - 0.0009 ether);
+        vm.prank(bob); vm.expectRevert(MultiSeaFactory.BadPrepay.selector);
+        facA.prepay{ value: 0.001 ether }(drop, _e3(A, B, 3));
+        vm.prank(bob); vm.expectRevert(MultiSeaFactory.NotOperator.selector);
+        facA.listPrepaid(drop, address(later));
+        TestNFT notBobs = new TestNFT(holder);
+        vm.prank(op); vm.expectRevert(MultiSeaFactory.NotCollectionOwner.selector);
+        facA.listPrepaid(drop, address(notBobs));
+        vm.prank(op); (uint256 id, address esc) = facA.listPrepaid(drop, address(later));
+        assertEq(facA.escrowOf(address(later)), esc);
+        assertEq(facA.getListing(id).owner, bob);
+        assertEq(facA.getListing(id).eids.length, 3);
+        vm.prank(op); vm.expectRevert(MultiSeaFactory.BadPrepay.selector);
+        facA.listPrepaid(drop, address(later));
+    }
+
+    function test_refundRejectedPrepay() public {
+        bytes32 drop = keccak256("rejected");
+        vm.prank(bob); facA.prepay{ value: 0.0005 ether }(drop, _e(A, B));
+        vm.deal(ADMIN, 1 ether);
+        vm.prank(ADMIN); facA.refundPrepaid{ value: 0.0005 ether }(drop);
+        assertEq(bob.balance, 10 ether);
+        vm.prank(op); vm.expectRevert(MultiSeaFactory.BadPrepay.selector);
+        facA.listPrepaid(drop, address(nft));
+    }
+
+    function test_fallbackPriceFeedForApeAndBnb() public {
+        MultiSeaPriceFeed f = new MultiSeaPriceFeed(ADMIN, op, "APE / USD", 0.5e8);
+        vm.prank(ADMIN); facA.setEscrowFeeConfig(address(escA), FEE, address(f), 3600);
+        assertEq(escA.platformFee(), 0.6 ether);                 // $0.30 / $0.50 = 0.6 APE
+        vm.prank(op); f.push(600e8);
+        assertEq(escA.platformFee(), 0.0005 ether);              // $0.30 / $600 = 0.0005 BNB
+        vm.prank(bob); vm.expectRevert(MultiSeaPriceFeed.NotUpdater.selector); f.push(1);
+        vm.warp(block.timestamp + 3601);
+        vm.expectRevert(MultiSeaEscrow.StalePrice.selector); escA.platformFee();
     }
 
     function test_onlyOperatorWiresAndDeploys() public {

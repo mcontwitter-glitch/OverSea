@@ -1,0 +1,60 @@
+{
+ "chains": {
+  "ethereum": {
+   "factory": "0xCDc640614D511eE4811b522650B1C5c90B59ddbC",
+   "feed": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+   "eid": 30101,
+   "chainId": 1
+  },
+  "base": {
+   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782",
+   "feed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
+   "eid": 30184,
+   "chainId": 8453
+  },
+  "apechain": {
+   "feed": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
+   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782",
+   "eid": 30312,
+   "chainId": 33139
+  },
+  "bnb": {
+   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
+   "feed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+   "eid": 30102,
+   "chainId": 56
+  },
+  "robinhood": {
+   "feed": "0x697e794251316B02c16b7Be66bae6c98aB702bE5",
+   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
+   "eid": 30416,
+   "chainId": 4663
+  }
+ },
+ "listings": {
+  "base:1": {
+   "native": "base",
+   "nft": "0xec7a490D5c3327f3c6a03fCD774e40f1FE0ba4C9",
+   "owner": "0xb19F00e095B1387061d73751C772bbA848D196b1",
+   "paid": "0",
+   "escrows": {
+    "ethereum": "0xbA1498e17a7F09127BB3D3e7b873634DBCE76054",
+    "apechain": "0xD5Ed36B94b9605B9D785FA05a2F56A6C6FB297aD",
+    "bnb": "0xf373033C3c14F970cb27Fef7a8c57d3643A17Bbf",
+    "robinhood": "0xf373033C3c14F970cb27Fef7a8c57d3643A17Bbf",
+    "base": "0x22167469CE034eFbF0F54ae927aa635E80B34008"
+   },
+   "mirrors": {
+    "ethereum": "0x967A9def9ECb7AE2552356e1b5830F489d3e77d9",
+    "apechain": "0x22167469CE034eFbF0F54ae927aa635E80B34008",
+    "bnb": "0x7a78605d189c22Efa7B2Bf92c4a5344cEF2D344B",
+    "robinhood": "0x7a78605d189c22Efa7B2Bf92c4a5344cEF2D344B"
+   }
+  }
+ },
+ "test": {
+  "nft": "0xec7a490D5c3327f3c6a03fCD774e40f1FE0ba4C9",
+  "listingId": 1,
+  "listing": "base:1"
+ }
+}

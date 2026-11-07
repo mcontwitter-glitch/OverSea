@@ -19,7 +19,7 @@ const STEPS = ['Project', 'Art & metadata', 'Chains & supply', 'Mint phases', 'R
 const SKEY = 'multisea-lp-draft';
 type PhaseIn = { name: string; kind: 'allowlist' | 'public'; start: string; end: string; price: string; maxPerWallet: string; maxSupply?: string; allowlist: string; prices?: Record<string, string>; usd?: string }; // multichain: one USD price (usd), converted live to each chain's native (price = ETH, prices = APE / BNB)
 type St = { step: number; mode: 'single' | 'multichain' | 'ordinals'; ordPrice?: string; ordLimit?: string; copyMode: 'batched' | 'at-mint'; batchK: string; batchT: string; total: string; name: string; symbol: string; slug: string; description: string; website: string; x: string; storage: 'ipfs' | 'arweave' | 'own'; baseURI: string; reveal: 'instant' | 'delayed'; preRevealURI: string; phOwn?: boolean; deathURI?: string; traitRows?: number; traitsURI?: string; deathOwn?: boolean; mediaBase?: string; mediaExt?: string; phName?: string; phDesc?: string; files: number;
-  chains: Record<string, string>; reserve: string; phases: PhaseIn[]; royalty: string; payout: string; royaltyReceiver: string; agree: boolean;
+  chains: Record<string, string>; reserve: string; phases: PhaseIn[]; royalty: string; payout: string; royaltyReceiver: string; agree: boolean; bridge?: boolean;
   nftType: NftType; ag: AgentOpts };
 type NftType = 'erc721' | 'erc6551' | 'erc463n7';
 type AgentOpts = { revenueSplit: boolean; starvation: boolean; starveDays: string; floorBuyback: boolean; capBps: string; tip: string; brain: boolean; breeding: boolean; market: boolean; leaderboard: boolean; deathSkill: boolean; skillPct: string; graceH: string; fertility: boolean; fertPct: string; twinPct: string; mutation: boolean; mutPct: string; mutSkillPct: string; infect: boolean; infPct: string; infCooldownH: string; infMaxEth: string; infScore: string; repo: boolean; repoPct: string; queen: boolean; queenPct: string; queenCap: string; tribEth: string; tribDays: string; zombie: boolean; zombiePct: string };
@@ -38,6 +38,29 @@ const supply = () => (st.mode === 'multichain' || st.mode === 'ordinals' ? parse
 const addrs = (s: string) => parseAllowlist(s).ok;
 const ADDR = /^0x[0-9a-f]{40}$/;
 const isMc = () => st.mode === 'multichain';
+// MultiSea bridge listing for standard drops: the creator prepays the gas-only listing fee when signing for review.
+type BridgeCfg = Awaited<ReturnType<typeof import('./bridgekit').bridgeCfg>>;
+let BR: { cfg: BridgeCfg; fee: bigint | null; key: string } = { cfg: null, fee: null, key: '' };
+const brNative = () => { const c = BR.cfg; if (!c) return null; return Object.keys(st.chains).find(k => c.chains[k]?.factory) || null; };
+const brEids = () => { const c = BR.cfg!, n = brNative()!; return [n, ...Object.keys(c.chains).filter(k => k !== n && c.chains[k].factory)].map(k => c.chains[k].eid); };
+async function brLoad() {
+  if (isOrd() || isMc()) return;
+  const kit = await import('./bridgekit'); BR.cfg = await kit.bridgeCfg();
+  const n = brNative(); if (!BR.cfg || BR.cfg.network !== 'mainnet' || !n) return;
+  const key = n + ':' + brEids().join(','); if (BR.key === key) return; BR.key = key;
+  const c = BR.cfg.chains[n];
+  try { BR.fee = await kit.pubFor(c).readContract({ address: c.factory as `0x${string}`, abi: kit.FACTORY, functionName: 'listingFee', args: [brEids()] }); } catch { BR.fee = null; }
+  if (st.step === 5) render();
+}
+const brFmt = (w: bigint) => { const v = Number(w) / 1e18; return v < 0.0001 ? v.toPrecision(2) : v.toFixed(6).replace(/0+$/, ''); };
+function bridgeCard() {
+  if (isOrd() || isMc()) return '';
+  brLoad();
+  const c = BR.cfg, n = brNative(); if (!c || c.network !== 'mainnet' || !n) return '';
+  const names = Object.values(c.chains).filter(x => x.factory).map(x => x.name).join(', ');
+  return `<div class="fcard small"><label class="ldagree"><input type="checkbox" data-bridge ${st.bridge ? 'checked' : ''}> <b>List on the MultiSea bridge</b> so holders can move NFTs across ${esc(names)}</label>
+   <p class="mut">You pay only the gas MultiSea spends deploying your escrow and mirrors: <b>${BR.fee != null ? brFmt(BR.fee) + ' ' + esc(c.chains[n].native || 'ETH') : 'loading…'}</b> on ${esc(c.chains[n].name)}, paid when you sign for review together with IPFS pinning. If the drop is rejected, it's refunded.</p></div>`;
+}
 const NON_ETH = (k: string) => chains[k].native !== 'ETH';
 // Phase price on a given chain: ETH chains share the phase price; ApeChain / BNB need their own native price in multichain mode.
 const priceOn = (p: PhaseIn, k: string) => (isMc() && NON_ETH(k) ? p.prices?.[k] ?? '' : p.price);
@@ -207,7 +230,7 @@ function stepHtml(): string {
   const ph = st.phases.map((p, i) => `<div>${i + 1}. <b>${esc(p.name)}</b> · ${p.kind} · ${isMc() ? `$${esc(p.usd || '0')} ≈ ` + Object.keys(st.chains).map(k => `${esc(priceOn(p, k) || '0')} ${esc(chains[k].native)}`).filter((v, j, a) => a.indexOf(v) === j).join(' / ') : isOrd() ? esc(p.price) + ' USDC (Base) + inscription fee' : esc(p.price) + ' native'} · ${p.maxPerWallet === '0' ? 'no limit' : 'max ' + esc(p.maxPerWallet)}${+(p.maxSupply || 0) ? ' · phase cap ' + esc(p.maxSupply) : ''} · ${esc(p.start.replace('T', ' '))}${p.kind === 'allowlist' ? ` · ${addrs(p.allowlist).length} wallets · root <code class="mono">${merkle(addrs(p.allowlist)).root.slice(0, 10)}…</code>` : ''}</div>`).join('');
   return `<div class="fcard"><div class="kv"><span>Project</span><b>${esc(st.name)} (${esc(st.symbol.toUpperCase())})</b><span>Slug</span><b>/launchpad/${esc(st.slug)}</b><span>Drop type</span><b>${isOrd() ? 'Bitcoin Ordinals · paid in USDC on Base' : isMc() ? 'Multichain (escrow) · one shared supply' : 'Single chain per contract'}</b>${isMc() ? `<span>Escrow copies</span><b>${st.copyMode === 'batched' ? `Batched · every ${esc(st.batchK)} IDs or ${esc(st.batchT)} min` : 'At every mint'}</b>` : ''}${isOrd() ? ordReview() : ''}${isOrd() ? '' : `<span>Chains</span><b>${Object.entries(st.chains).map(([k, v]) => isMc() ? esc(chains[k].name) + (k === 'base' ? ' (hub)' : '') : `${esc(chains[k].name)} ${(+v).toLocaleString()}`).join(' · ')}</b>`}<span>Total supply</span><b>${supply().toLocaleString()}${isMc() ? ' shared' : ` (reserve ${esc(st.reserve || '0')})`}</b><span>Storage</span><b>${esc(st.storage === 'own' ? 'Own host' : st.storage.toUpperCase())}</b><span>Reveal</span><b>${st.reveal}</b>${isOrd() ? '<span>Asset</span><b>Bitcoin inscription (Ordinals)</b>' : `<span>NFT type</span><b>${esc(nftTypeName())}${st.nftType === 'erc463n7' ? ' (experimental)' : ''}</b>`}${st.nftType === 'erc463n7' ? agentSummary() : ''}<span>Royalty</span><b>${esc(st.royalty)}%</b></div><div class="small ldrev">${ph}</div></div>
    <div class="fcard small"><div class="gh">What happens next</div><ol class="mut"><li>MultiSea reviews the drop in the admin review queue (art rights, metadata, phases).</li>${isOrd() ? `<li>Once approved the drop page goes live at the first phase start. Collectors pay in USDC on Base (price + the quoted inscription fee); the payment is held in MultiSea's escrow on Base, never sent straight to you.</li><li>MultiSea inscribes each paid order on Bitcoin and sends it to the collector's taproot (bc1p…) address. Order status on the drop page: paid → inscribing → delivered.</li><li>If an order isn't delivered within ${ORD_HOURS}h, it's refunded in USDC on Base from escrow. Delivered orders release to you minus the ${ORD_FEE_PCT}% MultiSea fee.</li><li>Nothing is deployed and you pay no gas: there is no EVM contract for this drop.</li></ol></div>` : `${isMc() ? `<li>Once approved, the same collection is deployed on all ${Object.keys(st.chains).length} chains (est. ~0.75M gas per chain, ≈ $0.20 total at today's gas; Ethereum is most of it) and registered with MultiSea's LayerZero escrow on each chain.</li><li>Collectors mint on the chain they pick: the NFT is Active there and the same ID is minted into escrow on the other ${Object.keys(st.chains).length - 1} chains (LayerZero, paid by the collector: ${st.copyMode === 'batched' ? `batched, ≈ $${batchShareUsd(mcDrop()).toFixed(2)} per NFT on Base, ≈ $0.6 on other chains` : '≈ $2.40-3.00 per mint at 5 chains'}). Moving an NFT later costs the LayerZero fee (est. $0.25-2) + $0.30 MultiSea move fee.</li>` : '<li>Once approved you get a one-time deploy approval and deploy from your wallet (you pay gas, est. ~0.55M gas per chain).</li>'}${st.nftType !== 'erc721' ? `<li>${st.nftType === 'erc6551' ? 'Token-bound wallets: each mint also creates the NFT\'s wallet (est. extra gas per mint, shown at mint).' : 'Agent NFTs: larger contract + per-mint wallet (est. higher deploy and mint gas, shown before you sign)' + (st.ag.breeding ? '; you fund a Chainlink VRF subscription in LINK' : '') + (st.ag.brain ? '; ORA AI fees are paid per decision by holders' : '') + '. Estimates only.'}</li>` : ''}<li>The drop page goes live at the first phase start; minted NFTs trade on MultiSea immediately.</li></ol></div>`}
-   ${st.nftType === 'erc463n7' ? agentTraitsHtml() : ''}${txBox()}
+   ${st.nftType === 'erc463n7' ? agentTraitsHtml() : ''}${txBox()}${bridgeCard()}
    <label class="ldagree"><input type="checkbox" data-agree ${st.agree ? 'checked' : ''}> I own or have licensed the rights to this art and metadata.</label>`;
 }
 function rootLine(text: string) { const { ok, bad } = parseAllowlist(text); if (!ok.length) return 'Merkle root appears here once you add addresses.';
@@ -264,6 +287,7 @@ app.addEventListener('change', e => {
   if (t.dataset.phown != null) { st.phOwn = t.checked; st.preRevealURI = ''; save(); render(); }
   if (t.dataset.own != null) { st.storage = t.checked ? 'own' : 'ipfs'; if (!t.checked) st.baseURI = ''; save(); render(); }
   if (t.dataset.agree != null) { st.agree = t.checked; save(); }
+  if (t.dataset.bridge != null) { st.bridge = t.checked; save(); }
   if (t.dataset.csv != null && t.files?.[0]) { const i = +t.dataset.csv; t.files[0].text().then(txt => { const { ok, bad } = parseAllowlist(txt); const p = st.phases[i]; p.allowlist = [...new Set([...addrs(p.allowlist), ...ok])].join('\n'); msg = `CSV: added ${ok.length} addresses${bad.length ? `, skipped ${bad.length} invalid` : ''}.`; msgCls = bad.length ? 'err' : 'ok'; save(); render(); }); }
 });
 async function submit() {
@@ -290,9 +314,21 @@ async function submit() {
   const phases = st.phases.map(p => ({ name: p.name, priceUsd: isMc() ? p.usd || '0' : undefined, kind: p.kind, start: ts(p.start), end: ts(p.end), maxPerWallet: parseInt(p.maxPerWallet) || 0, maxSupply: parseInt(p.maxSupply || '0') || 0, merkleRoot: p.kind === 'allowlist' ? merkle(addrs(p.allowlist)).root : undefined, price: p.price, prices: isMc() ? Object.fromEntries(Object.keys(st.chains).map(k => [k, priceOn(p, k) || '0'])) : undefined, allowlist: p.kind === 'allowlist' ? addrs(p.allowlist) : undefined }));
   if (apiFeatures.includes('launchpad')) {
     if (!wallet.address) { openConnect(); return; }
+    let bridgePrepay: { chain: string; dropId: string; eids: number[]; tx: string } | undefined;
+    if (st.bridge && !isOrd() && !isMc() && BR.cfg && brNative()) {
+      try {
+        const kit = await import('./bridgekit'); const { keccak256, toBytes } = await import('viem');
+        const n = brNative()!, c = BR.cfg.chains[n], pub = kit.pubFor(c), w = await kit.walletFor(c), eids = brEids(), dropId = keccak256(toBytes(st.slug));
+        const fee = await pub.readContract({ address: c.factory as `0x${string}`, abi: kit.FACTORY, functionName: 'listingFee', args: [eids] });
+        msg = `Confirm the bridge listing gas (${brFmt(fee)} ${c.native || 'ETH'}) in your wallet…`; msgCls = 'mut'; render();
+        const h = await w.writeContract({ address: c.factory as `0x${string}`, abi: kit.FACTORY, functionName: 'prepay', args: [dropId, eids], value: fee * 103n / 100n });
+        if ((await pub.waitForTransactionReceipt({ hash: h })).status !== 'success') throw new Error('Bridge prepay reverted');
+        bridgePrepay = { chain: n, dropId, eids, tx: h };
+      } catch (er: any) { msg = er?.code === 4001 ? 'Bridge listing payment rejected in wallet. Untick it to submit without the bridge.' : 'Bridge listing payment failed: ' + (er?.shortMessage || er?.message || er); msgCls = 'err'; render(); return; }
+    }
     msg = 'Check your wallet to sign…'; msgCls = 'mut'; render();
     try {
-      const j = await api('/launchpad/submit', { auth: true, body: { mode: st.mode, slug: st.slug, name: st.name, symbol: st.symbol, description: st.description, website: st.website, x: st.x, chains: Object.keys(st.chains), allocations: isMc() ? undefined : Object.fromEntries(Object.entries(st.chains).map(([k, v]) => [k, parseInt(v) || 0])), maxSupply: supply(), creatorReserve: isMc() ? 0 : parseInt(st.reserve) || 0,
+      const j = await api('/launchpad/submit', { auth: true, body: { mode: st.mode, ...(bridgePrepay ? { bridgePrepay } : {}), slug: st.slug, name: st.name, symbol: st.symbol, description: st.description, website: st.website, x: st.x, chains: Object.keys(st.chains), allocations: isMc() ? undefined : Object.fromEntries(Object.entries(st.chains).map(([k, v]) => [k, parseInt(v) || 0])), maxSupply: supply(), creatorReserve: isMc() ? 0 : parseInt(st.reserve) || 0,
         ...(isMc() ? { copyMode: st.copyMode, batchK: st.copyMode === 'batched' ? +st.batchK : undefined, batchTMin: st.copyMode === 'batched' ? +st.batchT : undefined } : {}),
         ...(isOrd() ? { ordinals: { priceUsdc: st.ordPrice, orderLimit: +(st.ordLimit || 50), deliveryHours: ORD_HOURS, feeBps: ORD_FEE_PCT * 100, buyerPaysInscriptionFee: true, chain: 'base', currency: 'USDC' } } : {}),
         nftType: st.nftType, agent: st.nftType === 'erc463n7' ? { ...st.ag, mediaBase: st.storage === 'own' ? '' : st.mediaBase || '', mediaExt: st.storage === 'own' ? '' : st.mediaExt || '', deathURI: st.deathURI || '', traitRows: st.storage === 'own' ? 0 : st.traitRows || 0, traitsURI: st.storage === 'own' ? '' : st.traitsURI || '', starvation: true, starveDays: +st.ag.starveDays, skillPct: +st.ag.skillPct, fertPct: st.ag.fertility ? +st.ag.fertPct : 0, twinPct: +st.ag.twinPct, mutPct: st.ag.mutation ? +st.ag.mutPct : 0, mutSkillPct: +st.ag.mutSkillPct, infPct: st.ag.infect ? +st.ag.infPct : 0, infCooldownH: st.ag.infect ? +st.ag.infCooldownH : 0, infScore: st.ag.infect ? +st.ag.infScore : 0, infMaxEth: st.ag.infect ? String(st.ag.infMaxEth).trim() : undefined, repo: st.ag.repo && st.ag.deathSkill, repoPct: st.ag.repo ? +st.ag.repoPct : 0, queenPct: st.ag.queen ? +st.ag.queenPct : 0, queenCap: st.ag.queen ? +st.ag.queenCap : undefined, tribEth: st.ag.queen ? String(st.ag.tribEth).trim() : undefined, tribDays: st.ag.queen ? +st.ag.tribDays : undefined, zombiePct: st.ag.zombie ? +st.ag.zombiePct : 0, limits: st.ag.deathSkill ? { grace: Math.round(+st.ag.graceH * 3600) } : undefined } : undefined, royaltyBps: Math.round(+st.royalty * 100), payout: st.payout || undefined, royaltyReceiver: st.royaltyReceiver || undefined, reveal: st.reveal, baseURI: st.baseURI, preRevealURI: st.preRevealURI, metadataHost: st.storage,
