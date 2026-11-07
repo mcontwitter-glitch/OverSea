@@ -4,7 +4,7 @@ import { esc } from './gx';
 import { addrHtml, hydrateNames, shortAddr } from './names';
 
 type Message = { id: string; address: string; name: string; text: string; at: number };
-type Page = { messages: Message[]; next: string | null; isAdmin: boolean; muted: boolean; address: string };
+type Page = { messages: Message[]; next: string | null; isAdmin: boolean; isOwner?: boolean; muted: boolean; address: string };
 
 /** SIWE authorizes reads and writes; this UI deliberately renders every message as text, never HTML. */
 export function mountHolderChat(root: HTMLElement, slug: string, title: string) {
@@ -27,12 +27,12 @@ export function mountHolderChat(root: HTMLElement, slug: string, title: string) 
   const SEND_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>';
   // The frame is built once per state; polling only repaints the message list, so typing is never interrupted.
   function draw() {
-    const want = joined ? 'joined' : auth() ? 'auth' : 'out';
+    const owner = !!page?.isOwner; const want = joined ? (owner ? 'owner' : 'joined') : auth() ? 'auth' : 'out';
     if (shell !== want || !root.querySelector('.holderchat')) {
       shell = want; sig = '';
       root.innerHTML = `<section class="holderchat" aria-label="${esc(title)} group chat"><div class="hchathead"><div class="hchatti"><b><span class="hchatlive"></span>Holder group chat</b><span class="mut small">Verified ${esc(title)} holders only</span></div>
-        ${joined ? `<button class="hchaticon" data-chat="rename" title="Display name" aria-label="Set display name">✎</button>` : ''}<button class="hchaticon" data-chat="refresh" title="Refresh messages" aria-label="Refresh messages">↻</button></div>
-        ${joined ? `<div class="hchatname" data-chat="namebox" hidden><input data-chat="name" maxlength="32" autocomplete="nickname" placeholder="Display name (optional)" aria-label="Display name" value="${esc(localStorage.getItem(NAMEKEY) || '')}"></div>` : ''}
+        ${joined && owner ? `<button class="hchaticon" data-chat="rename" title="Display name" aria-label="Set display name">✎</button>` : ''}<button class="hchaticon" data-chat="refresh" title="Refresh messages" aria-label="Refresh messages">↻</button></div>
+        ${joined && owner ? `<div class="hchatname" data-chat="namebox" hidden><input data-chat="name" maxlength="32" autocomplete="nickname" placeholder="Display name (optional)" aria-label="Display name" value="${esc(localStorage.getItem(NAMEKEY) || '')}"></div>` : ''}
         <p class="err small" data-chat="error" hidden></p><div class="hchatmsgs" data-chat="messages" aria-live="polite"></div>
         ${!joined && !auth() ? '<div class="hchatjoin"><p class="mut">Sign with your wallet to join the conversation. No gas or transaction.</p><button class="bbtn" data-chat="join">Sign to join</button></div>' : ''}
         ${joined ? `<form class="hchatform" data-chat="form"><div class="hchatbar"><textarea data-chat="text" rows="1" maxlength="500" placeholder="Start a message" aria-label="Message"></textarea><button type="submit" class="hchatgo" aria-label="Send">${SEND_SVG}</button></div></form>` : ''}</section>`;
@@ -93,7 +93,7 @@ export function mountHolderChat(root: HTMLElement, slug: string, title: string) 
     const text = root.querySelector<HTMLTextAreaElement>('[data-chat=text]')!;
     if (!text.value.trim()) return; busy = true;
     const send = (e.target as HTMLElement).querySelector<HTMLButtonElement>('button[type=submit]')!; send.disabled = true;
-    try { await api(`/holders/${encodeURIComponent(slug)}/messages`, { auth: true, body: { text: text.value, name: localStorage.getItem(NAMEKEY) || '' } }); text.value = ''; grow(text); busy = false; older = false; await load(); text.focus(); }
+    try { await api(`/holders/${encodeURIComponent(slug)}/messages`, { auth: true, body: { text: text.value, name: page?.isOwner ? localStorage.getItem(NAMEKEY) || '' : '' } }); text.value = ''; grow(text); busy = false; older = false; await load(); text.focus(); }
     catch (err) { drawErr(err); } finally { busy = false; send.disabled = false; }
   });
   draw(); if (auth()) load();

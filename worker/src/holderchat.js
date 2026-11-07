@@ -6,8 +6,14 @@ const keyOf = id => String(id || '').replace(/^chat:[^:]+:/, '');
 
 /** Holder-only group chat. KV keys are ordered by time, so list(reverse) is a page newest-first;
  * responses are reversed for the UI (oldest to newest). No public writes or client-supplied addresses. */
-export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout }) {
+export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }) {
   const gates = GATES.gates || {};
+  // Collection owners (admin, editor, approved submitter or contract owner()) may set a display name; cached per isolate.
+  const ownerCache = new Map();
+  async function isOwner(env, slug, address) {
+    const k = `${slug}:${lc(address)}`, c = ownerCache.get(k); if (c && c.t > Date.now()) return c.v;
+    const v = !!(await canEdit(env, slug, address).catch(() => ({ ok: false }))).ok; ownerCache.set(k, { v, t: Date.now() + 600_000 }); return v;
+  }
   const postTimes = new Map(); // isolate-local throttle; Cloudflare abuse limits can supplement this later
   function limited(address) {
     const now = Date.now(), a = (postTimes.get(address) || []).filter(t => now - t < 60_000);
@@ -64,7 +70,7 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
       const slug = p[1]; if (!gates[slug]) bad('holder chat not found', 404);
       if (M === 'GET' && p[2] === 'messages' && p.length === 3) {
         const s = await holder(req, env, slug); const out = await page(env, slug, url.searchParams.get('before'));
-        return { ...out, address: s.address, isAdmin: admins(env).includes(s.address), muted: !!s.muted, pollAfter: 4000 };
+        return { ...out, address: s.address, isAdmin: admins(env).includes(s.address), isOwner: await isOwner(env, slug, s.address), muted: !!s.muted, pollAfter: 4000 };
       }
       if (M === 'POST' && p[2] === 'messages' && p.length === 3) {
         const s = await holder(req, env, slug); if (s.muted) bad('you are muted in this holder chat', 403);
@@ -72,7 +78,7 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
         const b = await body();
         let text = String(b.text || '').replace(/<[^>]*>/g, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
         if (!text) bad('message is empty'); if (text.length > MAX_TEXT) bad(`message must be ${MAX_TEXT} characters or fewer`);
-        const name = String(b.name || '').replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32);
+        const name = !(await isOwner(env, slug, s.address)) ? '' : String(b.name || '').replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32);
         const now = Date.now(), id = `${String(now).padStart(16, '0')}:${crypto.randomUUID()}`;
         const rec = { id, address: lc(s.address), name, text, at: now, deleted: false };
         await env.COLLECTIONS.put(`chat:${slug}:${id}`, JSON.stringify(rec));
