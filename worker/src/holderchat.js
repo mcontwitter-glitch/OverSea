@@ -54,13 +54,18 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
     if (!(await holdings(env, slug, fields.address))) bad(gates[slug].lockedText, 403);
   }
   async function page(env, slug, before) {
-    const opt = { prefix: `chat:${slug}:`, limit: MAX_MESSAGES * 3, reverse: true };
-    if (before) opt.end = `chat:${slug}:${before}`;
-    const listed = await env.COLLECTIONS.list(opt);
-    const rows = (await Promise.all(listed.keys.map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean);
-    const visible = rows.filter(r => !r.deleted).slice(0, MAX_MESSAGES);
-    const oldest = visible[visible.length - 1];
-    return { messages: visible.reverse(), next: visible.length === MAX_MESSAGES && oldest ? keyOf(oldest.id) : null };
+    // KV lists keys ascending only, so collect them and take the newest page.
+    const prefix = `chat:${slug}:`, stop = before ? prefix + before : null;
+    let names = [], cursor;
+    do {
+      const l = await env.COLLECTIONS.list({ prefix, cursor });
+      for (const k of l.keys) if (!stop || k.name < stop) names.push(k.name);
+      cursor = l.list_complete ? null : l.cursor;
+    } while (cursor);
+    const rows = (await Promise.all(names.slice(-MAX_MESSAGES * 3).map(n => env.COLLECTIONS.get(n, 'json')))).filter(Boolean);
+    const visible = rows.filter(r => !r.deleted).slice(-MAX_MESSAGES);
+    const oldest = visible[0];
+    return { messages: visible, next: visible.length === MAX_MESSAGES && names.length > MAX_MESSAGES && oldest ? keyOf(oldest.id) : null };
   }
   function admin(s, env) { if (!admins(env).includes(lc(s.address))) bad('admin only', 403); }
   return {
