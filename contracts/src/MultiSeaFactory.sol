@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { MultiSeaEscrow } from "./MultiSeaEscrow.sol";
-import { MultiSeaMirror } from "./MultiSeaMirror.sol";
+import { MultiSeaMirrorDeployer } from "./MultiSeaMirrorDeployer.sol";
 import { SetConfigParam } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/IMessageLibManager.sol";
 
 interface ILzEndpointConfig { function setConfig(address oapp, address lib, SetConfigParam[] calldata params) external; }
@@ -136,22 +136,48 @@ contract MultiSeaFactory is Ownable, ReentrancyGuard {
     function deployMirror(uint256 listingId, string calldata name, string calldata symbol, string calldata baseURI, uint256 firstId, uint256 supply)
         external onlyOperator returns (address mirror, address escrow)
     {
-        mirror = address(new MultiSeaMirror(name, symbol, baseURI, firstId, supply));
+        if (mirrorDeployer == address(0)) revert BadPrepay();
+        mirror = MultiSeaMirrorDeployer(mirrorDeployer).deploy(name, symbol, baseURI, firstId, supply);
         escrow = address(new MultiSeaEscrow(endpoint, address(this), mirror, true, feeWallet, priceFeed, maxPriceAge));
-        MultiSeaMirror(mirror).initEscrow(escrow);
+        MultiSeaMirrorDeployer(mirrorDeployer).initEscrow(mirror, escrow);
         escrowOf[mirror] = escrow;
         emit MirrorDeployed(listingId, mirror, escrow);
     }
 
-    /// @notice Wire a trusted LayerZero peer on one of this factory's escrows.
-    function setPeer(address escrow, uint32 eid, bytes32 peer) external onlyOperator {
-        MultiSeaEscrow(escrow).setPeer(eid, peer);
+    // ---- One-call wiring (peers + DVN/executor config) so a server operator can finish a listing in ~2 tx per chain ----
+    struct LzRoute { address sendLib; address receiveLib; address executor; address dvn; uint64 confirmations; }
+    LzRoute public lzRoute;                       // this chain's libs / executor / DVN / outbound confirmations
+    mapping(uint32 => uint64) public remoteConfirmations; // inbound confirmations per source eid (= the source's outbound)
+
+    function setLzRoute(LzRoute calldata r, uint32[] calldata eids, uint64[] calldata confs) external onlyOperator {
+        lzRoute = r;
+        if (eids.length != confs.length) revert BadChainCount();
+        for (uint256 i; i < eids.length; ++i) remoteConfirmations[eids[i]] = confs[i];
     }
 
-    /// @notice Set DVN / executor config on one of this factory's escrows (the factory is each escrow's LayerZero delegate).
-    ///         Needed on pathways where LayerZero ships no default (e.g. anything touching ApeChain or Robinhood).
-    function setEscrowLzConfig(address escrow, address lib, SetConfigParam[] calldata params) external onlyOperator {
-        ILzEndpointConfig(endpoint).setConfig(escrow, lib, params);
+    function _uln(uint64 conf, address dvn) internal pure returns (bytes memory) {
+        address[] memory req = new address[](1); req[0] = dvn;
+        return abi.encode(UlnCfg(conf, 1, 0, 0, req, new address[](0)));
+    }
+    struct UlnCfg { uint64 confirmations; uint8 requiredDVNCount; uint8 optionalDVNCount; uint8 optionalDVNThreshold; address[] requiredDVNs; address[] optionalDVNs; }
+    struct ExeCfg { uint32 maxMessageSize; address executor; }
+
+    /// @notice Set peers on `escrow` for every remote eid and, when a route is configured, its send + receive LZ config.
+    function wire(address escrow, uint32[] calldata eids, bytes32[] calldata peers) external onlyOperator {
+        if (eids.length != peers.length) revert BadChainCount();
+        for (uint256 i; i < eids.length; ++i) MultiSeaEscrow(escrow).setPeer(eids[i], peers[i]);
+        LzRoute memory r = lzRoute;
+        if (r.dvn == address(0)) return;
+        SetConfigParam[] memory s_ = new SetConfigParam[](eids.length * 2);
+        SetConfigParam[] memory v_ = new SetConfigParam[](eids.length);
+        for (uint256 i; i < eids.length; ++i) {
+            uint64 rc = remoteConfirmations[eids[i]]; if (rc == 0) revert ChainNotOffered(eids[i]);
+            s_[2 * i] = SetConfigParam(eids[i], 1, abi.encode(ExeCfg(10000, r.executor)));
+            s_[2 * i + 1] = SetConfigParam(eids[i], 2, _uln(r.confirmations, r.dvn));
+            v_[i] = SetConfigParam(eids[i], 2, _uln(rc, r.dvn));
+        }
+        ILzEndpointConfig(endpoint).setConfig(escrow, r.sendLib, s_);
+        ILzEndpointConfig(endpoint).setConfig(escrow, r.receiveLib, v_);
     }
 
     function setEscrowFeeConfig(address escrow, address _feeWallet, address _priceFeed, uint256 _maxPriceAge) external onlyOwner {
@@ -166,6 +192,8 @@ contract MultiSeaFactory is Ownable, ReentrancyGuard {
     function setOperator(address op, bool on) external onlyOwner { operators[op] = on; emit OperatorSet(op, on); }
     function setFeeWallet(address w) external onlyOwner { feeWallet = w; }
     function setGasWallet(address w) external onlyOwner { gasWallet = w; }
+    address public mirrorDeployer;
+    function setMirrorDeployer(address d) external onlyOwner { if (mirrorDeployer != address(0)) revert BadPrepay(); mirrorDeployer = d; }
     /// @notice Operator keeps gas reimbursements current. eid 0 sets baseGasCost.
     function setGasCosts(uint32[] calldata eids, uint256[] calldata costs) external onlyOperator {
         if (eids.length != costs.length) revert BadChainCount();

@@ -9,6 +9,7 @@ import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeGrowth } from './growth.js';
 import { makeLaunchpad } from './launchpad.js';
+import { makeBridgeAuto } from './bridgeauto.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
@@ -231,7 +232,8 @@ const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) 
   return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
 const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
-  : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain }));
+  : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr) }));
+let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto());
 let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
@@ -248,6 +250,14 @@ async function handle(req, env, url) {
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
   { const h = await holderChat().handle(req, env, url, p, M, body); if (h !== undefined) return h; }
   { const b = await btcRoutes().handle(req, env, url, p, M, body); if (b !== undefined) return b; }
+  // MultiSea bridge auto-listing (see bridgeauto.js). Public: listed collections. Admin: status / run now / retry a failed job.
+  if (M === 'GET' && p[0] === 'bridge' && p[1] === 'collections' && p.length === 2) return { collections: await bridgeAuto().collections(env) };
+  if (p[0] === 'admin' && p[1] === 'bridge') {
+    const s = await requireSession(req, env); if (!admins(env).includes(s.address)) bad('admin only', 403);
+    if (M === 'GET' && p[2] === 'status') return bridgeAuto().status(env);
+    if (M === 'POST' && p[2] === 'run') return { results: await bridgeAuto().run(env) };
+    if (M === 'POST' && p[2] === 'retry' && p[3]) { const j = await bridgeAuto().retry(env, p[3]); if (!j) bad('no job', 404); return { job: j.step }; }
+  }
   { const l = await launchpad(env).handle(req, env, url, p, M, body); if (l !== undefined) return l; }
 
   // --- SIWE ---
@@ -565,7 +575,10 @@ async function handle(req, env, url) {
 }
 
 export default {
-  async scheduled(event, env, ctx) { ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r)))); },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r))));
+    if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
+  },
   async fetch(req, env) {
     const url = new URL(req.url); const ch = corsHeaders(req, env);
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });

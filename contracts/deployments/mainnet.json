@@ -1,34 +1,39 @@
 {
  "chains": {
   "ethereum": {
-   "factory": "0xCDc640614D511eE4811b522650B1C5c90B59ddbC",
    "feed": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
    "eid": 30101,
-   "chainId": 1
+   "chainId": 1,
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
   },
   "base": {
-   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782",
    "feed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
    "eid": 30184,
-   "chainId": 8453
+   "chainId": 8453,
+   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
   },
   "apechain": {
    "feed": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
-   "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782",
    "eid": 30312,
-   "chainId": 33139
+   "chainId": 33139,
+   "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "mirrorDeployer": "0x7093bb0e4695098E74e9028C39488E436E52B74c"
   },
   "bnb": {
-   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
    "feed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
    "eid": 30102,
-   "chainId": 56
+   "chainId": 56,
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
   },
   "robinhood": {
    "feed": "0x697e794251316B02c16b7Be66bae6c98aB702bE5",
-   "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
    "eid": 30416,
-   "chainId": 4663
+   "chainId": 4663,
+   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
   }
  },
  "listings": {
@@ -56,5 +61,24 @@
   "nft": "0xec7a490D5c3327f3c6a03fCD774e40f1FE0ba4C9",
   "listingId": 1,
   "listing": "base:1"
+ },
+ "old": {
+  "chains": {
+   "ethereum": {
+    "factory": "0xCDc640614D511eE4811b522650B1C5c90B59ddbC"
+   },
+   "base": {
+    "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+   },
+   "apechain": {
+    "factory": "0xc6563a707Cb2642BcDbfc18C0E7a6eAd2c2C6782"
+   },
+   "bnb": {
+    "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+   },
+   "robinhood": {
+    "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+   }
+  }
  }
 }

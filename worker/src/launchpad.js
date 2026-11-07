@@ -17,7 +17,7 @@
 //   POST /admin/launchpad/approvals/<slug>    (admin)  { chain, signature } -> verified against the on-chain approver, stored
 // Approvals: with the LAUNCHPAD_APPROVER_KEY secret (testnet staging) the Worker signs on request. Without it (mainnet) the
 // approver wallet signs each chain's approval in /admin (signature only, no transaction) and the Worker hands it to the creator.
-import { keccak256, encodeAbiParameters, concat, recoverTypedDataAddress } from 'viem';
+import { keccak256, encodeAbiParameters, concat, recoverTypedDataAddress, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 export const PHASE_T = [{ name: 'start', type: 'uint64' }, { name: 'end', type: 'uint64' }, { name: 'price', type: 'uint128' }, { name: 'maxPerWallet', type: 'uint32' }, { name: 'maxSupply', type: 'uint32' }, { name: 'merkleRoot', type: 'bytes32' }];
@@ -86,7 +86,7 @@ export const omniConfigHash = p => keccak256(encodeAbiParameters(OMNI_T, [{ ...p
 export const collectionIdOf = (slug, creator) => keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'address' }], [slug, creator]));
 export const configHash = p => keccak256(encodeAbiParameters(INIT_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
 
-export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, now = () => Date.now() }) {
+export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed, now = () => Date.now() }) {
   const SLUG = /^[a-z0-9-]{3,40}$/;
   const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const int = (v, lo, hi, what) => { const n = Number(v); if (!Number.isInteger(n) || n < lo || n > hi) bad(`${what} must be an integer ${lo}-${hi}`); return n; };
@@ -95,7 +95,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   // deployed: true only once POST /launchpad/deployed verified a contract on-chain against a factory (status 'live').
   // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
   // Delayed reveal: the revealed baseURI stays private until the creator reveals (GET /launchpad/reveal-uri/<slug>).
-  const pub = d => ({ ...d, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
+  const pub = d => ({ ...d, bridgePrepay: undefined, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
   const AG = LP.agentDrops || { enabled: false };
   // Agent drop: single chain; full phases via AgentDropKit; art = uploaded media folder (+ optional death image), metadata JSON onchain.
@@ -202,6 +202,10 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const out = { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
       mode, copyMode, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
     if (isAgent) { out.nftType = 'erc463n7'; out.agent = validateAgent(b, out); }
+    // MultiSea bridge: the creator prepaid the gas-only listing fee on-chain at review; the server lists it once deployed.
+    const bp = b.bridgePrepay;
+    if (bp && !isAgent && mode === 'single' && typeof bp.chain === 'string' && chainsSel.includes(bp.chain) && bp.dropId === keccak256(toBytes(slug)) && /^0x[0-9a-fA-F]{64}$/.test(String(bp.tx || '')))
+      out.bridgePrepay = { chain: bp.chain, dropId: bp.dropId, eids: (Array.isArray(bp.eids) ? bp.eids : []).map(Number).filter(Number.isInteger).slice(0, 10), tx: bp.tx };
     return out;
   }
 
@@ -305,6 +309,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         // Multichain: the shared per-chain escrow holds every non-Active copy, so it is excluded from holder counts.
         if (d.mode === 'multichain') col.escrow = deployments.map(x => ({ chain: x.chain, address: lc(LP.omniEscrows?.[x.chain] || ZERO) })).filter(x => x.address !== ZERO);
         await K.put('col:' + d.slug, JSON.stringify(col));
+        if (onDeployed) await onDeployed(env, live, chain, address).catch(e => console.log('bridge enqueue failed', e?.message));
         return { ok: true, drop: pub(live) };
       }
       return undefined;

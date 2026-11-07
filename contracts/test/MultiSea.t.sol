@@ -10,6 +10,8 @@ import { MultiSeaEscrow } from "../src/MultiSeaEscrow.sol";
 import { MultiSeaMirror } from "../src/MultiSeaMirror.sol";
 import { MultiSeaFactory } from "../src/MultiSeaFactory.sol";
 import { MultiSeaPriceFeed } from "../src/MultiSeaPriceFeed.sol";
+import { MultiSeaMirrorDeployer } from "../src/MultiSeaMirrorDeployer.sol";
+interface IEpLibs { function defaultSendLibrary(uint32) external view returns (address); function defaultReceiveLibrary(uint32) external view returns (address); }
 
 contract MockFeed {
     int256 public answer; uint256 public updatedAt; uint8 public decimals = 8;
@@ -53,6 +55,7 @@ contract MultiSeaTest is TestHelperOz5 {
         feedA.set(2500e8, block.timestamp); feedB.set(2500e8, block.timestamp);
         facA = new MultiSeaFactory(address(endpoints[A]), ADMIN, op, FEE, address(feedA), 3600, 6);
         facB = new MultiSeaFactory(address(endpoints[B]), ADMIN, op, FEE, address(feedB), 3600, 6);
+        vm.startPrank(ADMIN); facA.setMirrorDeployer(address(new MultiSeaMirrorDeployer(address(facA)))); facB.setMirrorDeployer(address(new MultiSeaMirrorDeployer(address(facB)))); vm.stopPrank();
         nft = new TestNFT(ADMIN);
         nft.mint(holder, 7); nft.mint(holder, 8);
         uint32[] memory eids = new uint32[](2); eids[0] = A; eids[1] = B;
@@ -65,8 +68,9 @@ contract MultiSeaTest is TestHelperOz5 {
         vm.prank(op); (address m, address eb) = facB.deployMirror(lid, "LIL FOOTS test", "LFT", "ipfs://x/", 1, 4404);
         mirror = MultiSeaMirror(m); escB = MultiSeaEscrow(payable(eb));
         vm.startPrank(op);
-        facA.setPeer(address(escA), B, addressToBytes32(address(escB)));
-        facB.setPeer(address(escB), A, addressToBytes32(address(escA)));
+        { uint32[] memory eb = new uint32[](1); bytes32[] memory pb = new bytes32[](1);
+          eb[0] = B; pb[0] = addressToBytes32(address(escB)); facA.wire(address(escA), eb, pb);
+          eb[0] = A; pb[0] = addressToBytes32(address(escA)); facB.wire(address(escB), eb, pb); }
         vm.stopPrank();
         opts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(200_000, 0);
         vm.deal(holder, 10 ether); vm.deal(bob, 10 ether);
@@ -175,12 +179,31 @@ contract MultiSeaTest is TestHelperOz5 {
     }
 
     function test_onlyOperatorWiresAndDeploys() public {
+        uint32[] memory e1 = new uint32[](1); e1[0] = B; bytes32[] memory p1 = new bytes32[](1); p1[0] = bytes32(uint256(1));
         vm.prank(bob); vm.expectRevert(MultiSeaFactory.NotOperator.selector);
-        facA.setPeer(address(escA), B, bytes32(uint256(1)));
+        facA.wire(address(escA), e1, p1);
         vm.prank(bob); vm.expectRevert(MultiSeaFactory.NotOperator.selector);
         facB.deployMirror(1, "x", "x", "", 1, 10);
         vm.prank(bob); vm.expectRevert();
         escA.setPeer(B, bytes32(uint256(1))); // escrow owned by factory
+    }
+
+    function test_wireSetsPeersInOneCall() public {
+        uint256 lid = 1;
+        vm.prank(op); (, address eb2) = facB.deployMirror(lid, "X", "X", "", 1, 10);
+        uint32[] memory e = new uint32[](1); e[0] = A; bytes32[] memory pr = new bytes32[](1); pr[0] = addressToBytes32(address(escA));
+        vm.expectRevert(); vm.prank(bob); facB.wire(eb2, e, pr);
+        vm.prank(op); facB.wire(eb2, e, pr);
+        assertEq(MultiSeaEscrow(payable(eb2)).peers(A), addressToBytes32(address(escA)));
+    }
+
+    function test_wireAppliesLzRoute() public {
+        MultiSeaFactory.LzRoute memory r = MultiSeaFactory.LzRoute(IEpLibs(endpoints[A]).defaultSendLibrary(B), IEpLibs(endpoints[A]).defaultReceiveLibrary(B), address(0xE0), address(0xD0), 5);
+        uint32[] memory e = new uint32[](1); e[0] = B; uint64[] memory c = new uint64[](1); c[0] = 7;
+        vm.prank(op); facA.setLzRoute(r, e, c);
+        bytes32[] memory pr = new bytes32[](1); pr[0] = addressToBytes32(address(escB));
+        vm.prank(op); facA.wire(address(escA), e, pr);
+        assertEq(facA.remoteConfirmations(B), 7);
     }
 
     function test_mirrorSupplyHeldByEscrow() public view {

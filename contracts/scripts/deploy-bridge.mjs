@@ -23,6 +23,13 @@ export async function factories() {
     const factory = await deploy(cl, 'MultiSeaFactory', [c.endpoint, CFG.admin, CFG.operator || acct.address, CFG.feeWallet, feed, age, BigInt(CFG.supportedChains)]);
     dep.chains[key] = { ...(dep.chains[key] || {}), factory, feed, eid: c.eid, chainId: c.chainId }; saveDep(dep);
     console.log(key, 'factory', factory);
+    { const md = await deploy(cl, 'MultiSeaMirrorDeployer', [factory]); await send(cl, factory, F.abi, 'setMirrorDeployer', [md]); dep.chains[key].mirrorDeployer = md; saveDep(dep); }
+    // One-call wiring route (LayerZero libs / executor / DVN) so the server operator can link a chain in a single tx.
+    if (c.dvn) { const others = Object.keys(CFG.chains).filter(k => k !== key);
+      await send(cl, factory, F.abi, 'setLzRoute', [{ sendLib: c.sendLib, receiveLib: c.receiveLib, executor: c.executor, dvn: c.dvn, confirmations: BigInt(c.confirmations) }, others.map(k => CFG.chains[k].eid), others.map(k => BigInt(CFG.chains[k].confirmations))]); }
+    // Server wallet (Worker BRIDGE_OPERATOR_PK): operator for listPrepaid / deployMirror / wire, and receives the prepaid gas.
+    const srv = process.env.SERVER_OPERATOR || CFG.serverOperator;
+    if (srv) { await send(cl, factory, F.abi, 'setOperator', [srv, true]); await send(cl, factory, F.abi, 'setGasWallet', [srv]); console.log(key, 'server operator', srv); }
   }
 }
 
@@ -41,7 +48,7 @@ export async function gasCosts() {
   const gp = {}; for (const k of keys) gp[k] = await createPublicClient({ transport: h(CFG.chains[k].rpc) }).getGasPrice(); // live, even in fork mode
   const usdOf = (k, units) => Number(BigInt(units) * gp[k]) / 1e18 * usd[CFG.chains[k].native];
   const remote = {}, base = {};
-  for (const k of keys) { remote[k] = usdOf(k, BigInt(UNITS.deployMirror) + peers * BigInt(UNITS.setPeer)); base[k] = usdOf(k, BigInt(UNITS.list) + peers * BigInt(UNITS.setPeer)); }
+  for (const k of keys) { const link = UNITS.wire ? BigInt(UNITS.wire) : peers * BigInt(UNITS.setPeer); remote[k] = usdOf(k, BigInt(UNITS.deployMirror) + link); base[k] = usdOf(k, BigInt(UNITS.list) + link); }
   const toWei = (usdAmt, k) => BigInt(Math.ceil(usdAmt / usd[CFG.chains[k].native] * 1e18)) * mk / 100n;
   const out = {}; for (const k of keys) { out[k] = { base: toWei(base[k], k), chains: {} }; for (const d of keys) if (d !== k) out[k].chains[CFG.chains[d].eid] = toWei(remote[d], k); }
   return { out, usd, gp, remoteUsd: remote, baseUsd: base };
@@ -93,14 +100,9 @@ export async function processListing(nativeKey, listingId) {
     console.log(key, 'mirror', ev.mirror, 'escrow', ev.escrow);
   }
   const keys = Object.keys(rec.escrows);
-  for (const a of keys) for (const b of keys) if (a !== b) {
-    const cl = clients(a, acct);
-    const cur = await cl.pub.readContract({ address: rec.escrows[a], abi: E.abi, functionName: 'peers', args: [CFG.chains[b].eid] }).catch(() => null);
-    if (cur && cur.toLowerCase() === b32(rec.escrows[b]).toLowerCase()) { console.log('peer', a, '->', b, '(already)'); continue; }
-    await send(cl, dep.chains[a].factory, F.abi, 'setPeer', [rec.escrows[a], CFG.chains[b].eid, b32(rec.escrows[b])]);
-    console.log('peer', a, '->', b);
-  }
-  if (CFG.chains[keys[0]].dvn) await lzConfig(rec.escrows, dep);
+  for (const a of keys) { const others = keys.filter(b => b !== a);
+    await send(clients(a, acct), dep.chains[a].factory, F.abi, 'wire', [rec.escrows[a], others.map(b => CFG.chains[b].eid), others.map(b => b32(rec.escrows[b]))]);
+    console.log('wired', a); }
   dep.listings[`${nativeKey}:${listingId}`] = rec; saveDep(dep); return rec;
 }
 

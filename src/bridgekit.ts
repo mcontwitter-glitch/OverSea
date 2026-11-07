@@ -1,12 +1,16 @@
 // MultiSea Bridge: lock an NFT in the source-chain escrow, LayerZero v2 releases it on the destination.
 import { createPublicClient, createWalletClient, custom, http, parseAbi, formatEther, defineChain, type Address } from 'viem';
-import { wallet, openConnect, onWallet } from './wallet';
+import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 export type BCfg = { network: string; mode: string; feeWallet: string; supportedChains: number; lzGas: number; tiers?: { min: number; max: number; eth: string; label?: string }[];
   chains: Record<string, { name: string; chainId: number; eid: number; rpc: string; explorer: string; factory: string | null; logo: string; native?: string; lzScan?: string }>;
   collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number> }[] };
 let cfgP: Promise<BCfg | null> | null = null;
-export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null));
+// Static config + collections the server auto-listed from creator prepayments (GET /bridge/collections) on mainnet.
+export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null).then(async (c: BCfg | null) => {
+  if (!c || c.network !== 'mainnet' || !API) return c;
+  try { const r = await fetch(API + '/bridge/collections'); if (r.ok) { const { collections } = await r.json(); for (const x of collections || []) if (!c.collections.some(y => y.slug === x.slug)) c.collections.push(x); } } catch {}
+  return c; }));
 export const ESCROW = parseAbi(['function quote(uint32,address,uint256,bytes) view returns (uint256,uint256)', 'function bridge(uint32,address,uint256,bytes) payable returns ((bytes32,uint64,(uint256,uint256)))', 'function platformFee() view returns (uint256)']);
 export const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function getApproved(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function approve(address,uint256)', 'function owner() view returns (address)', 'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
 export const FACTORY = parseAbi(['function listingFee(uint32[]) view returns (uint256)', 'function list(address,uint32[]) payable returns (uint256,address)', 'function prepay(bytes32,uint32[]) payable', 'function escrowOf(address) view returns (address)']);
