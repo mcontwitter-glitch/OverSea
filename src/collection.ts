@@ -12,7 +12,7 @@ type Chain = { name: string; chainId: number; native: string; openseaSlug: strin
 type Item = { id: number; name: string; image: string; attrs: [string, string][]; score: number; rank: number; color?: string };
 type Listing = { chain: string; id: number; price: number; currency: string; priceEth?: number | null; orderHash: string; protocolAddress: string; seller?: string; source?: 'opensea' | 'multisea' };
 type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
-const chains = CFG.chains as Record<string, Chain>;
+const chains = { ...CFG.chains } as Record<string, Chain>; // own copy: the Bitcoin entry added below must not leak into the shared EVM chain list (checkout, balances)
 const params = new URLSearchParams(location.search);
 const pathSlug = location.pathname.match(/^\/c\/([a-z0-9-]+)/)?.[1] || CFG.default;
 const COL = CFG.collections.find(c => c.slug === pathSlug)!;
