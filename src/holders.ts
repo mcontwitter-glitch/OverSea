@@ -37,7 +37,7 @@ function draw() {
   el.innerHTML = `<div class="gate" data-gate="${ok ? 'open' : a ? (checking ? 'checking' : 'locked') : 'noconnect'}"><h1>${esc(g.title)}</h1>
     ${previewAs ? `<p class="mut small">Previewing as ${addrHtml(previewAs)} (read-only check).</p>` : ''}
     ${!a ? `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">Connect the wallet that holds your ${esc(col.name)}. We check every chain it lives on.</p><button class="bbtn" data-act="connect">Connect wallet</button> <a class="obtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`
-      : `<div class="chk">${chips}</div>
+      : `${ok ? '' : `<div class="chk">${chips}</div>`}
     ${ok ? `<div id="holder-chat"></div>${previewAs ? '<p class="mut small">Chat is disabled in read-only address previews.</p>' : ''}<p class="ok">Welcome, ${addrHtml(a)}: you hold <b>${total}</b> ${esc(col.name)}.</p><div class="perks">${g.perks.map(p => `<div class="perk"><b>${esc(p.title)}</b><p class="mut small">${esc(p.body)}</p></div>`).join('')}</div>`
       : checking ? '<p><span class="spin"></span> Checking your wallet on every chain…</p>'
       : `<div class="lock"><h3>${esc(g.lockedText)}</h3><p class="mut">${addrHtml(a)} holds ${total} on the chains we could read${Object.values(res).includes(null) ? ' (some chains could not be read; try again)' : ''}.</p><a class="bbtn" href="/c/${slug}">Buy a ${esc(col.name)}</a></div>`}`}

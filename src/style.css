@@ -663,3 +663,5 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 @media(max-width:560px){.wbox.nftgalbox{max-width:100%;padding:16px}.nftgalgrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}
 @media(max-width:480px){.profeditor{padding:14px 0}.profeditor .fcard{padding:16px}.nftgalfilters{gap:5px}.nftgalfilters .pill{padding:5px 8px;font-size:11px}}
 .ag-growth{border-top:1px solid var(--line);padding:10px 0;font-size:13px}.ag-xphead{display:flex;justify-content:space-between}.ag-xpbar{height:7px;border:1px solid var(--line);margin:6px 0 12px}.ag-xpbar i{height:100%;display:block;background:#86efac}.ag-traitgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0}.ag-trait{border:1px solid var(--line);padding:6px;display:flex;justify-content:space-between}.ag-unlock{padding:5px 0;display:flex;justify-content:space-between;border-top:1px solid var(--line)}
+
+.gate[data-gate=open] .holderchat{height:calc(100dvh - 170px);max-height:none;min-height:420px;margin-top:10px}
