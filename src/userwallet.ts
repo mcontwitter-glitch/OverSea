@@ -2,7 +2,7 @@
 import { createWalletClient, custom, encodeFunctionData, formatUnits, getAddress, isAddress, parseAbi, parseUnits, type Hex } from 'viem';
 import { normalize } from 'viem/ens';
 import { renderSVG } from 'uqr';
-import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, API } from './wallet';
+import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, openKeyExport, API } from './wallet';
 import { chains, esc, short, logo } from './gx';
 import { loadProfile, profileAvatar, profileName } from './names';
 import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
@@ -60,7 +60,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     const total = S.balances.length && S.balances.every(c => c.usd != null) ? S.balances.reduce((n, c) => n + c.usd!, 0) : null;
     root.innerHTML = `<div class="fw uw"><section class="fwcard fwid glow"><div class="fwtop"><div class="fwnftw">${avatar ? `<img class="fwnft" src="${esc(avatar)}" alt="Profile picture">` : `<div class="fwnft uwletter">${esc(name[0].toUpperCase())}</div>`}</div><div style="min-width:0"><span class="fwtag">MultiSea profile</span><h1>${esc(name)}</h1></div></div>
       <div class="fwaddr"><span class="mono fwfull">${address}</span><button class="fwcopy" data-uw="copy" aria-label="Copy address">⧉</button></div>
-      <div class="fwacts">${me ? '<button class="fwbtn pri" data-uw="send">↗ Send</button>' : ''}<button class="fwbtn on" data-uw="receive">↙ Receive</button>${me ? '<a class="fwbtn" href="/me/profile">Edit profile</a>' : ''}</div>
+      <div class="fwacts">${me ? '<button class="fwbtn pri" data-uw="send">↗ Send</button>' : ''}<button class="fwbtn on" data-uw="receive">↙ Receive</button>${me ? `<a class="fwbtn" href="/me/profile">Edit profile</a><a class="fwbtn" href="/me">My activity</a><button class="fwbtn" data-uw="copy">Copy address</button>${wallet.provider?.isMultiSeaEmbedded ? '<button class="fwbtn" data-uw="export">🔑 Export private key</button>' : ''}` : ''}</div>
       ${!me ? `<div class="fwnote">View only.${!wallet.address ? ' <button class="lnk" data-uw="connect">Connect</button> your wallet to send from your own profile.' : ' Only the connected owner can send.'}</div>` : ''}
       ${S.receive ? `<div class="fwrecv"><div class="fwqr">${renderSVG(address, { border: 1, ecc: 'M' })}</div><div><h4>Receive NFTs and crypto</h4><div class="hint">Use this address on the supported chain. Transfers stay on the chain used by the sender.</div></div></div>` : ''}
       <p class="small"><a href="/me?as=${address}">NFT activity across chains →</a></p></section>
@@ -220,9 +220,10 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
   root.addEventListener('click', async e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-uw],[data-send],[data-more],[data-insight]'); if (!b || b.hasAttribute('disabled')) return;
     const action = b.dataset.uw;
-    if (action === 'copy') navigator.clipboard?.writeText(address).then(() => { b.textContent = '✓'; }).catch(() => {});
+    if (action === 'copy') navigator.clipboard?.writeText(address).then(() => { b.textContent = b.classList.contains('fwcopy') ? '✓' : 'Copied ✓'; }).catch(() => {});
     if (action === 'receive') { S.receive = !S.receive; draw(); }
     if (action === 'connect') openConnect();
+    if (action === 'export' && isMe() && wallet.provider?.isMultiSeaEmbedded) openKeyExport();
     if (action === 'send' || b.dataset.send) openSend(b.dataset.send);
     if (action === 'refresh') load();
     const k = b.dataset.more || b.dataset.insight;
