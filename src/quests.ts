@@ -1,12 +1,15 @@
 // Chain quests + badges: buy / list / bridge / hold on each of 5 chains (verified by the Worker from MultiSea events and
 // on-chain reads). All 5 badges unlock a Worker-signed MintPass for the rare free "Chain Voyager" mint. Also /u/<address>.
 import { parseAbi, parseEther, encodeFunctionData, type Hex } from 'viem';
-import { addrHtml } from './names';
+import { mountUserWallet } from './userwallet';
 import { wallet, onWallet, openConnect, checkApi, friendly } from './wallet';
 import { API } from './wallet';
 import { frame, getJ, esc, short, logo, chains, connectCta, fmtWei, exactInQuote, runRelay, balances } from './gx';
 const prof = location.pathname.match(/^\/u\/(0x[0-9a-fA-F]{40})$/)?.[1]?.toLowerCase();
-const el = frame(prof ? '' : 'quests', prof ? `Profile ${short(prof)}` : 'Quests');
+const page = frame(prof ? '' : 'quests', prof ? `Profile ${short(prof)}` : 'Quests', prof ? 'fwpage' : '');
+if (prof) page.innerHTML = '<div id=profile-wallet></div><div id=profile-stats></div>';
+const el = prof ? page.querySelector<HTMLElement>('#profile-stats')! : page;
+if (prof) mountUserWallet(page.querySelector<HTMLElement>('#profile-wallet')!, prof as Hex);
 const KIND: Record<string, [string, string]> = { buy: ['Buy', 'Buy any NFT on MultiSea'], list: ['List', 'List an NFT for sale'], bridge: ['Bridge', 'Bridge funds or an NFT here'], hold: ['Hold', 'Hold a MultiSea-listed NFT'] };
 const st = { q: null as any, prof: null as any, err: '', msg: '', elig: null as any, busy: '' };
 const who = () => prof || wallet.address?.toLowerCase();
@@ -20,8 +23,7 @@ function draw() {
   const q = st.q;
   if (prof) {
     const p = st.prof;
-    el.innerHTML = `<div class="ghero prof"><div class="pava">${addrHtml(prof)}</div><div><h1><span data-addr="${esc(prof)}">${short(prof)}</span></h1><p class="mut small mono">${esc(prof)}</p><p class="small"><a href="/me?as=${esc(prof)}">NFT activity across chains →</a>${wallet.address?.toLowerCase() === prof ? ' · <a href="/me/profile">Edit profile</a>' : ''}</p></div></div>
-      ${st.err ? `<p class="err">${esc(st.err)}</p>` : !p ? '<div class="spin"></div>' : `
+    el.innerHTML = `      ${st.err ? `<p class="err">${esc(st.err)}</p>` : !p ? '<div class="spin"></div>' : `
       <div class="fcard"><div class="gh">Chain badges <span class="mut small">${q.count}/${q.total}</span></div>${badgeRow(q)}${q.eligible ? '<p class="ok small">✓ All 5 badges: eligible for the rare Chain Voyager mint.</p>' : ''}<a class="obtn sm" href="/quests">Go to quests →</a></div>
       <div class="gstats"><div class="gstat"><b>${p.referrals.friends}</b><span>Friends referred</span></div><div class="gstat"><b>${p.referrals.earnings?.sales || 0}</b><span>Referred sales</span></div><div class="gstat"><b>${p.bundles.length}</b><span>Bundles listed</span></div></div>
       ${p.bundles.length ? `<div class="fcard"><div class="gh">Bundles</div>${p.bundles.map((b: any) => `<a class="frow" href="/bundles?id=${esc(b.id)}"><span><b>${esc(b.title)}</b><em>${b.legs.map((l: any) => logo(l.chain)).join('')} ${esc(b.status)}</em></span></a>`).join('')}</div>` : ''}`}`;

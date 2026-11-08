@@ -1,3 +1,4 @@
+import { makeWalletNfts } from './walletnfts.js';
 const MEDIA = /^\/media\/[0-9a-f]{64}\.(webp|png|jpg|gif)$/;
 const NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,23}$/u;
 const ID = /^\d{1,78}$/;
@@ -54,9 +55,11 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
     }
     return { nfts: [], next: null, error: 'unavailable' };
   }
+  const walletNfts = makeWalletNfts({ CFG, rpcFanout, accountNfts, bad, ADDR });
   return {
     one,
     async handle(req, env, url, p, M, body) {
+      const gallery = await walletNfts(req, env, url, p, M); if (gallery !== undefined) return gallery;
       if (p[0] === 'profiles' && M === 'GET') {
         const addresses = (url.searchParams.get('addresses') || '').split(',').filter(Boolean);
         if (!addresses.length || addresses.length > 100 || addresses.some(a => !ADDR.test(a))) bad('provide 1 to 100 valid addresses');
