@@ -2,10 +2,10 @@
 import { createWalletClient, custom, encodeFunctionData, formatUnits, getAddress, isAddress, parseAbi, parseUnits, type Hex } from 'viem';
 import { normalize } from 'viem/ens';
 import { renderSVG } from 'uqr';
-import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, overlay, API } from './wallet';
+import { wallet, onWallet, readClient, ensureChain, vchain, friendly, openConnect, API } from './wallet';
 import { chains, esc, short, logo } from './gx';
 import { loadProfile, profileAvatar, profileName } from './names';
-import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
+import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
 import { usdRates, type UsdRates } from './shell';
 import { ownedNfts, insightOn, type OwnedNft } from './insight';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
@@ -89,69 +89,133 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     return { to: n.contract as Hex, value: 0n, data: n.standard === 'erc1155' ? encodeFunctionData({ abi: ERC1155, functionName: 'safeTransferFrom', args: [address, to, BigInt(n.id), amount, '0x'] }) : encodeFunctionData({ abi: ERC721, functionName: 'safeTransferFrom', args: [address, to, BigInt(n.id)] }) };
   }
   function openSend(pre?: string) {
-    if (!isMe()) return;
-    const list = assets();
-    const m = overlay(`<div class="fwsend"><h2>Send from your wallet</h2><p class="mut small">Direct transfer on the selected chain. You pay normal gas. No bridging.</p><label class="lbl" for="uwasset">Asset</label><select id="uwasset" class="fld" data-k="asset">${list.length ? list.map(a => `<option value="${esc(a.key)}" ${a.key === pre ? 'selected' : ''}>${esc(chains[a.k].name)} · ${esc(a.label)}</option>`).join('') : '<option value="">No assets available</option>'}</select><div data-amount><label class="lbl" for="uwamt">Amount <span data-k="balance"></span></label><div class="fld"><input id="uwamt" data-k="amount" placeholder="0.0" inputmode="decimal"></div></div><label class="lbl" for="uwto">Recipient</label><div class="fld"><input id="uwto" data-k="to" placeholder="0x…, name.eth, or LIL FOOT #1204" autocomplete="off"></div><div class="fwsum" data-k="summary">Choose an asset, amount and recipient to estimate gas.</div><button class="bbtn" data-k="go" disabled>Review and send</button><div class="fwmsg" data-k="msg"></div></div>`);
-    const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLInputElement;
-    let seq = 0, sending = false, sent = false;
-    let quote: { a: Asset; tx: Tx; gas: bigint; price: bigint; fingerprint: string } | null = null;
-    const fingerprint = () => [q('asset').value, q('amount').value, q('to').value].join('|');
-    const update = async () => {
-      if (sending || sent) return;
-      const my = ++seq; quote = null; q('go').disabled = true;
-      const a = list.find(a => a.key === q('asset').value); if (!a) return;
-      const single = a.kind === 'nft' && a.nft?.standard === 'erc721';
-      (m.querySelector('[data-amount]') as HTMLElement).hidden = single;
-      q('balance').textContent = a.kind === 'nft' && !single ? 'ERC-1155' : `Balance ${fmt(a.bal, a.decimals)}`;
-      if (!q('to').value.trim()) { q('summary').textContent = 'Enter a recipient to estimate gas.'; return; }
-      const fp = fingerprint(); q('summary').textContent = 'Estimating gas…';
-      try {
-        if (!isMe()) throw Error('Connect the profile owner wallet.');
-        if (!single && !/^\d+(?:\.\d+)?$/.test(q('amount').value.trim())) throw Error('Enter a positive amount.');
-        const amount = single ? 1n : parseUnits(q('amount').value.trim(), a.decimals);
-        if (!single && (q('amount').value.split('.')[1]?.length || 0) > a.decimals) throw Error('Too many decimal places.');
-        const to = await resolveRecipient(q('to').value);
-        if (/^0x0{40}$/i.test(to) || to.toLowerCase() === address.toLowerCase()) throw Error('Enter a different, nonzero recipient.');
-        const pc = readClient(a.k);
-        const balance = a.nft?.standard === 'erc1155' ? await pc.readContract({ address: a.nft.contract as Hex, abi: ERC1155, functionName: 'balanceOf', args: [address, BigInt(a.nft.id)] }) as bigint : a.bal;
-        if (amount <= 0n || amount > balance) throw Error('Amount exceeds balance or is zero.');
-        const tx = txFor(a, to, amount);
-        const [estimate, price, native] = await Promise.all([pc.estimateGas({ account: address, ...tx }), pc.getGasPrice(), pc.getBalance({ address })]);
-        const gas = estimate * 120n / 100n;
-        if (tx.value + gas * price > native) throw Error('Insufficient funds for amount + gas on this chain.');
-        if (my !== seq || fp !== fingerprint() || !m.isConnected) return;
-        quote = { a, tx, gas, price, fingerprint: fp };
-        q('summary').innerHTML = `<div><span>Direct on</span><b>${esc(chains[a.k].name)}</b></div><div><span>Recipient</span><b class="mono" style="overflow-wrap:anywhere">${to}</b></div><div><span>Amount</span><b>${fmt(amount, a.decimals)} ${esc(a.label)}</b></div><div><span>Estimated gas</span><b>~${fmt(gas * price)} ${esc(chains[a.k].native)}</b></div>`;
-        q('go').disabled = false;
-      } catch (e) { if (my === seq) q('summary').innerHTML = `<span class="err">${esc(friendly(e, a.k))}</span>`; }
-    };
-    let timer: ReturnType<typeof setTimeout>;
-    const changed = () => { if (sending || sent) return; ++seq; quote = null; q('go').disabled = true; clearTimeout(timer); timer = setTimeout(update, 400); };
-    m.addEventListener('input', changed); m.addEventListener('change', () => { (m.querySelector('[data-amount]') as HTMLElement).hidden = list.find(a => a.key === q('asset').value)?.nft?.standard === 'erc721'; changed(); });
-    q('go').addEventListener('click', async () => {
-      if (sending || sent || !quote || quote.fingerprint !== fingerprint()) return;
-      const plan = quote; sending = true; q('go').disabled = true; ++seq;
-      m.querySelectorAll('input,select').forEach(e => (e as HTMLInputElement).disabled = true);
-      let hash: Hex | null = null;
-      try {
-        if (!isMe()) throw Error('Connect the profile owner wallet.');
-        await ensureChain(plan.a.k); if (!isMe()) throw Error('Wallet changed. Reconnect the profile owner.');
-        q('msg').textContent = 'Confirm the transfer in your wallet…';
-        hash = await createWalletClient({ chain: vchain(plan.a.k), transport: custom(wallet.provider) }).sendTransaction({ account: address, chain: vchain(plan.a.k), ...plan.tx, gas: plan.gas });
-        sent = true;
-        const link = `<a href="${chains[plan.a.k].explorer}/tx/${hash}" target="_blank" rel="noopener">View transaction ↗</a>`;
-        q('msg').innerHTML = `Submitted. ${link}`;
-        const receipt = await readClient(plan.a.k).waitForTransactionReceipt({ hash, timeout: 120000 });
-        q('msg').innerHTML = `${receipt.status === 'success' ? '✓ Sent.' : 'Transaction reverted.'} ${link}`;
-        load();
-      } catch (e) {
-        q('msg').innerHTML = `<span class="err">${esc(friendly(e, plan.a.k))}</span>${hash ? ` <a href="${chains[plan.a.k].explorer}/tx/${hash}" target="_blank" rel="noopener">View submitted transaction ↗</a>` : ''}`;
-      } finally {
-        sending = false;
-        if (!sent) { m.querySelectorAll('input,select').forEach(e => (e as HTMLInputElement).disabled = false); update(); }
+    if (!isMe() || document.querySelector('.uwsend')) return;
+    const screen = document.createElement('section');
+    screen.className = 'uwsend'; screen.setAttribute('role', 'dialog'); screen.setAttribute('aria-modal', 'true'); screen.setAttribute('aria-labelledby', 'uwsend-title');
+    screen.innerHTML = `<header class="uwsend-head"><button class="uwsend-back" aria-label="Back">←</button><h1 id="uwsend-title">Send</h1></header><main class="uwsend-body"></main>`;
+    const back = screen.querySelector('button')!, body = screen.querySelector('main')!;
+    const prev = document.activeElement as HTMLElement | null, scrollY = window.scrollY;
+    const savedBody = document.body.style.cssText, savedOverflow = document.documentElement.style.overflow;
+    document.body.style.position = 'fixed'; document.body.style.top = `-${scrollY}px`; document.body.style.width = '100%'; document.body.style.overflow = 'hidden'; document.documentElement.style.overflow = 'hidden';
+    document.body.appendChild(screen);
+    let inStep = false, busySending = false, disposeStep = () => {};
+    const close = () => { disposeStep(); screen.remove(); document.removeEventListener('keydown', keys); document.body.style.cssText = savedBody; document.documentElement.style.overflow = savedOverflow; window.scrollTo(0, scrollY); prev?.focus({ preventScroll: true }); };
+    const goBack = () => { if (busySending) return; if (inStep) showList(); else close(); };
+    const keys = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); goBack(); }
+      if (e.key === 'Tab') {
+        const focusable = [...screen.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href]')].filter(el => el.getClientRects().length);
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
       }
-    });
-    update();
+    };
+    document.addEventListener('keydown', keys); back.addEventListener('click', goBack);
+    const icon = (a: Asset) => a.kind === 'nft' ? `<span class="uwsend-icon">${imageUrl(a.nft!.image) ? `<img class="uwsend-thumb" src="${esc(imageUrl(a.nft!.image))}" alt="">` : '<span>NFT</span>'}${logo(a.k, 'uwsend-badge')}</span>` : `<span class="uwsend-icon">${a.label === 'ETH' || a.label === 'WETH' ? logo('ethereum', 'uwsend-coin') : a.label === 'APE' || a.label === 'WAPE' ? logo('apechain', 'uwsend-coin') : a.label === 'BNB' ? logo('bnb', 'uwsend-coin') : `<span class="uwsend-symbol">${esc(a.label.slice(0, 4))}</span>`}${logo(a.k, 'uwsend-badge')}</span>`;
+    const assetUsd = (a: Asset) => {
+      if (!S.rates || a.kind === 'nft') return null;
+      const px = a.kind === 'native' ? NATIVE[a.k as FwChain]?.px || 'ETH' : TOKENS[a.k as FwChain]?.find(t => t.address === a.token)?.px;
+      const rate = px ? rateOf(px, S.rates) : null;
+      return rate == null ? null : Number(formatUnits(a.bal, a.decimals)) * rate;
+    };
+    function showList() {
+      disposeStep(); inStep = false; back.setAttribute('aria-label', 'Close Send');
+      const list = assets(), tokens = list.filter(a => a.kind !== 'nft' && a.bal > 0n);
+      // Same NFT collection as the profile, including any unsupported transfer standards (shown but disabled).
+      const nfts = S.nfts || [];
+      body.innerHTML = `<div class="uwsend-content"><h2>Tokens</h2><div class="uwsend-tokens">${tokens.map(a => `<button class="uwsend-token" data-pick="${esc(a.key)}">${icon(a)}<span class="uwsend-label"><b>${esc(a.label)}</b><small>${esc(chains[a.k].name)}</small></span><span class="uwsend-value"><b>${fmt(a.bal, a.decimals)}</b><small>${fmtUsd(assetUsd(a))}</small></span><span class="uwsend-chevron">›</span></button>`).join('') || '<p class="mut">No token balances.</p>'}</div><h2 class="uwsend-nfttitle">NFTs</h2><div class="uwsend-nfts">${nfts.map(n => `<button class="uwsend-nft" data-pick="${esc(nftKey(n))}" ${list.some(a => a.key === nftKey(n)) ? '' : 'disabled title="Transfer standard unavailable"'}><span class="uwsend-art">${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="" loading="lazy">` : '<span class="uwmissing">NFT</span>'}${logo(n.chain, 'uwsend-badge')}</span><b>${esc(n.name || '#' + n.id)}</b><small>${esc(chains[n.chain]?.name || n.chain)}</small></button>`).join('')}</div>${!nfts.length ? '<p class="mut">No NFTs found.</p>' : ''}${S.note ? `<p class="uwsend-note">${esc(S.note)}</p>` : ''}</div>`;
+      body.scrollTop = 0;
+      body.querySelectorAll<HTMLButtonElement>('[data-pick]').forEach(b => b.addEventListener('click', () => { const a = list.find(a => a.key === b.dataset.pick); if (a) showStep(a); }));
+      back.focus();
+    }
+    function showStep(a: Asset) {
+      disposeStep(); inStep = true; back.setAttribute('aria-label', 'Back to assets');
+      const single = a.kind === 'nft' && a.nft?.standard === 'erc721';
+      body.innerHTML = `<div class="uwsend-content uwsend-step fwsend"><div class="uwsend-selected">${icon(a)}<div><b>${esc(a.label)}</b><small>${esc(chains[a.k].name)}</small></div><span class="uwsend-value"><b>${a.kind === 'nft' ? 'NFT' : fmt(a.bal, a.decimals)}</b>${a.kind !== 'nft' ? `<small>${fmtUsd(assetUsd(a))}</small>` : ''}</span></div><p class="uwsend-note">Direct transfer on ${esc(chains[a.k].name)}. You pay normal gas. No bridging.</p><div data-amount ${single ? 'hidden' : ''}><label class="lbl" for="uwamt">Amount <span data-k="balance"></span></label><div class="fld"><input id="uwamt" data-k="amount" placeholder="0.0" inputmode="decimal" autocomplete="off"><button type="button" class="uwsend-max" data-k="max">Max</button></div></div><label class="lbl" for="uwto">Recipient</label><div class="fld"><input id="uwto" data-k="to" placeholder="0x…, name.eth, LIL FOOT #N" autocomplete="off" spellcheck="false"></div><div class="fwsum" data-k="summary" aria-live="polite">Enter an amount and recipient to estimate gas.</div><button class="bbtn" data-k="go" disabled>Send</button><div class="fwmsg" data-k="msg" role="status"></div></div>`;
+      body.scrollTop = 0;
+      const m = body.querySelector<HTMLElement>('.uwsend-step')!;
+      const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLInputElement;
+      let seq = 0, sending = false, sent = false;
+      let quote: { a: Asset; tx: Tx; gas: bigint; price: bigint; fingerprint: string } | null = null;
+      const fingerprint = () => [a.key, q('amount').value, q('to').value].join('|');
+      const update = async () => {
+        if (sending || sent || !m.isConnected) return;
+        const my = ++seq; quote = null; q('go').disabled = true;
+        const single = a.kind === 'nft' && a.nft?.standard === 'erc721';
+        (m.querySelector('[data-amount]') as HTMLElement).hidden = single;
+        q('balance').textContent = a.kind === 'nft' && !single ? 'ERC-1155' : `Balance ${fmt(a.bal, a.decimals)}`;
+        if (!q('to').value.trim()) { q('summary').textContent = 'Enter a recipient to estimate gas.'; return; }
+        const fp = fingerprint(); q('summary').textContent = 'Estimating gas…';
+        try {
+          if (!isMe()) throw Error('Connect the profile owner wallet.');
+          if (!single && !/^\d+(?:\.\d+)?$/.test(q('amount').value.trim())) throw Error('Enter a positive amount.');
+          const amount = single ? 1n : parseUnits(q('amount').value.trim(), a.decimals);
+          if (!single && (q('amount').value.split('.')[1]?.length || 0) > a.decimals) throw Error('Too many decimal places.');
+          const to = await resolveRecipient(q('to').value);
+          if (/^0x0{40}$/i.test(to) || to.toLowerCase() === address.toLowerCase()) throw Error('Enter a different, nonzero recipient.');
+          const pc = readClient(a.k);
+          const balance = a.nft?.standard === 'erc1155' ? await pc.readContract({ address: a.nft.contract as Hex, abi: ERC1155, functionName: 'balanceOf', args: [address, BigInt(a.nft.id)] }) as bigint : a.bal;
+          if (amount <= 0n || amount > balance) throw Error('Amount exceeds balance or is zero.');
+          const tx = txFor(a, to, amount);
+          const [estimate, price, native] = await Promise.all([pc.estimateGas({ account: address, ...tx }), pc.getGasPrice(), pc.getBalance({ address })]);
+          const gas = estimate * 120n / 100n;
+          if (tx.value + gas * price > native) throw Error('Insufficient funds for amount + gas on this chain.');
+          if (my !== seq || fp !== fingerprint() || !m.isConnected) return;
+          quote = { a, tx, gas, price, fingerprint: fp };
+          q('summary').innerHTML = `<div><span>Direct on</span><b>${esc(chains[a.k].name)}</b></div><div><span>Recipient</span><b class="mono" style="overflow-wrap:anywhere">${to}</b></div><div><span>Amount</span><b>${fmt(amount, a.decimals)} ${esc(a.label)}</b></div><div><span>Estimated gas</span><b>~${fmt(gas * price)} ${esc(chains[a.k].native)}</b></div>`;
+          q('go').disabled = false;
+        } catch (e) { if (my === seq) q('summary').innerHTML = `<span class="err">${esc(friendly(e, a.k))}</span>`; }
+      };
+      let timer: ReturnType<typeof setTimeout>;
+      const changed = () => { if (sending || sent || !m.isConnected) return; ++seq; quote = null; q('go').disabled = true; clearTimeout(timer); timer = setTimeout(update, 400); };
+      m.addEventListener('input', changed);
+      disposeStep = () => { ++seq; clearTimeout(timer); };
+      q('max').addEventListener('click', async () => {
+        if (sending || sent) return;
+        const my = ++seq; quote = null; q('go').disabled = true; q('max').disabled = true; clearTimeout(timer);
+        try {
+          const pc = readClient(a.k); let balance = a.bal;
+          if (a.kind === 'native') {
+            const to = await resolveRecipient(q('to').value);
+            if (/^0x0{40}$/i.test(to) || to.toLowerCase() === address.toLowerCase()) throw Error('Enter a different, nonzero recipient.');
+            const [native, estimate, price] = await Promise.all([pc.getBalance({ address }), pc.estimateGas({ account: address, to, value: 1n }), pc.getGasPrice()]);
+            // Reserve buffered gas rather than offering the entire native balance.
+            const reserve = estimate * 150n / 100n * price; balance = native > reserve ? native - reserve : 0n;
+            if (!balance) throw Error('Not enough native coin to cover gas.');
+          } else if (a.nft?.standard === 'erc1155') balance = await pc.readContract({ address: a.nft.contract as Hex, abi: ERC1155, functionName: 'balanceOf', args: [address, BigInt(a.nft.id)] }) as bigint;
+          if (my !== seq || !m.isConnected) return;
+          q('amount').value = formatUnits(balance, a.decimals); await update();
+        } catch (e) { if (my === seq && m.isConnected) q('summary').innerHTML = `<span class="err">${esc(friendly(e, a.k))}</span>`; }
+        finally { if (m.isConnected) q('max').disabled = false; }
+      });
+      q('go').addEventListener('click', async () => {
+        if (sending || sent || !quote || quote.fingerprint !== fingerprint()) return;
+        const plan = quote; sending = true; busySending = true; back.disabled = true; q('go').disabled = true; ++seq;
+        q('max').disabled = true;
+        m.querySelectorAll('input,select').forEach(e => (e as HTMLInputElement).disabled = true);
+        let hash: Hex | null = null;
+        try {
+          if (!isMe()) throw Error('Connect the profile owner wallet.');
+          await ensureChain(plan.a.k); if (!isMe()) throw Error('Wallet changed. Reconnect the profile owner.');
+          q('msg').textContent = 'Confirm the transfer in your wallet…';
+          hash = await createWalletClient({ chain: vchain(plan.a.k), transport: custom(wallet.provider) }).sendTransaction({ account: address, chain: vchain(plan.a.k), ...plan.tx, gas: plan.gas });
+          sent = true;
+          const link = `<a href="${chains[plan.a.k].explorer}/tx/${hash}" target="_blank" rel="noopener">View transaction ↗</a>`;
+          q('msg').innerHTML = `Submitted. ${link}`;
+          const receipt = await readClient(plan.a.k).waitForTransactionReceipt({ hash, timeout: 120000 });
+          q('msg').innerHTML = `${receipt.status === 'success' ? '✓ Sent.' : 'Transaction reverted.'} ${link}`;
+          load();
+        } catch (e) {
+          q('msg').innerHTML = `<span class="err">${esc(friendly(e, plan.a.k))}</span>${hash ? ` <a href="${chains[plan.a.k].explorer}/tx/${hash}" target="_blank" rel="noopener">View submitted transaction ↗</a>` : ''}`;
+        } finally {
+          sending = false; busySending = false; back.disabled = false;
+          if (!sent) { q('max').disabled = false; m.querySelectorAll('input,select').forEach(e => (e as HTMLInputElement).disabled = false); update(); }
+        }
+      });
+      update(); back.focus();
+    }
+    const selected = pre && assets().find(a => a.key === pre);
+    if (selected) showStep(selected); else showList();
   }
   root.addEventListener('click', async e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-uw],[data-send],[data-more],[data-insight]'); if (!b || b.hasAttribute('disabled')) return;
