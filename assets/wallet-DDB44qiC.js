@@ -1,0 +1,1 @@
+export{_ as overlay,v as readClient}from"./wallet-BBsdDGC4.js";
