@@ -39,7 +39,7 @@ export function makeBtcRoutes({ bad }) {
     // ---- BIP-322 sign-in ----
     if (p[1] === 'auth' && M === 'POST' && p[2] === 'nonce') { const nonce = rand(12); await env.NONCES.put('btcn:' + nonce, '1', { expirationTtl: 600 }); return { nonce, message: `Sign in to MultiSea\nNonce: ${nonce}` }; }
     if (p[1] === 'auth' && M === 'POST' && p[2] === 'verify') {
-      const { address, message, signature, net } = await body(); const n = NETS.has(net) ? net : 'signet';
+      const { address, message, signature, net } = await body(); const n = NETS.has(net) ? net : 'mainnet';
       if (typeof message !== 'string' || message.length > 500 || typeof signature !== 'string' || signature.length > 400 || !B.isAddr(address, n)) bad('invalid input');
       const nonce = /Nonce: ([0-9a-f]{24})/.exec(message)?.[1]; if (!nonce || !(await env.NONCES.get('btcn:' + nonce))) bad('nonce expired', 401);
       await env.NONCES.delete('btcn:' + nonce);

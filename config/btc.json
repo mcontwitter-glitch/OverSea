@@ -3,50 +3,31 @@
   "mainnetTrading": true,
   "defaultNetwork": "mainnet",
   "networks": [
-    "signet",
-    "testnet",
     "mainnet"
   ],
   "marketplaceFeeBps": 50,
   "feeAddress": {
-    "_comment": "BTC marketplace fee address set by BIG on 2026-11-02. Mainnet only; signet/testnet stay empty.",
-    "mainnet": "bc1q7nch3tkflkrxettnq3dtza4hu9jlhcgwavle4m",
-    "signet": "",
-    "testnet": ""
+    "_comment": "BTC marketplace fee address set by BIG on 2026-11-02.",
+    "mainnet": "bc1q7nch3tkflkrxettnq3dtza4hu9jlhcgwavle4m"
   },
   "dustSats": 546,
   "dummySats": 600,
   "dummyMaxSats": 1000,
   "mempool": {
-    "mainnet": "https://mempool.space/api",
-    "signet": "https://mempool.space/signet/api",
-    "testnet": "https://mempool.space/testnet/api"
+    "mainnet": "https://mempool.space/api"
   },
   "explorer": {
-    "mainnet": "https://mempool.space",
-    "signet": "https://mempool.space/signet",
-    "testnet": "https://mempool.space/testnet"
+    "mainnet": "https://mempool.space"
   },
   "ordExplorer": {
-    "mainnet": "https://ordinals.com",
-    "signet": "",
-    "testnet": ""
+    "mainnet": "https://ordinals.com"
   },
   "indexer": {
-    "_comment": "mainnet: Ordinals Wallet public API (no key, CORS *) + UniSat static content mirror. signet/testnet: an ord server URL, proxied by the Worker (ORD_SIGNET_URL / ORD_TESTNET_URL vars) - none is configured yet.",
+    "_comment": "mainnet: Ordinals Wallet public API (no key, CORS *) + UniSat static content mirror.",
     "mainnet": "https://turbo.ordinalswallet.com",
     "content": "https://static.unisat.io/content/",
     "preview": "https://static.unisat.io/preview/",
     "_content": "Inscription bytes/previews from UniSat's public static mirror (no key, CORS *); ordinals.com/content is behind a Cloudflare challenge for some clients."
   },
-  "featuredCollections": [
-    "nodemonkes",
-    "bitcoin-puppets",
-    "quantum_cats",
-    "runestone",
-    "bitmap",
-    "omb",
-    "bitcoin-frogs",
-    "sub-10k"
-  ]
+  "featuredCollections": []
 }

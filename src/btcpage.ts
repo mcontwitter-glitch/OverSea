@@ -1,4 +1,4 @@
-// MultiSea Bitcoin: Ordinals browse (mainnet data, read-only) + non-custodial PSBT marketplace (signet/testnet by default).
+// MultiSea Bitcoin: Ordinals browse (mainnet data, read-only) + non-custodial PSBT marketplace (mainnet).
 // Routes: /btc  /btc/c/<slug>  /btc/i/<inscriptionId>  /btc/me
 import { navHtml, bindNav, esc } from './shell';
 import { overlay, checkApi, API } from './wallet';
@@ -19,7 +19,7 @@ const thumb = (id: string, ct = 'image/png', cls = 'pix') => /^image\//.test(ct)
 // ---- shared chrome ----
 function bar() {
   const n = net();
-  return `<div class="btcbar"><div class="btcnet" role="group" aria-label="Bitcoin network">${(D.CFG.networks as D.Net[]).map(k => `<button class="chip ${n === k ? 'on' : ''}" data-net="${k}"><img class="cl" src="/logos/bitcoin.svg" alt="">${D.netLabel(k)}${k === 'mainnet' && !D.mainnetOn() ? '<em>browse only</em>' : ''}</button>`).join('')}</div>
+  return `<div class="btcbar">${D.CFG.networks.length < 2 ? '' : `<div class="btcnet" role="group" aria-label="Bitcoin network">${(D.CFG.networks as D.Net[]).map(k => `<button class="chip ${n === k ? 'on' : ''}" data-net="${k}"><img class="cl" src="/logos/bitcoin.svg" alt="">${D.netLabel(k)}${k === 'mainnet' && !D.mainnetOn() ? '<em>browse only</em>' : ''}</button>`).join('')}</div>`}
    <a class="btcfee" href="${D.explorer(n)}" target="_blank" rel="noopener" title="mempool.space recommended fee rates (${D.netLabel(n)})">⛽ ${fee ? `<b>${fee.halfHourFee}</b> sat/vB <em>· fast ${fee.fastestFee} · eco ${fee.economyFee}</em>` : '…'}</a></div>
    ${!D.canTrade(n) ? '<div class="soon small">Mainnet trading is OFF (config <code>btc.json → mainnetTrading</code>). Browsing only. Switch to Signet or Testnet to try listing and buying.</div>' : ''}${demo() ? demoBanner : ''}`;
 }
@@ -78,7 +78,7 @@ const collCard = (c: D.Coll) => `<a class="ccard2 btcc" href="/btc/c/${esc(c.slu
   <div class="cc2stats"><div><span>Floor</span><b>${c.floor ? D.fmtBtc(c.floor) : '-'}</b></div><div><span>Floor USD</span><b>${c.floor && usd ? D.fmtUsd(c.floor, usd) : '-'}</b></div><div><span>Supply</span><b>${c.supply.toLocaleString()}</b></div><div><span>Listed</span><b>${c.listed.toLocaleString()}</b></div></div></div></a>`;
 async function pageHome() {
   shell('home', `<section class="btchero"><h1><img src="/logos/bitcoin.svg" width="34" height="34" alt=""> Bitcoin Ordinals</h1><p class="mut">Non-custodial: you keep your inscriptions until a buyer pays. Listings are signed PSBTs (SIGHASH_SINGLE|ANYONECANPAY); every purchase is checked against the indexer so the inscription lands at offset 0 in your wallet.</p></section><div class="content" id="bl">${spin()}</div>`);
-  try { const l = await D.featured(); document.getElementById('bl')!.innerHTML = `<div class="cgrid2">${l.map(collCard).join('')}</div><p class="mut small src">Collections, floors and supply: Ordinals Wallet public API (Bitcoin mainnet, read-only). USD: mempool.space.</p>`; }
+  try { const l = await D.featured(); document.getElementById('bl')!.innerHTML = `${l.length ? `<div class="cgrid2">${l.map(collCard).join('')}</div>` : '<p class="mut">No Ordinals collections launched on MultiSea yet.</p>'}<p class="mut small src">Collections, floors and supply: Ordinals Wallet public API (Bitcoin mainnet, read-only). USD: mempool.space.</p>`; }
   catch (e) { document.getElementById('bl')!.innerHTML = err(e); }
 }
 async function mineListings() { const n = net(); return [...(demo() ? demoListings(n) : []), ...await D.listings(n).catch(() => [])]; }
@@ -86,6 +86,7 @@ async function pageColl(slug: string) {
   shell('coll', `<div class="content" id="bc">${spin()}</div>`);
   const el = document.getElementById('bc')!;
   try {
+    if (!D.CFG.featuredCollections.includes(slug)) { el.innerHTML = '<p class="mut">Collection not found.</p>'; return; }
     const c = await D.collection(slug); const L = (await mineListings()).filter(l => l.collection === slug);
     el.innerHTML = `<div class="btchead"><img class="pix av" src="${esc(c.icon)}" alt=""><div><h1>${esc(c.name)} <img class="cl" src="/logos/bitcoin.svg" alt="" title="Bitcoin"></h1><p class="mut small">${esc(c.description || 'Bitcoin Ordinals collection')}</p></div></div>
      <div class="stats btcstats"><div class="stat">${c.floor ? D.price3(c.floor, usd) : '<b>-</b>'}<span>Market floor</span></div><div class="stat"><b>${c.volume ? D.fmtBtc(c.volume) : '-'}</b><small class="usd">${c.volume && usd ? D.fmtUsd(c.volume, usd) : ''}</small><span>Total volume</span></div><div class="stat"><b>${c.supply.toLocaleString()}</b><span>Supply</span></div><div class="stat"><b>${L.length}</b><span>MultiSea listings (${D.netLabel(net())})</span></div><div class="stat"><b>${c.listed}</b><span>Listed elsewhere</span></div></div>
