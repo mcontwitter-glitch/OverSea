@@ -129,7 +129,7 @@ export function openWalletMenu(onDisconnect?: () => void) {
   const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all"><span data-addr="${esc(wallet.address)}">${esc(wallet.address)}</span></p>
     <div data-wm="bal" class="wbalbox"><span class="mut small"><span class="spin"></span> Loading balance…</span></div>
     <div style="display:grid;gap:10px;margin-top:14px">
-      <a class="bbtn ghost" href="/me/profile">Edit profile</a><a class="bbtn ghost" href="/holders">Holder area</a>
+      <a class="bbtn ghost" href="/u/${esc(wallet.address.toLowerCase())}">My profile</a><a class="bbtn ghost" href="/me/profile">Edit profile</a><a class="bbtn ghost" href="/holders">Holder area</a>
       <button class="bbtn ghost" data-wm="out">Disconnect</button></div>`);
   m.querySelector('[data-wm=out]')!.addEventListener('click', () => { m.remove(); disconnect(); onDisconnect?.(); });
   const addr = wallet.address, box = m.querySelector('[data-wm=bal]') as HTMLElement;
