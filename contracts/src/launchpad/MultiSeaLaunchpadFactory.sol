@@ -17,7 +17,6 @@ interface IOmniEscrowRegistry { function register(bytes32 cid, address drop) ext
 ///         reused for a second deploy, or applied to a different config.
 ///         Factory owner is meant to be a TimelockController (proposer = MultiSea admin multisig) so fee changes and
 ///         implementation upgrades for FUTURE drops are delayed and public. Existing drops are never affected.
-/// @dev    PREVIEW / UNAUDITED. Not deployed anywhere.
 contract MultiSeaLaunchpadFactory is Ownable2Step, EIP712 {
     uint16 public constant MAX_FEE_BPS = 1500; // hard cap 15% on primary sales
 

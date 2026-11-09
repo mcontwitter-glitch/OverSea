@@ -222,7 +222,7 @@ async function rpcBalance(chainKey, addr) {
 }
 
 let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks: { onSale: (env, s) => growth().recordSale(env, s), onList: (env, a, k) => growth().questEvent(env, a, k, 'list') } }));
-// Launchpad (PREVIEW): factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
+// Launchpad: factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
 const isDropOnChain = async (k, factory, drop) => { const c = chains[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
   return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
 let _launchpad; let _launchpadT;

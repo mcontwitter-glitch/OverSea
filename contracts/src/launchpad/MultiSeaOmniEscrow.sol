@@ -44,7 +44,6 @@ interface IOmniDrop {
 ///         when minters on different chains mint at the same moment: LayerZero deliveries to the hub execute one at a time.
 ///         Fan-out legs that cannot be paid from the budget are recorded as OWED and can be resent by anyone (retryLeg),
 ///         so a partial broadcast is never lost and never creates a second Active copy (COPY only ever mints into escrow).
-/// @dev    PREVIEW / UNAUDITED. Not deployed anywhere.
 contract MultiSeaOmniEscrow is OApp, ReentrancyGuard {
     using OptionsBuilder for bytes;
 

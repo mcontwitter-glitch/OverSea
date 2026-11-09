@@ -1,4 +1,4 @@
-// MultiSea Launchpad (PREVIEW, not deployed): drop submissions -> admin review -> EIP-712 deploy approval -> live drop.
+// MultiSea Launchpad: drop submissions -> admin review -> EIP-712 deploy approval -> live drop.
 // KV keys (COLLECTIONS namespace):
 //   lpending:<slug>  submitted drop awaiting review      ldrop:<slug>   approved / deployed drop (public)
 //   lrejected:<slug> rejected drop (+reason)            lallow:<slug>:<phase>  allowlist addresses (lowercase, sorted)

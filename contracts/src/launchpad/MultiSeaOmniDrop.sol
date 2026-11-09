@@ -30,7 +30,7 @@ interface IOmniEscrow {
 ///           rejects (sold out / wallet limit) -> refund. The hub processes requests one at a time, so concurrent mints
 ///           on different chains can never get the same id or exceed maxSupply.
 ///         - Moving: moveTo() locks the token in the local escrow and LayerZero releases it on the destination.
-/// @dev    PREVIEW / UNAUDITED. Not deployed anywhere. OZ ERC721 (not 721A): ids arrive out of order on non-hub chains.
+/// @dev    OZ ERC721 (not 721A): ids arrive out of order on non-hub chains.
 contract MultiSeaOmniDrop is ERC721Upgradeable, ERC2981, ReentrancyGuard {
     using Strings for uint256;
 
