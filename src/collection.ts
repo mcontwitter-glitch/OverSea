@@ -98,6 +98,8 @@ async function loadLiveListings() {
     const eth = (l: Listing) => ({ ...l, priceEth: /^W?ETH$/.test(l.currency) ? l.price : rate[l.currency] ? l.price * rate[l.currency] : null });
     fillMap([...(os.length ? os : listings).map(l => eth({ ...l, source: 'opensea' as const })), ...nat.map(l => eth({ ...l, source: 'multisea' as const }))]);
     ordById.forEach((o, id) => { if (o.priceSats != null) addOrdListing(id, o); });
+    // The header floor follows the live listings the grid shows, not the build-time snapshot.
+    if (summary) { let f: Listing | null = null; listMap.forEach(l => { if (l.priceEth != null && (!f || l.priceEth < f.priceEth!)) f = l; }); summary.floor = f; }
   } catch {}
 }
 const deployedChains = COL.deployments.map(d => d.chain);
