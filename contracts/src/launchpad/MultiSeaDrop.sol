@@ -15,7 +15,6 @@ import { MerkleProof } from "@openzeppelin/contracts/utils/cryptography/MerklePr
 ///         - ERC-2981 royalties, reveal (pre-reveal URI -> base URI), permanent metadata freeze, pause.
 ///         - The creator owns the drop (2-step ownership transfer). The platform cannot touch funds or metadata;
 ///           it only receives its fee share.
-/// @dev    PREVIEW / UNAUDITED. Not deployed anywhere. Requires an external audit before any mainnet use.
 contract MultiSeaDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     struct Phase {
         uint64 start;          // unix seconds
