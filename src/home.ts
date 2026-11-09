@@ -16,6 +16,7 @@ async function staticCards() {
   }));
 }
 const tnum = (x?: string) => { const m = (x || '').replace(/[$,]/g, '').match(/[\d.]+/); return m ? +m[0] : -1; };
+const SORTS = [['featured', 'Featured'], ['volume', 'Volume'], ['floor', 'Floor'], ['newest', 'Newest']];
 let q = '', sort = 'featured', showAll = false, chain = new URLSearchParams(location.search).get('chain') || ''; const LIMIT = 10;
 // Chain filter. Bitcoin is not an EVM deployment chain in collections.json: its chip shows Ordinals collections (src/btcpage.ts).
 let btcCards: string | null = null;
@@ -51,11 +52,11 @@ function render() {
   <header class="mshero"><picture><source srcset="${AV['brand/banner-900.webp']} 900w, ${AV['brand/banner-1500.webp']} 1500w, ${AV['brand/banner-2048.webp']} 2048w" type="image/webp" sizes="100vw"><img src="${AV['brand/banner-1500.jpg']}" alt="MultiSea" width="1500" height="502" fetchpriority="high"></picture></header>
   <section class="hero3"><p class="h3k">ONE PLATFORM</p><h1 class="h3t"><span>OMNI CHAIN</span><span class="grad">COLLECTIONS</span></h1>
    <p class="h3s">Browse, discover and trade NFT collections across all major blockchains in one place.</p>
-   <div class="h3b"><a class="bbtn big" href="#collections" data-act="explore">Explore collections</a><a class="obtn big" href="/submit">Submit a collection</a></div></section>
+   <div class="h3b"><a class="bbtn big" href="#collections" data-act="explore">Explore collections</a><a class="obtn big" href="/launchpad?tab=live">Minting</a></div></section>
   <section class="home2" id="collections">${is404 ? '<p class="soon">Page not found. Here are our collections:</p>' : ''}
    <div class="h2row"><div><h2>Collections</h2><p class="mut">Discover omni chain NFT collections from across all supported networks.</p></div><a class="obtn pill" href="/submit">+ Submit a collection</a></div>
    <div class="ctools"><label class="csearch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="cq" type="search" placeholder="Search collections..." value="${esc(q)}"></label>
-    <select id="csort" aria-label="Sort collections">${[['featured', 'Featured'], ['volume', 'Volume'], ['floor', 'Floor'], ['newest', 'Newest']].map(([v, t]) => `<option value="${v}" ${sort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div class="csort" id="csort"><button type="button" class="csbtn" aria-haspopup="listbox" aria-expanded="false" aria-label="Sort collections"><span>${SORTS.find(x => x[0] === sort)![1]}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><ul class="csmenu" role="listbox" tabindex="-1" hidden>${SORTS.map(([v, t]) => `<li role="option" data-v="${v}" aria-selected="${sort === v}">${t}<i aria-hidden="true">✓</i></li>`).join('')}</ul></div></div>
    ${chainChips()}<div id="cgridwrap">${gridHtml()}</div>
    ${apiReady ? '' : '<p class="mut small">Community collections will appear here once the MultiSea API is online.</p>'}
   </section>
@@ -65,9 +66,25 @@ function render() {
   bindHome();
 }
 function regrid() { const w = document.getElementById('cgridwrap'); if (w) w.innerHTML = gridHtml(); }
+function bindSort(so: HTMLElement) {
+  const btn = so.querySelector<HTMLButtonElement>('.csbtn')!, menu = so.querySelector<HTMLElement>('.csmenu')!, opts = [...menu.querySelectorAll<HTMLElement>('li')];
+  let i = 0; const hi = (n: number) => { i = (n + opts.length) % opts.length; opts.forEach((o, k) => o.classList.toggle('hi', k === i)); };
+  const close = (focus = false) => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside, true); if (focus) btn.focus(); };
+  const outside = (e: Event) => { if (!so.contains(e.target as Node)) close(); };
+  const open = () => { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); hi(Math.max(0, opts.findIndex(o => o.dataset.v === sort))); menu.focus(); document.addEventListener('pointerdown', outside, true); };
+  const pick = (o: HTMLElement) => { sort = o.dataset.v!; opts.forEach(x => x.setAttribute('aria-selected', String(x === o))); btn.querySelector('span')!.textContent = o.textContent!.replace('✓', ''); close(true); regrid(); };
+  btn.addEventListener('click', () => menu.hidden ? open() : close());
+  btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); } });
+  menu.addEventListener('click', e => { const o = (e.target as HTMLElement).closest<HTMLElement>('li'); if (o) pick(o); });
+  menu.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') hi(i + 1); else if (e.key === 'ArrowUp') hi(i - 1); else if (e.key === 'Home') hi(0); else if (e.key === 'End') hi(opts.length - 1);
+    else if (e.key === 'Enter' || e.key === ' ') pick(opts[i]); else if (e.key === 'Escape' || e.key === 'Tab') { close(e.key === 'Escape'); if (e.key === 'Tab') return; } else return;
+    e.preventDefault();
+  });
+}
 function bindHome() {
   const qi = document.getElementById('cq') as HTMLInputElement | null; qi?.addEventListener('input', () => { q = qi.value; regrid(); });
-  const so = document.getElementById('csort') as HTMLSelectElement | null; so?.addEventListener('change', () => { sort = so.value; regrid(); });
+  const so = document.getElementById('csort'); if (so) bindSort(so);
   app.querySelectorAll('.hchips [data-chain]').forEach(b => b.addEventListener('click', () => { chain = (b as HTMLElement).dataset.chain!; app.querySelectorAll('.hchips .chip').forEach(x => x.classList.toggle('on', x === b)); const u = new URL(location.href); chain ? u.searchParams.set('chain', chain) : u.searchParams.delete('chain'); history.replaceState(null, '', u); regrid(); }));
   app.querySelector('.home2')?.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="all"]')) { showAll = true; regrid(); } });
   app.querySelector('[data-act="explore"]')?.addEventListener('click', e => { e.preventDefault(); document.getElementById('collections')?.scrollIntoView({ behavior: 'smooth' }); });

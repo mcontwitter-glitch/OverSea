@@ -41,7 +41,7 @@ const allDrops = () => [...remote, ...demoAndLocal2().filter(x => !remote.some(r
 const findDrop = (s: string) => remote.find(d => d.slug === s) || (AGENT_DEMO && s === AGENT_DEMO.slug ? AGENT_DEMO : null) || findLocal(s);
 
 // ---------------- list ----------------
-let tab: 'live' | 'upcoming' | 'ended' = 'live';
+let tab: 'live' | 'upcoming' | 'ended' = (['upcoming', 'ended'] as const).find(t => t === new URLSearchParams(location.search).get('tab')) || 'live';
 const SOON = '<span class="ldst soon">Coming soon</span>';
 const fmtStart = (s: number) => new Date(s * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 function stateChip(d: Drop) {
@@ -69,7 +69,7 @@ function listPage() {
     <a class="bbtn sm" href="/launchpad/create">+ Create a drop</a></div>
    ${LP_LIVE ? (drops.some(d => d.demo) ? '<div class="ldnote">Drops tagged <b>Demo</b> (LIL FOOTS art) are examples: minting them is a stub. Every other drop is a real on-chain contract.</div>' : '') : '<div class="ldnote">Preview: launchpad contracts are not deployed yet. Drops below are <b>demo data</b> (LIL FOOTS art) and minting is a stub.</div>'}
    <div class="ldtabs" role="tablist">${(['live', 'upcoming', 'ended'] as const).map(k => `<button role="tab" class="ldtab ${tab === k ? 'on' : ''}" data-tab="${k}">${k[0].toUpperCase() + k.slice(1)} <span>${by(k).length}</span></button>`).join('')}</div>
-   <div class="ldgrid">${l.length ? l.map(dropCard).join('') : `<p class="mut">No ${tab} drops right now.</p>`}</div>
+   <div class="ldgrid">${l.length ? l.map(dropCard).join('') : `<p class="mut">${tab === 'live' ? 'No collections minting right now.' : `No ${tab} drops right now.`}</p>`}</div>
    ${mine.length ? `<div class="gh pad">Your submissions (this browser)</div><div class="ldmine">${mine.map(d => `<div class="qcard"><b>${esc(d.name)}</b> <span class="ldtag ${d.status}">${esc(d.status)}</span><div class="mut small">${d.chains.map(c => esc(chains[c.chain]?.name)).join(', ')} · ${d.maxSupply.toLocaleString()} supply · submitted ${esc(d.submittedAt?.slice(0, 10))}</div></div>`).join('')}</div>` : ''}
   </section>`;
 }

@@ -174,7 +174,13 @@ a.chb:hover .chc{border-color:#45bdfa;box-shadow:0 0 20px #45bdfa77}
 .csearch{flex:1;max-width:340px;display:flex;align-items:center;gap:8px;background:#0d1117;border:1px solid #262626;border-radius:10px;padding:0 12px}
 .csearch svg{width:18px;height:18px;fill:none;stroke:#8a8a8a;stroke-width:2;stroke-linecap:round}
 .csearch input{flex:1;background:none;border:0;color:#fff;padding:10px 0;font-size:14px;outline:none!important;box-shadow:none!important}
-#csort{margin-left:auto;background:#0d1117;color:#fff;border:1px solid #262626;border-radius:10px;padding:9px 12px;font-size:14px}
+.csort{margin-left:auto;position:relative}
+.csbtn{display:flex;align-items:center;gap:8px;background:#0d1117;color:#fff;border:1px solid #262626;border-radius:10px;padding:9px 12px;font-size:14px;cursor:pointer;font:inherit}
+.csbtn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2}.csbtn[aria-expanded=true]{border-color:#45bdfa}
+.csmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:160px;margin:0;padding:6px;list-style:none;background:#0b0f17;border:1px solid #1f2937;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.5);outline:none}
+.csmenu li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;color:#d1d5db;font-size:14px;cursor:pointer}
+.csmenu li i{font-style:normal;visibility:hidden}.csmenu li.hi,.csmenu li:hover{background:#151b26}
+.csmenu li[aria-selected=true]{color:#45bdfa;font-weight:600}.csmenu li[aria-selected=true] i{visibility:visible}
 .cgrid2{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
 .ccard2{display:block;background:#0b0f15;border:1px solid #1e2a36;border-radius:14px;overflow:hidden;color:#fff;text-decoration:none;transition:border-color .15s,box-shadow .15s,transform .15s}
 .ccard2:hover{border-color:#45bdfa88;box-shadow:0 0 18px #2684ce33;transform:translateY(-2px)}
