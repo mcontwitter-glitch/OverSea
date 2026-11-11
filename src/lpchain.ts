@@ -4,7 +4,7 @@
 //  - collectors: mint (single chain: price × qty; multichain: quoteMint, incl. hub value from a non-hub chain)
 import LPC from '../config/launchpad.json';
 import ABI from './lpabi.json';
-import { createWalletClient, custom, decodeEventLog, type Address, type Abi } from 'viem';
+import { createWalletClient, custom, decodeEventLog, getContractAddress, type Address, type Abi } from 'viem';
 import { wallet, ensureChain, readClient, vchain } from './wallet';
 import { api } from './auth';
 
@@ -15,6 +15,7 @@ export const escrowOn = (k: string): Address | null => LP.omniEscrows?.[k] || nu
 export const HUB: string = LP.hubChain;
 const F = ABI.factory as Abi, D = ABI.drop as Abi, O = ABI.omni as Abi;
 const ESC = [{ type: 'function', name: 'quoteHubValue', stateMutability: 'view', inputs: [{ type: 'bytes32' }, { type: 'uint32' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] }] as const;
+const FX = [{ type: 'function', name: 'usedSalt', stateMutability: 'view', inputs: [{ type: 'bytes32' }], outputs: [{ type: 'bool' }] }, { type: 'function', name: 'omniImplementation', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }, { type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }] as const;
 const OMNI_CID = [{ type: 'function', name: 'collectionId', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] }] as const;
 
 async function walletOn(k: string) {
@@ -49,7 +50,15 @@ export async function deployOn(slug: string, k: string, onTx: (h: string) => voi
   const multi = a.mode === 'multichain'; const fn = multi ? 'createOmniDrop' : 'createDrop';
   const item = (F as any[]).find(x => x.name === fn); const params = fromAbi(item.inputs[0], a.params);
   const args = [params, multi ? a.collectionId : a.salt, BigInt(a.deadline), a.signature] as const;
-  const pub = readClient(k); const w = await walletOn(k);
+  const pub = readClient(k);
+  if (multi && (await pub.readContract({ address: a.factory, abi: FX, functionName: 'usedSalt', args: [a.collectionId] }))) { // already created (e.g. an earlier tap landed but was not recorded)
+    const impl = await pub.readContract({ address: a.factory, abi: FX, functionName: 'omniImplementation' }) as Address;
+    const drop = getContractAddress({ opcode: 'CREATE2', from: a.factory, salt: a.collectionId, bytecode: `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${impl.slice(2).toLowerCase()}5af43d82803e903d91602b57fd5bf3` });
+    if (!(await pub.readContract({ address: a.factory, abi: FX, functionName: 'isDrop', args: [drop] }))) throw new Error('this collection ID is already used on ' + k);
+    await api('/launchpad/deployed/' + slug, { auth: true, body: { chain: k, address: drop } });
+    return drop;
+  }
+  const w = await walletOn(k);
   const sim = await pub.simulateContract({ address: a.factory, abi: F, functionName: fn, args, account: wallet.address as Address });
   const gas = await pub.estimateContractGas({ address: a.factory, abi: F, functionName: fn, args, account: wallet.address as Address });
   const hash = await w.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address });
