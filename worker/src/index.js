@@ -13,6 +13,7 @@ import { makeBridgeAuto } from './bridgeauto.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
+import { makeShare } from './share.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -242,6 +243,7 @@ let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad
 // ---------- router ----------
 async function handle(req, env, url) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
+  if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p); if (r) return r; }
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
