@@ -46,9 +46,52 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
       await cache.put(key, res.clone()); return res;
     } catch { return new Response(null, { status: 302, headers: { location: FALLBACK, 'cache-control': 'public, max-age=60' } }); }
   }
-  return async function share(req, env, url, p) {
+  // ---- launchpad mint pages: /s/l/<slug> and /s/og/l/<slug>.png ----
+  const IPFS = 'https://ipfs.filebase.io/ipfs/';
+  const ipfs = u => (typeof u === 'string' && u.startsWith('ipfs://') ? IPFS + u.slice(7).replace(/^ipfs\//, '') : abs(u));
+  const getDrop = async (env, slug) => { const d = await env.COLLECTIONS.get('ldrop:' + slug, 'json').catch(() => null); return d && (d.status === 'live' || d.status === 'approved') ? d : null; };
+  const fmtWei = w => { try { const n = Number(BigInt(w)) / 1e18; return n === 0 ? 'Free' : fmtFloor(n < 1 ? +n.toPrecision(2) : n); } catch { return ''; } };
+  function mintInfo(d) {
+    const now = Date.now() / 1000, ph = d.phases || [];
+    const act = ph.find(x => x.start <= now && (!x.end || x.end > now)), nxt = ph.filter(x => x.start > now).sort((a, b) => a.start - b.start)[0], p = act || nxt || ph[ph.length - 1];
+    const price = p ? fmtWei(p.price) : '', mint = price ? (price === 'Free' ? 'Free mint' : `Mint ${price} ETH`) : 'Mint on MultiSea';
+    const when = act ? 'Minting now' : nxt ? `Starts ${new Date(nxt.start * 1000).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET` : 'Mint ended';
+    const chainsL = [...new Set((d.deployments || []).map(x => x.chain))]; const cl = chainsL.length ? chainsL : d.chains || [];
+    return { mint, when, chains: cl, desc: [mint, d.maxSupply ? `${Number(d.maxSupply).toLocaleString('en-US')} supply` : '', `${cl.length} chain${cl.length === 1 ? '' : 's'}`, when].filter(Boolean).join(' · ') };
+  }
+  async function tokenImages(d, n) {
+    if (!d.baseURI) return [];
+    const base = ipfs(d.baseURI).replace(/\/?$/, '/'); const cnt = Math.min(n, Number(d.maxSupply) || n);
+    return Promise.all(Array.from({ length: cnt }, async (_, i) => {
+      try { const r = await Promise.race([fetch(`${base}${i + 1}.json`, { cf: { cacheTtl: 86400, cacheEverything: true } }), new Promise((_, j) => setTimeout(() => j(new Error('t')), 2500))]); if (!r.ok) return ''; const j = await r.json(); return ipfs(j.image || j.image_url || ''); } catch { return ''; }
+    })).then(l => l.filter(Boolean));
+  }
+  const launchImg = (slug, d, mi) => `${API}/s/og/l/${slug}.png?f=${hash('l1|' + mi.mint + '|' + mi.chains.join(',') + '|' + (d.logo || '') + '|' + (d.banner || '') + '|' + (d.baseURI || ''))}`;
+  async function ogLaunch(env, url, slug) {
+    const cache = caches.default, key = new Request(url.toString(), { method: 'GET' });
+    const hit = await cache.match(key); if (hit) return hit;
+    try {
+      const d = await getDrop(env, slug); if (!d) throw new Error('nf');
+      const mi = mintInfo(d); const imgs = d.banner && d.logo ? [] : await tokenImages(d, 18);
+      const png = await renderCard({ name: d.name || slug, floor: mi.mint, chains: mi.chains, banner: ipfs(d.banner), avatar: ipfs(d.logo) || imgs[0] || '', tiles: d.banner ? [] : imgs.map(u => ({ url: u })), partial: true, item: null });
+      const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
+      await cache.put(key, res.clone()); return res;
+    } catch { return new Response(null, { status: 302, headers: { location: FALLBACK, 'cache-control': 'public, max-age=60' } }); }
+  }
+  async function launchPage(req, env, url, slug, ctx) {
+    const target = `${SITE}/launchpad/${slug}`;
+    if (!BOT.test(req.headers.get('user-agent') || '')) return new Response(null, { status: 302, headers: { location: target, 'cache-control': 'private, max-age=0' } });
+    const d = await getDrop(env, slug);
+    if (!d) return page({ title: 'MultiSea Launchpad', desc: 'Mint new collections on MultiSea.', image: FALLBACK, target: SITE + '/launchpad' }, 404);
+    const mi = mintInfo(d); const image = launchImg(slug, d, mi);
+    if (ctx?.waitUntil) ctx.waitUntil(ogLaunch(env, new URL(image), slug).catch(() => {}));
+    return page({ title: `${d.name || slug} · Mint on MultiSea`, desc: mi.desc, image, target });
+  }
+  return async function share(req, env, url, p, ctx) {
     if ((req.method !== 'GET' && req.method !== 'HEAD') || p[0] !== 's') return undefined;
     if (p[1] === 'og' && p[2] === 'c') return ogImage(req, env, url, p);
+    if (p[1] === 'og' && p[2] === 'l' && p.length === 4) { const m = /^([a-z0-9-]{1,64})\.png$/.exec(p[3]); return m ? ogLaunch(env, url, m[1]) : undefined; }
+    if (p[1] === 'l' && p.length === 3 && /^[a-z0-9-]{1,64}$/.test(p[2])) return launchPage(req, env, url, p[2], ctx);
     if (p[1] !== 'c' || p.length !== 3 || !/^[a-z0-9-]{1,64}$/.test(p[2])) return undefined;
     const slug = p[2]; const itemQ = url.searchParams.get('item'); const item = /^\d{1,7}$/.test(itemQ || '') ? +itemQ : null;
     const target = `${SITE}/c/${slug}${item != null ? '?item=' + item : ''}`;

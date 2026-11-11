@@ -34,11 +34,39 @@ async function webpToPng(buf, max) {
 const x = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const b64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml', gif: 'image/gif' };
-async function dataUri(url, ttl = 86400, max = 0) {
+// Animated WebP (ANIM/ANMF): rebuild a still WebP from the first frame so libwebp can decode it.
+function firstFrame(u) {
+  const dv = new DataView(u.buffer, u.byteOffset, u.byteLength), tag = o => String.fromCharCode(u[o], u[o + 1], u[o + 2], u[o + 3]);
+  let o = 12, w = 0, h = 0;
+  while (o + 8 <= u.length) {
+    const t = tag(o), sz = dv.getUint32(o + 4, true);
+    if (t === 'VP8X') { w = 1 + (u[o + 12] | u[o + 13] << 8 | u[o + 14] << 16); h = 1 + (u[o + 15] | u[o + 16] << 8 | u[o + 17] << 16); }
+    if (t === 'ANMF') {
+      if (o + 8 + sz > u.length) return null;
+      const subs = u.subarray(o + 8 + 16, o + 8 + sz); const alpha = tag(o + 24) === 'ALPH';
+      const hdr = alpha ? new Uint8Array(18) : new Uint8Array(0);
+      if (alpha) { hdr.set([86, 80, 56, 88, 10, 0, 0, 0, 0x10, 0, 0, 0]); const W = w - 1, H = h - 1; hdr.set([W & 255, W >> 8 & 255, W >> 16 & 255, H & 255, H >> 8 & 255, H >> 16 & 255], 12); }
+      const out = new Uint8Array(12 + hdr.length + subs.length), od = new DataView(out.buffer);
+      out.set([82, 73, 70, 70]); od.setUint32(4, out.length - 8, true); out.set([87, 69, 66, 80], 8); out.set(hdr, 12); out.set(subs, 12 + hdr.length);
+      return out.buffer;
+    }
+    o += 8 + sz + (sz & 1);
+  }
+  return null;
+}
+async function dataUri(url, ttl = 86400, max = 0, partial = false) {
   if (!url) return '';
   try {
-    const r = await fetch(url, { cf: { cacheTtl: ttl, cacheEverything: true } }); if (!r.ok) return '';
-    const buf = await r.arrayBuffer(); if (buf.byteLength > 4e6) return '';
+    // partial: animated token art can be MBs; the first frame sits at the start, so ask for the first 128 KB only.
+    let r = await fetch(url, partial ? { headers: { range: 'bytes=0-131071' }, cf: { cacheTtl: ttl, cacheEverything: true } } : { cf: { cacheTtl: ttl, cacheEverything: true } }); if (!r.ok) return '';
+    let buf = await r.arrayBuffer(); if (buf.byteLength > 4e6) return '';
+    const head = new Uint8Array(buf, 0, Math.min(64, buf.byteLength));
+    if (String.fromCharCode(...head.subarray(8, 12)) === 'WEBP' && String.fromCharCode(...head.subarray(30, 34)) === 'ANIM' || String.fromCharCode(...head.subarray(12, 16)) === 'VP8X' && (head[20] & 2)) {
+      let f = firstFrame(new Uint8Array(buf));
+      if (!f && r.status === 206) { r = await fetch(url, { cf: { cacheTtl: ttl, cacheEverything: true } }); if (!r.ok) return ''; buf = await r.arrayBuffer(); if (buf.byteLength > 8e6) return ''; f = firstFrame(new Uint8Array(buf)); }
+      if (!f) return '';
+      return `data:image/png;base64,${b64(await webpToPng(f, max))}`;
+    }
     let t = (r.headers.get('content-type') || '').split(';')[0].trim();
     if (!t.startsWith('image/')) t = MIME[(url.split('?')[0].split('.').pop() || '').toLowerCase()] || 'image/png';
     if (t === 'image/webp' || new TextDecoder().decode(new Uint8Array(buf, 8, 4)) === 'WEBP') return `data:image/png;base64,${b64(await webpToPng(buf, max))}`;
@@ -57,9 +85,9 @@ const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 // d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? } }
 export async function renderCard(d) {
   const [banner, avatar, itemImg, ...rest] = await Promise.all([
-    dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200), dataUri(d.item?.image, 86400, 450),
+    dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200, d.partial), dataUri(d.item?.image, 86400, 450),
     ...d.chains.map(c => logoSvg(c)),
-    ...(d.banner ? [] : d.tiles.map(t => dataUri(t.url, 86400, 210))),
+    ...(d.banner ? [] : d.tiles.map(t => dataUri(t.url, 86400, 210, d.partial))),
   ]);
   const logos = rest.slice(0, d.chains.length), tiles = rest.slice(d.chains.length);
   const W = 1200, H = 630, item = !!d.item;

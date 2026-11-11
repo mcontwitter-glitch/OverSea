@@ -241,9 +241,9 @@ let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
 // ---------- router ----------
-async function handle(req, env, url) {
+async function handle(req, env, url, ctx) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
-  if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p); if (r) return r; }
+  if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p, ctx); if (r) return r; }
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
@@ -581,7 +581,7 @@ export default {
     ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r))));
     if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
   },
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url); const ch = corsHeaders(req, env);
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     const H = ch || {};
@@ -591,7 +591,7 @@ export default {
     const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/');
     if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
     try {
-      const out = await handle(req, env, url);
+      const out = await handle(req, env, url, ctx);
       if (out instanceof Response) { for (const [k, v] of Object.entries(H)) out.headers.set(k, v); return out; }
       return new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json', ...H } });
     } catch (e) {

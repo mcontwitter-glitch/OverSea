@@ -2,6 +2,7 @@
 // Worker drops are real: the creator deploys from this page (factory createDrop / createOmniDrop with MultiSea's signed
 // approval) and collectors mint with their own wallet (src/lpchain.ts). Demo drops (LIL FOOTS art) stay labeled stubs.
 import CFG from '../config/collections.json';
+import { shareBtnsFor } from './share';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
@@ -351,7 +352,7 @@ function dropPage(d: Drop) {
   const cd = target ? countdown(target) : null;
   app.innerHTML = `${navHtml('launchpad')}<section class="ldrop">
    <div class="ldban"><div class="ldbanart">${d.art.slice(0, 8).map(u => `<img src="${esc(u)}" alt="" width="200" height="200">`).join('')}</div><div class="ldbanfade"></div>
-    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}${soon ? SOON : `<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span>`}</div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div></div></div></div>
+    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}${soon ? SOON : `<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span>`}</div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div>${shareBtnsFor(`https://api.multisea.io/s/l/${encodeURIComponent(d.slug)}`, d.name)}</div></div></div>
    <div class="ldwrap"><div class="ldmain ldtop">
     <p class="desc">${esc(d.description)}</p>
     ${cd ? `<div class="ldcd" data-target="${target}"><span class="mut">${st === 'live' ? esc(d.phases[ai].name) + ' ends in' : esc(d.phases[ni].name) + ' starts in'}</span><div class="ldcdg"><div><b data-u="d">${cd.d}</b><em>days</em></div><div><b data-u="h">${cd.h}</b><em>hrs</em></div><div><b data-u="m">${cd.m}</b><em>min</em></div><div><b data-u="s">${cd.s}</b><em>sec</em></div></div></div>` : ''}
