@@ -184,10 +184,10 @@ let realBusy = false; let realMsg = ''; let depMsg = ''; let depBusy = '';
 const EXPL: Record<string, string> = Object.fromEntries(Object.entries(CFG.chains as any).map(([k, c]: any) => [k, c.explorer]));
 const txLink = (k: string, h: string) => `<a href="${EXPL[k]}/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>`;
 function deployBox(d: Drop, todo: string[]) {
-  const ok = todo.filter(k => factoryOn(k));
+  const ok = todo.filter(k => factoryOn(k)).sort((a, b) => (b === HUB ? 1 : 0) - (a === HUB ? 1 : 0));
   return `<div class="fcard ldmintbox" style="margin-top:14px"><div class="gh">Deploy your drop <span class="mut small">you are the creator</span></div>
    <p class="mut small">MultiSea approved this drop. Deploying creates your contract through the MultiSea factory with MultiSea's signed approval; you pay the gas and own the contract.${isMulti(d) ? ' Deploy on every chain (Base, the supply hub, first).' : ''}</p>
-   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : ok.map(k => `<button class="bbtn sm" data-deploy="${k}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy === k ? '<span class="spin"></span> Deploying…' : `Deploy on ${esc(chains[k].name)}`}</button>`).join('')}
+   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(chains[depBusy].name)}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(chains[ok[0]].name)}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(chains[k].name)).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : '')}
    ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
 }
 function alBox(d: Drop) {
@@ -416,10 +416,11 @@ app.addEventListener('click', e => {
         .then(() => { revCache[`${k}:${R.addresses[k]}`] = undefined as any; delete revCache[`${k}:${R.addresses[k]}`]; revMsg = '✓ Revealed. Marketplaces may take a few minutes to refresh metadata.'; revStep = ''; })
         .catch(e => { revMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { revBusy = false; render(); }); return; } }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
-  if (el.dataset.deploy) { const k = el.dataset.deploy; depBusy = k; depMsg = ''; render();
-    (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `Transaction sent: ${txLink(k, h)}`; render(); })))
-      .then(async a => { depMsg = `✓ Deployed on ${esc(chains[k].name)}: <span class="mono">${esc(a)}</span>`; (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; await refreshRemote(); })
-      .catch(e => { depMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { depBusy = ''; render(); }); return; }
+  if (el.dataset.deploy) { const list = el.dataset.deploy.split(','); const done: string[] = []; depMsg = '';
+    const one = (k: string) => (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')}. ` : ''}${esc(chains[k].name)} transaction sent: ${txLink(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')}. ` : ''}${esc(chains[k].name)} transaction sent: ${txLink(k, h)}`; render(); })));
+    (async () => { for (const k of list) { depBusy = k; render(); const a = await one(k); (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; done.push(k); }
+      depMsg = `✓ Deployed on ${done.map(c => esc(chains[c].name)).join(', ')}.`; await refreshRemote(); })()
+      .catch(e => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')} deployed. ` : ''}<span class="err">${depBusy ? esc(chains[depBusy].name) + ': ' : ''}${esc(e?.shortMessage || e?.message || e)}</span> Tap the button to continue from there.`; refreshRemote().catch(() => {}); }).finally(() => { depBusy = ''; render(); }); return; }
   if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
   if (el.dataset.act === 'mint' && (d as any).remote && LP_LIVE && (d as any).addresses?.[chainSel]) {
     if (!wallet.address) { openConnect(); return; } const k = chainSel; const ai = activePhase(d); const ph: any = (d as any).raw.phases[ai]; const n = qty;
