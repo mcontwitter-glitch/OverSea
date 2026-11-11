@@ -45,13 +45,20 @@ async function dataUri(url, ttl = 86400, max = 0) {
     return `data:${t};base64,${b64(buf)}`;
   } catch { return ''; }
 }
+// Chain logos with <text> (ApeChain's "APE") are inlined so they use the card's fonts; resvg doesn't give nested SVG images any fonts.
+async function logoSvg(c) {
+  const url = `${SITE}/logos/${c}.svg`;
+  try { const r = await fetch(url, { cf: { cacheTtl: 604800, cacheEverything: true } }); if (!r.ok) return ''; const t = await r.text();
+    if (/<text/.test(t)) return { inline: t.replace(/font-family="[^"]*"/g, 'font-family="Inter"').replace(/font-weight="9\d\d"/g, 'font-weight="800"') };
+    return `data:image/svg+xml;base64,${b64(new TextEncoder().encode(t))}`; } catch { return ''; }
+}
 const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 // d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? } }
 export async function renderCard(d) {
   const [banner, avatar, itemImg, ...rest] = await Promise.all([
     dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200), dataUri(d.item?.image, 86400, 450),
-    ...d.chains.map(c => dataUri(`${SITE}/logos/${c}.svg`, 604800)),
+    ...d.chains.map(c => logoSvg(c)),
     ...(d.banner ? [] : d.tiles.map(t => dataUri(t.url, 86400, 210))),
   ]);
   const logos = rest.slice(0, d.chains.length), tiles = rest.slice(d.chains.length);
@@ -63,7 +70,7 @@ export async function renderCard(d) {
   const title = fit(item ? d.item.name : d.name, item ? 20 : 24);
   const ts = title.length > 18 ? 58 : 72;
   const tx = item ? L : L + 236;
-  const chainRow = logos.map((l, i) => `<circle cx="${tx + 26 + i * 64}" cy="548" r="27" fill="#0b0f17" stroke="#45bdfa66" stroke-width="2"/>${l ? `<image href="${l}" x="${tx + 8 + i * 64}" y="530" width="36" height="36"/>` : ''}`).join('');
+  const chainRow = logos.map((l, i) => `<circle cx="${tx + 26 + i * 64}" cy="548" r="27" fill="#0b0f17" stroke="#45bdfa66" stroke-width="2"/>${l?.inline ? l.inline.replace('<svg ', `<svg x="${tx + 8 + i * 64}" y="530" width="36" height="36" `) : l ? `<image href="${l}" x="${tx + 8 + i * 64}" y="530" width="36" height="36"/>` : ''}`).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05070b" stop-opacity="${item ? 0.7 : 0.35}"/><stop offset=".55" stop-color="#05070b" stop-opacity="${item ? 0.82 : 0.7}"/><stop offset="1" stop-color="#05070b" stop-opacity=".96"/></linearGradient>
 <linearGradient id="h" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#05070b" stop-opacity=".75"/><stop offset=".7" stop-color="#05070b" stop-opacity="0"/></linearGradient>
