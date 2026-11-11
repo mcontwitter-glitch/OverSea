@@ -384,7 +384,7 @@ app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
   const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr],[data-agclaim],[data-agadd]') as HTMLElement | null;
   if (ag) { const d = findDrop(slug); if (d) (ag.hasAttribute('data-agclaim') || ag.hasAttribute('data-agadd') ? onGrowth(d, ag) : onAgent(d, ag)); return; }
-  const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
+  const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst],[data-deploy]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
   const d = findDrop(slug); if (!d) return;
   if (el.dataset.move) { moveId = +el.dataset.move; moveDst = ''; moveMsg = ''; const h = held.find(x => x.id === moveId); if (h && gp[h.active] === undefined) loadGas({ ...d, chains: [{ chain: h.active, supply: 0, minted: 0 }] }).then(render); render(); return; }
