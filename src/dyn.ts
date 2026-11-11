@@ -1,4 +1,5 @@
 // Community collection page: config from the Worker (KV), live items/listings/stats via the Worker's OpenSea proxy.
+import { shareBtns } from './share';
 import CFG from '../config/collections.json';
 import { checkApi, onWallet, wallet, apiReady, API, startBuy } from './wallet';
 import { navHtml, bindNav, esc, soon, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
@@ -17,7 +18,7 @@ function render() {
   const fl = listings.filter(l => /^W?ETH$/.test(l.currency)).sort((a, b) => a.price - b.price)[0];
   app.innerHTML = `${navHtml()}
   <div class="banner ${col.banner ? 'has-img' : ''}" style="${col.banner ? `background-image:url(${esc(media(col.banner))})` : ''}"><div class="banner-fade"></div>
-   <div class="hero2"><img class="avatar" src="${esc(media(col.logo))}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div></div></div>
+   <div class="hero2"><img class="avatar" src="${esc(media(col.logo))}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${listings.length}</b><span>Listings</span></div>${(() => { const sup = v.reduce((a, x) => a + (x.total_supply || 0), 0) || col.supply || 0; return mcapStatHtml(mcapUsd(fl?.price, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="chips dchips">${listings.length ? '<button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button>' : ''}${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>

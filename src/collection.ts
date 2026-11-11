@@ -1,3 +1,4 @@
+import { shareBtns } from './share';
 import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
@@ -180,6 +181,7 @@ function header() {
       <div class="hero-txt">
         <h1>${esc(COL.name)} <span class="verified">✓</span></h1>
         <div class="by">${deployedChains.map(c => logo(c)).join('')}<span>${ordSoon() ? `${deployedChains.length} chains · Bitcoin coming soon` : ORD?.demo ? `${deployedChains.length - 1} chains + Bitcoin (demo)` : `${deployedChains.length} chains`} · ${COL.standard}</span></div>
+        ${shareBtns(COL.slug, COL.name)}
       </div>
     </div>
     <div class="stats">
@@ -342,7 +344,7 @@ function modal(id: number) {
   const osLinks = deployedChains.filter(c => chains[c].openseaSlug).map(c => `<a class="osl ${loc?.chain === c ? 'cur' : ''}" href="${osUrl(c, id)}" target="_blank" rel="noopener">${logo(c)} ${chains[c].name}</a>`).join('');
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div class="mbox"><button class="x mx">✕</button><div class="mimg" style="background:${it.color}"><img src="${thumbUrl(id)}" width="768" height="768" alt="" class="lo"><img src="${thumbUrl(id, 'm')}" width="768" height="768" alt="${esc(it.name)}" class="hi" onload="this.classList.add('in')" onerror="this.onerror=null;this.src='${gw[0]}${it.image}'"></div><div class="minfo">
-    <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>
+    <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>${shareBtns(COL.slug, it.name, id)}
     ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
