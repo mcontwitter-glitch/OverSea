@@ -48,6 +48,7 @@ async function bridgeModal(to: string) {
     const bal = await balances(); const srcs = Object.entries(bal).filter(([k, b]) => k !== to && b && b > 0n && chains[k].native === chains[to].native);
     if (!srcs.length) throw new Error(`No ${chains[to].native} on another chain to bridge from.`);
     body.innerHTML = `<label>From<select class="bfrom">${srcs.map(([k, b]) => `<option value="${k}">${esc(chains[k].name)} (${fmtWei(b!)} ${esc(chains[k].native)})</option>`).join('')}</select></label><label>Amount (${esc(chains[to].native)})<input class="bamt" value="0.002" inputmode="decimal"></label><p class="mut small">Relay moves the funds to your own wallet on ${esc(chains[to].name)}. MultiSea verifies the completed bridge and credits the quest on both chains.</p><button class="bbtn go">Bridge</button>`;
+    import('./chainpick').then(c => { const x = body.querySelector<HTMLSelectElement>('.bfrom'); if (x) c.chainPicker(x, k => `/logos/${k}.svg`, 'From chain'); });
     await new Promise<void>(res => body.querySelector('.go')!.addEventListener('click', () => res()));
     const from = (body.querySelector('.bfrom') as HTMLSelectElement).value; const amt = parseEther((body.querySelector('.bamt') as HTMLInputElement).value || '0');
     body.innerHTML = '<div class="spin"></div> Getting a Relay quote…';

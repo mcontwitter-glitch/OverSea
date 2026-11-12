@@ -180,7 +180,11 @@ a.chb:hover .chc{border-color:#45bdfa;box-shadow:0 0 20px #45bdfa77}
 .csmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:160px;margin:0;padding:6px;list-style:none;background:#0b0f17;border:1px solid #1f2937;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.5);outline:none}
 .csmenu li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;color:#d1d5db;font-size:14px;cursor:pointer}
 .csmenu li i{font-style:normal;visibility:hidden}.csmenu li.hi,.csmenu li:hover{background:#151b26}
-.csmenu li[aria-selected=true]{color:#45bdfa;font-weight:600}.csmenu li[aria-selected=true] i{visibility:visible}
+.csmenu li[aria-selected=true]{color:#45bdfa;font-weight:600}
+.cpick{position:relative;flex:1;min-width:0}.cpbtn{display:flex;align-items:center;gap:8px;width:100%;background:#0a0f16;color:#fff;border:1px solid #262f3a;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;cursor:pointer;text-align:left}
+.cpbtn span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cpbtn svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2}.cpbtn[aria-expanded=true]{border-color:#45bdfa}
+.cpmenu{left:0;right:auto;width:100%;min-width:180px;max-height:320px;overflow-y:auto}.cpmenu li{justify-content:flex-start}.cpmenu li span{flex:1}.cpmenu li[aria-disabled=true]{opacity:.4;cursor:not-allowed}.cpmenu li[aria-disabled=true]:hover{background:none}
+.cpick .cl,.cpmenu .cl{width:20px;height:20px;flex:none}.bsel.cp-on{padding:0;border:0;background:none}.bsel.cp-on>img.cl{display:none}.csmenu li[aria-selected=true] i{visibility:visible}
 .cgrid2{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
 .ccard2{display:block;background:#0b0f15;border:1px solid #1e2a36;border-radius:14px;overflow:hidden;color:#fff;text-decoration:none;transition:border-color .15s,box-shadow .15s,transform .15s}
 .ccard2:hover{border-color:#45bdfa88;box-shadow:0 0 18px #2684ce33;transform:translateY(-2px)}

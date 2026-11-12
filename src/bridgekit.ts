@@ -2,6 +2,7 @@
 import { createPublicClient, createWalletClient, custom, http, parseAbi, formatEther, defineChain, type Address } from 'viem';
 import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
+import { chainPicker } from './chainpick';
 export type BCfg = { network: string; mode: string; feeWallet: string; supportedChains: number; lzGas: number; tiers?: { min: number; max: number; eth: string; label?: string }[];
   chains: Record<string, { name: string; chainId: number; eid: number; rpc: string; explorer: string; factory: string | null; logo: string; native?: string; lzScan?: string }>;
   collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number>; kind?: 'omni'; cid?: `0x${string}`; supply?: number }[] };
@@ -64,6 +65,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
      <p class="msg ${s.cls}">${s.status}${s.link ? ` <a href="${esc(s.link)}" target="_blank" rel="noopener">View transaction ↗</a>` : ''}</p>
      <button class="bbtn go" data-act="bridge" ${s.busy || (wallet.address && s.sel == null) ? 'disabled' : ''}>${!wallet.address ? 'Connect wallet' : s.sel == null ? 'Select an NFT' : s.busy ? 'Working…' : `Bridge #${s.sel} to ${esc(cfg.chains[s.to].name)}`}</button>
     </div>`;
+    el.querySelectorAll<HTMLSelectElement>('select[data-k=from],select[data-k=to]').forEach(x => chainPicker(x, k => `/logos/${cfg.chains[k].logo}.svg`, x.dataset.k === 'from' ? 'From chain' : 'To chain'));
   }
   async function loadIds() {
     s.ids = []; s.sel = null; if (!wallet.address) return draw();
