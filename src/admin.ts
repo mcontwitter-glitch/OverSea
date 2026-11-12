@@ -7,6 +7,7 @@ import { apiFeatures } from './wallet';
 import { localDrops, saveLocal, isLocalHost } from './launchdata';
 import LPC from '../config/launchpad.json';
 import { LP_LIVE } from './lpchain';
+import { loadFlush, flushHtml, doFlush } from './flushadmin';
 // Mainnet deploy approvals: the factory approver wallet signs EIP-712 approvals here (signature only, never a transaction).
 const APPROVER = String((LPC as any).approver || '').toLowerCase();
 let appr: any[] | null = null; let apprLog = '';
@@ -51,14 +52,16 @@ function render() {
     <div class="qa"><button class="bbtn sm" data-approve="${esc(p.slug)}">Approve</button><button class="bbtn sm ghost" data-reject="${esc(p.slug)}">Reject</button></div></div>`).join('') : '<p class="mut">No pending submissions.</p>') : ''}
   ${dropsHtml(!!s?.isAdmin)}
   ${apprHtml()}
+  ${s?.isAdmin ? flushHtml() : ''}
   ${s && (s.isAdmin || s.isFee) ? feesHtml() : ''}
   </section>`;
 }
-async function load() { err = ''; const s = getSession(); loadFees(render); if (!s?.isAdmin) { render(); return; } try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
+async function load() { err = ''; const s = getSession(); loadFees(render); if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
 app.addEventListener('click', async e => {
   const t = e.target as HTMLElement;
   if (t.dataset.act === 'connect') openConnect();
   if (t.dataset.lsign) { const slug = t.dataset.lsign; apprLog = ''; try { const { signApprovals } = await import('./lpchain'); await signApprovals(slug, l => { apprLog += l + '\n'; render(); }); await loadAppr(); } catch (e: any) { apprLog += 'Error: ' + (e?.shortMessage || e?.message || e) + '\n'; render(); } return; }
+  if (t.dataset.flush) { if (getSession()?.isAdmin) doFlush(+t.dataset.flush); return; }
   if (t.dataset.claim) { claim(+t.dataset.claim, render); return; }
   if (t.dataset.act === 'signin') { try { await signIn('Sign in to MultiSea admin'); await load(); await loadAppr(); } catch (e: any) { err = e.message; render(); } }
   if (t.dataset.dapprove || t.dataset.dreject) { const ap = !!t.dataset.dapprove; const slug = (t.dataset.dapprove || t.dataset.dreject)!;
