@@ -1,8 +1,8 @@
-// Live ownership from chain (ownerOf multicalls), layered over the static owners snapshot.
-// The snapshot (public/data/<slug>/owners.json) is built at deploy time and never refreshes, so feet bridged after it
-// (e.g. Abstract -> BNB, where OpenSea has no coverage) kept showing on their old chain/owner.
-// Satellite deployments hold few tokens, so a full ownerOf sweep there is ~4 eth_calls per chain. The origin chain
-// (biggest supply) is only re-read for the ids whose location changed. Escrow/vault holders are excluded.
+// Live ownership from chain (ownerOf via Multicall3), layered over the static owners snapshot.
+// The snapshot (public/data/<slug>/owners.json) is built at deploy time and never refreshes, so a later
+// mint, bridge, or escrow flush kept showing stale per-chain Held / In vault/escrow numbers.
+// Every chain is swept once on page load (refresh re-reads). Multicall3 is one eth_call per chunk;
+// if a chunk fails (RPC size or 429, as on Robinhood), it is retried in groups of 20.
 import { parseAbi, type Hex } from 'viem';
 import { bulkClient } from './wallet';
 import { MC3 } from './footkit';
@@ -12,59 +12,73 @@ type Dep = { chain: string; address: string; original?: boolean };
 type Col = { slug: string; idStart: number; idEnd: number; deployments: Dep[]; escrow?: { chain: string; address: string }[] };
 export type LiveStats = Record<string, { held: number; inEscrow: number; live: number; holders: number }>;
 const ABI = parseAbi(['function ownerOf(uint256) view returns (address)']);
-const TTL = 120_000;
+const CHUNK = 200;
+const FALLBACK = 20;
 
-async function ownersOn(chain: string, token: string, ids: number[], batch: number): Promise<Map<number, string>> {
+async function ownersOn(chain: string, token: string, ids: number[]): Promise<Map<number, string>> {
   const out = new Map<number, string>(); const pc = bulkClient(chain);
-  const parts: number[][] = []; for (let i = 0; i < ids.length; i += batch) parts.push(ids.slice(i, i + batch));
-  await Promise.all(parts.map(async part => {
-    const r: any[] = await pc.multicall({ multicallAddress: MC3, allowFailure: true, batchSize: 0, contracts: part.map(id => ({ address: token as Hex, abi: ABI, functionName: 'ownerOf', args: [BigInt(id)] })) });
+  const call = (part: number[]) => pc.multicall({
+    multicallAddress: MC3, allowFailure: true, batchSize: 0,
+    contracts: part.map(id => ({ address: token as Hex, abi: ABI, functionName: 'ownerOf', args: [BigInt(id)] })),
+  }) as Promise<{ status: string; result?: unknown }[]>;
+  const apply = (part: number[], r: { status: string; result?: unknown }[]) => {
+    if (r.length !== part.length) throw new Error('owner read incomplete');
     r.forEach((x, i) => { if (x.status === 'success' && x.result) out.set(part[i], x.result as string); });
-  }));
+  };
+  const read = async (part: number[]) => {
+    try { apply(part, await call(part)); }
+    catch (e) {
+      if (part.length <= FALLBACK) throw e;
+      for (let i = 0; i < part.length; i += FALLBACK) {
+        const sub = part.slice(i, i + FALLBACK);
+        apply(sub, await call(sub));
+      }
+    }
+  };
+  const parts: number[][] = []; for (let i = 0; i < ids.length; i += CHUNK) parts.push(ids.slice(i, i + CHUNK));
+  await Promise.all(parts.map(read));
   return out;
 }
 
-/** Returns live owners for every id (null for chains that could not be read: the caller keeps the snapshot there). */
+/** Returns live owners for every id (null if no chain could be read: the caller keeps the snapshot). */
 export async function liveOwners(col: Col, snap: Record<string, Loc>): Promise<{ owners: Record<string, Loc>; stats: LiveStats; failed: string[]; at: number } | null> {
-  const key = `ms-live-owners:${col.slug}`;
-  try { const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if (c && Date.now() - c.at < TTL) return c; } catch {}
   const ids = Array.from({ length: col.idEnd - col.idStart + 1 }, (_, i) => col.idStart + i);
   const esc = new Set((col.escrow || []).map(e => `${e.chain}:${e.address.toLowerCase()}`));
   const isEsc = (chain: string, a: string) => esc.has(`${chain}:${a.toLowerCase()}`);
-  const origin = (col.deployments.find(d => d.original) || col.deployments.find(d => (col.escrow || []).some(e => e.chain === d.chain)) || col.deployments[0]).chain;
-  const sats = col.deployments.filter(d => d.chain !== origin);
+  const origin = (col.deployments.find(d => d.original) || col.deployments.find(d => (col.escrow || []).some(e => e.chain === d.chain)) || col.deployments[0])?.chain;
   const failed: string[] = []; const read: Record<string, Map<number, string>> = {};
-  // Satellites: race the RPC ownerOf sweep against thirdweb Insight's owner index (where covered); first good answer wins.
-  const src: Record<string, string> = {}; const { insightOn, collectionOwners } = await import('./insight');
-  await Promise.all(sats.map(async d => {
-    const rpc = ownersOn(d.chain, d.address, ids, 1100).then(m => { src[d.chain] ??= 'rpc'; return m; });
-    const ins = insightOn(d.chain) ? collectionOwners(d.chain, d.address, 2).then(m => { if (!m.size) throw new Error('empty'); src[d.chain] ??= 'insight'; return m; }) : Promise.reject(new Error('n/a'));
-    try { read[d.chain] = await Promise.any([rpc, ins]); } catch { failed.push(d.chain); }
+  const src: Record<string, string> = {};
+  await Promise.all(col.deployments.map(async d => {
+    try { read[d.chain] = await ownersOn(d.chain, d.address, ids); src[d.chain] = 'rpc'; }
+    catch {
+      try {
+        const { insightOn, collectionOwners } = await import('./insight');
+        if (!insightOn(d.chain)) throw new Error('n/a');
+        const m = await collectionOwners(d.chain, d.address, 5);
+        if (!m.size) throw new Error('empty');
+        read[d.chain] = m; src[d.chain] = 'insight';
+      } catch { failed.push(d.chain); }
+    }
   }));
   ((window as any).__msPerf ??= {}).ownerSources = src;
-  if (failed.length === sats.length) return null;
-  // Origin chain: re-read only ids whose satellite picture differs from the snapshot (bridged out, or came back).
-  const recheck = ids.filter(id => { const s = snap[id]; const onSat = sats.some(d => read[d.chain]?.has(id));
-    return onSat ? s?.chain !== sats.find(d => read[d.chain]?.has(id))!.chain || !!s?.also : (s && s.chain !== origin && !failed.includes(s.chain)); });
-  const od = col.deployments.find(d => d.chain === origin)!;
-  try { if (recheck.length) read[origin] = await ownersOn(origin, od.address, recheck, 150); } catch { failed.push(origin); }
+  if (!Object.keys(read).length) return null;
   const owners: Record<string, Loc> = {};
   for (const id of ids) {
     const s = snap[id]; const locs: { chain: string; owner: string }[] = [];
     for (const d of col.deployments) {
       const m = read[d.chain];
-      if (m && (d.chain !== origin || recheck.includes(id))) { const o = m.get(id); if (o && !isEsc(d.chain, o)) locs.push({ chain: d.chain, owner: o }); }
-      else for (const l of s ? [s, ...(s.also || [])] : []) if (l.chain === d.chain) locs.push(l); // unread chain: keep the snapshot
+      if (m) { const o = m.get(id); if (o && !isEsc(d.chain, o)) locs.push({ chain: d.chain, owner: o }); }
+      else for (const l of s ? [s, ...(s.also || [])] : []) if (l.chain === d.chain) locs.push(l);
     }
     if (!locs.length) continue;
-    // Primary = a satellite where it is live (the origin copy sits in the vault while bridged), else the origin.
     locs.sort((a, b) => (a.chain === origin ? 1 : 0) - (b.chain === origin ? 1 : 0));
     owners[id] = { ...locs[0], ...(locs.length > 1 ? { also: locs.slice(1) } : {}) };
   }
   const stats: LiveStats = {};
-  for (const d of sats) { const m = read[d.chain]; if (!m) continue; const own = [...m.values()]; const live = own.filter(o => !isEsc(d.chain, o));
-    stats[d.chain] = { held: own.length, inEscrow: own.length - live.length, live: live.length, holders: new Set(live.map(o => o.toLowerCase())).size }; }
-  const val = { owners, stats, failed, at: Date.now() };
-  try { sessionStorage.setItem(key, JSON.stringify(val)); } catch {}
-  return val;
+  for (const d of col.deployments) {
+    const m = read[d.chain]; if (!m) continue;
+    const own = [...m.values()]; const live = own.filter(o => !isEsc(d.chain, o));
+    stats[d.chain] = { held: own.length, inEscrow: own.length - live.length, live: live.length, holders: new Set(live.map(o => o.toLowerCase())).size };
+  }
+  return { owners, stats, failed, at: Date.now() };
 }

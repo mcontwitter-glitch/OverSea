@@ -63,9 +63,16 @@ async function loadLiveOwners() {
     const tl = performance.now(); const r = await (await import('./liveowners')).liveOwners(COL as any, owners); perf.liveOwnersMs = performance.now() - tl; perf.liveOwnersSinceLoadMs = performance.now() - t0;
     if (r) {
       for (const k of Object.keys(owners)) if (+k >= 0) delete owners[k]; Object.assign(owners, r.owners); ownersLiveAt = r.at;
-      if (summary?.perChain) for (const c of deployedChains) { if (c === 'bitcoin' || r.failed.includes(c) || !summary.perChain[c]) continue;
-        const held = Object.values(owners).flatMap(l => [l, ...(l.also || [])]).filter(l => l.chain === c);
-        summary.perChain[c].live = held.length; summary.perChain[c].holders = new Set(held.map(l => l.owner.toLowerCase())).size; }
+      if (summary) {
+        const uniq = new Set(Object.values(owners).flatMap(l => [l, ...(l.also || [])]).map(l => l.owner.toLowerCase()));
+        if (uniq.size) summary.owners = uniq.size;
+        summary.perChain ??= {};
+        for (const c of deployedChains) {
+          if (c === 'bitcoin' || r.failed.includes(c) || !r.stats[c]) continue;
+          const st = r.stats[c]; const p = summary.perChain[c] ??= { ok: true, error: null, volume: {}, sales: 0 };
+          p.ok = true; p.minted = st.held; p.inEscrow = st.inEscrow; p.live = st.live; p.holders = st.holders;
+        }
+      }
       render(); // an open item modal is rebuilt so owner, chain and the buy/list button follow the live data
       const mr = document.querySelector<HTMLElement>('.modal [data-mrow]'); if (mr) { const id = +mr.dataset.mrow!; mr.closest('.modal')!.remove(); modal(id); }
     }

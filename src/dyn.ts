@@ -1,14 +1,18 @@
 // Community collection page: config from the Worker (KV), live items/listings/stats via the Worker's OpenSea proxy.
 import { shareBtns } from './share';
 import CFG from '../config/collections.json';
-import { checkApi, onWallet, wallet, apiReady, API, startBuy } from './wallet';
+import { checkApi, onWallet, wallet, apiReady, API, startBuy, readClient } from './wallet';
 import { navHtml, bindNav, esc, soon, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
+import { logo } from './gx';
+import { parseAbi, type Hex } from 'viem';
+import type { LiveStats } from './liveowners';
 const app = document.getElementById('app')!;
-const chains = CFG.chains as Record<string, { name: string; openseaSlug: string | null }>;
+const chains = CFG.chains as Record<string, { name: string; openseaSlug: string | null; explorer?: string }>;
 const slug = location.pathname.split('/')[2];
 let col: any = null, stats: Record<string, any> = {}, listings: any[] = [], items: any[] = [], next: string | null = null, chain = '', editable = false, founder = false, state = 'loading';
+let chainStats: LiveStats | null = null, chainStatsAt: number | null = null, chainStatsFailed: string[] = [];
 const fmt = (n: number) => (n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(4)).toString());
 const lmap = () => { const m = new Map<string, any>(); listings.forEach(l => { const k = l.chain + ':' + l.id; const c = m.get(k); if (!c || l.price < c.price) m.set(k, l); }); return m; };
 let dynUsd: number | null = null; ethUsdRate().then(r => { if (r) { dynUsd = r; render(); } });
@@ -24,7 +28,20 @@ function render() {
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
   <div class="chips dchips">${listings.length ? '<button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button>' : ''}${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>
   <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${it.image ? `<img src="${esc(it.image)}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
-  ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</div>`;
+  ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}${chainsBlock()}</div>`;
+}
+function isLiveCountsCol() { return !!(col?.escrow?.length || col?.source === 'launchpad' || col?.mode === 'multichain'); }
+function chainsBlock() {
+  if (!isLiveCountsCol() || !col?.deployments?.length) return '';
+  const at = chainStatsAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(chainStatsAt).toLocaleTimeString()}` : '';
+  return `<div class="ctab">${col.deployments.map((d: any) => {
+    const st = chainStats?.[d.chain]; const failed = chainStatsFailed.includes(d.chain);
+    const c = chains[d.chain];
+    return `<div class="cc">${logo(d.chain, 'cl lg')}<div><h3>${esc(c?.name || d.chain)}</h3>
+      ${c?.explorer ? `<a class="mono" href="${c.explorer}/address/${d.address}" target="_blank" rel="noopener">${esc(d.address)}</a>` : `<span class="mono">${esc(d.address)}</span>`}
+      ${st ? `<div class="kv"><span>Held (ownerOf)</span><b>${st.held}</b><span>In vault/escrow</span><b>${st.inEscrow}</b><span>Live on chain</span><b>${st.live}</b><span>Holders</span><b>${st.holders}</b></div>` : `<div class="mut">${failed ? 'Could not read this chain' : 'Reading live counts…'}</div>`}
+    </div></div>`;
+  }).join('')}<p class="mut small">Vault/escrow addresses excluded from holders${at}.</p></div>`;
 }
 async function loadItems(reset = false) { if (reset) { items = []; next = null; } const j = await (await fetch(`${API}/os/${slug}/items?chain=${chain}${next ? '&next=' + encodeURIComponent(next) : ''}`)).json(); items.push(...(j.nfts || [])); next = j.next; render(); }
 async function refreshEditable() {
@@ -56,5 +73,21 @@ else {
   if (!r.ok) { state = 'missing'; render(); }
   else { col = (await r.json()).collection; document.title = `${col.name} · MultiSea`; chain = col.deployments[0].chain; state = 'ok'; render();
     await Promise.all([loadItems(true), fetch(`${API}/os/${slug}/stats`).then(r => r.json()).then(j => { stats = j.stats || {}; }).catch(() => {}), fetch(`${API}/os/${slug}/listings`).then(r => r.json()).then(j => { listings = j.listings || []; }).catch(() => {})]);
-    render(); refreshEditable(); }
+    render(); refreshEditable(); loadLiveCounts(); }
+}
+async function loadLiveCounts() {
+  if (!col || !isLiveCountsCol()) return;
+  try {
+    let idEnd = Number(col.supply || col.maxSupply || 0);
+    const dep = col.deployments?.[0];
+    if (!idEnd && dep) {
+      const pc = readClient(dep.chain);
+      try { idEnd = Number(await pc.readContract({ address: dep.address as Hex, abi: parseAbi(['function maxSupply() view returns (uint32)']), functionName: 'maxSupply' })); }
+      catch { try { idEnd = Number(await pc.readContract({ address: dep.address as Hex, abi: parseAbi(['function totalSupply() view returns (uint256)']), functionName: 'totalSupply' })); } catch { return; } }
+    }
+    if (!idEnd) return;
+    const { liveOwners } = await import('./liveowners');
+    const r = await liveOwners({ slug: col.slug || slug, idStart: 1, idEnd, deployments: col.deployments, escrow: col.escrow || [] }, {});
+    if (r) { chainStats = r.stats; chainStatsAt = r.at; chainStatsFailed = r.failed; render(); }
+  } catch {}
 }
