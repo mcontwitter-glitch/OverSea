@@ -41,6 +41,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
         banner: abs(col.banner), avatar: abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : ''),
         tiles: st && !col.banner && item == null ? Array.from({ length: 18 }, (_, i) => ({ url: `${SITE}/img/${slug}/s/${s0 + i}.webp` })) : [],
         item: item != null ? { name: `${col.name || slug} #${item}`, image: inRange ? `${SITE}/img/${slug}/m/${item}.webp` : abs(col.logo) } : null,
+        partial: true, // site thumbnails can be animated (Island's): read only the first frame
       });
       const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
       await cache.put(key, res.clone()); return res;

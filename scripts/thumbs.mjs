@@ -29,8 +29,14 @@ await Promise.all(Array.from({ length: 16 }, async () => {
     const it = items[i++]; const b = await orig(it); if (!b) { fail.push(it.id); continue; }
     const sOut = path.join(S, it.id + '.webp'), mOut = path.join(M, it.id + '.webp');
     const img = sharp(b);
-    await img.clone().resize(384, 384, { fit: 'cover' }).webp({ quality: 74, effort: 5 }).toFile(sOut);
-    await img.clone().resize(768, 768, { fit: 'cover', withoutEnlargement: true }).webp({ quality: 78, effort: 5 }).toFile(mOut);
+    // Animated originals (e.g. Island's webp) stay animated: all frames for the card, the original bytes for the modal.
+    if (((await img.metadata()).pages || 1) > 1) {
+      await sharp(b, { animated: true }).resize(384, 384, { fit: 'cover' }).webp({ quality: 45, effort: 5 }).toFile(sOut);
+      await fs.writeFile(mOut, b);
+    } else {
+      await img.clone().resize(384, 384, { fit: 'cover' }).webp({ quality: 74, effort: 5 }).toFile(sOut);
+      await img.clone().resize(768, 768, { fit: 'cover', withoutEnlargement: true }).webp({ quality: 78, effort: 5 }).toFile(mOut);
+    }
     const { dominant } = await img.stats();
     const tiny = await img.clone().resize(8, 8).webp({ quality: 40 }).toBuffer();
     ph[it.id] = ['#' + [dominant.r, dominant.g, dominant.b].map(x => x.toString(16).padStart(2, '0')).join(''), 'data:image/webp;base64,' + tiny.toString('base64')];

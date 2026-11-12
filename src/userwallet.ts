@@ -7,6 +7,7 @@ import { chains, esc, short, logo } from './gx';
 import { loadProfile, profileAvatar, profileName } from './names';
 import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
 import { usdRates, type UsdRates } from './shell';
+import CFG from '../config/collections.json';
 import { ownedNfts, insightOn, type OwnedNft } from './insight';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
@@ -16,7 +17,10 @@ type Bal = { k: string; bal: ChainBal; usd: number | null };
 type Asset = { key: string; k: string; kind: 'native' | 'erc20' | 'nft'; label: string; bal: bigint; decimals: number; token?: Hex; nft?: Nft };
 type Tx = { to: Hex; value: bigint; data: Hex };
 const fmt = (n: bigint, d = 18) => Number(formatUnits(n, d)).toLocaleString(undefined, { maximumFractionDigits: 6 });
-const imageUrl = (s: string | null) => !s ? '' : s.startsWith('ipfs://') ? 'https://ipfs.io/ipfs/' + s.slice(7) : /^(https:\/\/|\/img\/|\/media\/)/.test(s) ? (s.startsWith('/media/') ? API + s : s) : '';
+const imageUrl = (s: string | null) => !s ? '' : s.startsWith('ipfs://') ? 'https://ipfs.filebase.io/ipfs/' + s.slice(7) : /^(https:\/\/|\/img\/|\/media\/)/.test(s) ? (s.startsWith('/media/') ? API + s : s) : '';
+// MultiSea's own collections use the site's thumbnails (animated for Island's), whatever image the indexer returned.
+const OWN = new Map(CFG.collections.flatMap(c => c.deployments.map(d => [d.chain + ':' + d.address.toLowerCase(), c] as const)));
+const own = (n: Nft): Nft => { const c = OWN.get(n.chain + ':' + String(n.contract).toLowerCase()); const id = Number(n.id); return c && Number.isInteger(id) && id >= c.idStart && id <= c.idEnd ? { ...n, image: `/img/${c.slug}/s/${id}.webp` } : n; };
 const nftKey = (n: Nft) => `${n.chain}|${n.contract.toLowerCase()}|${n.id}`;
 export function mountUserWallet(root: HTMLElement, address: Hex) {
   const allChains = [...FW_CHAINS, 'abstract'];
@@ -31,10 +35,10 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     (S.nfts || []).filter(n => chains[n.chain] && /^(erc721|erc1155)$/.test(n.standard || '')).forEach(n => out.push({ key: nftKey(n), k: n.chain, kind: 'nft', label: n.name || '#' + n.id, bal: BigInt(n.quantity || '1'), decimals: 0, nft: n }));
     return out;
   };
-  const merge = (list: Nft[]) => { S.nfts = [...new Map([...(S.nfts || []), ...list].map(n => [nftKey(n), n])).values()]; };
+  const merge = (list: Nft[]) => { S.nfts = [...new Map([...(S.nfts || []), ...list.map(own)].map(n => [nftKey(n), n])).values()]; };
   async function nfts() {
     const r = await fetch(`${API}/wallet/${address}/nfts`); if (!r.ok) throw Error(`NFT list unavailable (API ${r.status}).`);
-    const j = await r.json(); S.nfts = j.nfts || []; S.cursors = j.cursors || {}; S.insightPage = {};
+    const j = await r.json(); S.nfts = (j.nfts || []).map(own); S.cursors = j.cursors || {}; S.insightPage = {};
     const failures = new Set<string>(j.failed || []), unsupported: string[] = [];
     await Promise.all((j.unsupported || []).map(async (k: string) => {
       if (!insightOn(k)) { unsupported.push(k); return; }

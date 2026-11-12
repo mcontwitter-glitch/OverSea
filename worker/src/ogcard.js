@@ -67,6 +67,7 @@ async function dataUri(url, ttl = 86400, max = 0, partial = false) {
       if (!f) return '';
       return `data:image/png;base64,${b64(await webpToPng(f, max))}`;
     }
+    if (r.status === 206) { r = await fetch(url, { cf: { cacheTtl: ttl, cacheEverything: true } }); if (!r.ok) return ''; buf = await r.arrayBuffer(); if (buf.byteLength > 4e6) return ''; } // not animated: the partial read isn't a whole image
     let t = (r.headers.get('content-type') || '').split(';')[0].trim();
     if (!t.startsWith('image/')) t = MIME[(url.split('?')[0].split('.').pop() || '').toLowerCase()] || 'image/png';
     if (t === 'image/webp' || new TextDecoder().decode(new Uint8Array(buf, 8, 4)) === 'WEBP') return `data:image/png;base64,${b64(await webpToPng(buf, max))}`;
@@ -85,7 +86,7 @@ const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 // d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? } }
 export async function renderCard(d) {
   const [banner, avatar, itemImg, ...rest] = await Promise.all([
-    dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200, d.partial), dataUri(d.item?.image, 86400, 450),
+    dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200, d.partial), dataUri(d.item?.image, 86400, 450, d.partial),
     ...d.chains.map(c => logoSvg(c)),
     ...(d.banner ? [] : d.tiles.map(t => dataUri(t.url, 86400, 210, d.partial))),
   ]);
