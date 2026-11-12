@@ -3,7 +3,7 @@ import { parseAbi, type Address } from 'viem';
 import { readClient } from './wallet';
 import { esc } from './shell';
 import { pinImage } from './lpmedia';
-import { WORLD_ID, mediaURL, gatewaySvg } from './growthart';
+import { WORLD_ID, mediaURL, gatewaySvg, contractLayeredSvg } from './growthart';
 import { agentAddValue, agentClaim } from './agentdrop';
 
 export const GROWTH = parseAbi([
@@ -55,7 +55,8 @@ export function createGrowthValue(k:string,e:Address,g:Address,type:number,name:
  return pinImage(file).then(art=>agentAddValue(k,e,g,type,name,value,{...v,art},onTx));
 }
 export const claimGrowthValue=(k:string,e:Address,g:Address,id:bigint,kidx:number,v:number,onTx:(h:string)=>void)=>agentClaim(k,e,g,id,kidx,v,onTx);
-export function layerPreview(base:string,arts:string[]){const escXml=(u:string)=>mediaURL(u).replace(/&/g,'&amp;').replace(/"/g,'&quot;');return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 350"><image href="${escXml(base)}" width="350" height="350"/>${arts.filter(Boolean).map(u=>`<image href="${escXml(u)}" width="350" height="350"/>`).join('')}</svg>`);}
+/** Display copy of the exact contract image: same SVG as AgentGrowthArt.compose, ipfs:// hrefs via gateway. */
+export function layerPreview(base:string,arts:string[]){const uri=contractLayeredSvg(base,arts);return uri.startsWith('data:image/svg+xml')?gatewaySvg(uri):mediaURL(uri);}
 export async function loadGrowthToken(k:string,e:Address,g:Address,id:number,kit:Address,thresholds=[0,100,300,600,1000]) {const pre=await readClient(k).readContract({address:e,abi:GROWTH,functionName:'idPrefix'});return loadFullToken(k,e,g,((pre as bigint) << 128n) | BigInt(id),kit,thresholds);}
 export function growthHtml(g: GrowthToken) {
  const next = g.thresholds[g.level + 1], prev = g.thresholds[g.level] || 0;
