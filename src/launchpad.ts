@@ -66,7 +66,7 @@ function listPage() {
   const mine = localDrops().filter(d => d.status === 'pending' || d.status === 'rejected');
   const l = by(tab);
   app.innerHTML = `${navHtml('launchpad')}<section class="page wide ldpage">
-   <div class="ldhero"><div><h1>🚀 Launchpad</h1><p class="mut">Mint new collections on Base, Ethereum, ApeChain, BNB and Robinhood. Pay with any token from any chain. Every drop is reviewed by MultiSea before it goes live, then trades on MultiSea from the first mint.</p></div>
+   <div class="ldhero"><div><h1>🚀 Launchpad</h1><p class="mut">Mint new collections on Base, Ethereum, ApeChain, BNB and Robinhood. Pay with native coins from any of these chains. Every drop is reviewed by MultiSea before it goes live, then trades on MultiSea from the first mint.</p></div>
     <a class="bbtn sm" href="/launchpad/create">+ Create a drop</a></div>
    ${LP_LIVE ? (drops.some(d => d.demo) ? '<div class="ldnote">Drops tagged <b>Demo</b> (LIL FOOTS art) are examples: minting them is a stub. Every other drop is a real on-chain contract.</div>' : '') : '<div class="ldnote">Preview: launchpad contracts are not deployed yet. Drops below are <b>demo data</b> (LIL FOOTS art) and minting is a stub.</div>'}
    <div class="ldtabs" role="tablist">${(['live', 'upcoming', 'ended'] as const).map(k => `<button role="tab" class="ldtab ${tab === k ? 'on' : ''}" data-tab="${k}">${k[0].toUpperCase() + k.slice(1)} <span>${by(k).length}</span></button>`).join('')}</div>
@@ -148,7 +148,7 @@ function mintBox(d: Drop) {
    ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}"><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${isMulti(d) ? (x.chain === HUB ? (isBatched(d) ? 'Instant · cheapest' : 'Instant · supply hub') : 'Confirms via Base') : `${(x.supply - x.minted).toLocaleString()} left`}</em></span></button>`).join('')}</div>` : ''}
    ${isMulti(d) ? mcExplainer(d, c.chain) : ''}
    ${st === 'live' ? `<div class="ldqty"><span class="gh">Quantity</span><div class="qpick"><button data-q="-1" ${qty <= 1 ? 'disabled' : ''} aria-label="Less">−</button><input data-qin type="number" min="1" max="${max}" value="${qty}" aria-label="Quantity"><button data-q="1" ${qty >= max ? 'disabled' : ''} aria-label="More">+</button></div><button class="pill" data-q="max">Max ${max}</button></div>
-   <div class="ldpay"><label class="${pay === 'direct' ? 'on' : ''}"><input type="radio" name="pay" value="direct" ${pay === 'direct' ? 'checked' : ''}><span><b>${esc(chains[c.chain].native)} on ${esc(chains[c.chain].name)}</b><em>Direct mint</em></span></label><label class="${pay === 'relay' ? 'on' : ''}"><input type="radio" name="pay" value="relay" ${pay === 'relay' ? 'checked' : ''}><span><b>Any token, any chain</b><em>Routed by Relay</em></span></label></div>
+   <div class="ldpay"><label class="${pay === 'direct' ? 'on' : ''}"><input type="radio" name="pay" value="direct" ${pay === 'direct' ? 'checked' : ''}><span><b>${esc(chains[c.chain].native)} on ${esc(chains[c.chain].name)}</b><em>Direct mint</em></span></label><label class="${pay === 'relay' ? 'on' : ''}"><input type="radio" name="pay" value="relay" ${pay === 'relay' ? 'checked' : ''}><span><b>Pay from another chain</b><em>Routed by Relay</em></span></label></div>
    ${qtyHint(d, c.chain)}${breakdown(d)}` : ''}
    ${btn}
    ${real ? (realMsg ? `<div class="okbox small">${realMsg}</div>` : '') : isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
@@ -436,8 +436,8 @@ app.addEventListener('click', e => {
       try { return await go(); }
       catch (e: any) {
         if (e?.kind !== 'funds') throw e;
-        if (pay !== 'relay') throw new Error(e.message + ' Or choose "Any token, any chain" to pay from another chain.');
-        // "Any token, any chain": Relay moves funds from another chain to this wallet on the mint chain, then the mint runs.
+        if (pay !== 'relay') throw new Error(e.message + ' Or choose "Pay from another chain" to use ETH, APE or BNB from your other chains.');
+        // "Pay from another chain": Relay moves funds from another chain to this wallet on the mint chain, then the mint runs.
         let arrived = false; realMsg = ''; render();
         await (await import('./xpay')).openXPay({ it: { id: 0, name: `Mint ${n} × ${d.name}`, img: d.img || '', chain: k, contract: addr }, price: e.plan.q.value, currency: chains[k].native, tx: { value: e.plan.q.value.toString() }, orders: [], gas: e.plan.gas, onSold: () => {}, restart: () => { arrived = true; } });
         if (!arrived) throw new Error('Mint not sent. Funds were not moved, or the move did not finish.');
@@ -461,7 +461,7 @@ app.addEventListener('click', e => {
   }
   if (el.dataset.act === 'mint') {
     const c = d.chains.find(x => x.chain === chainSel)!;
-    demoMsg = `✓ Demo only: would mint <b>${qty}</b> × ${esc(d.name)} on ${esc(chains[c.chain].name)}${pay === 'relay' ? ' paying with any token via Relay' : ''}. No transaction was created or sent.${wallet.address ? '' : ' (Connect a wallet to test the allowlist path.)'}`;
+    demoMsg = `✓ Demo only: would mint <b>${qty}</b> × ${esc(d.name)} on ${esc(chains[c.chain].name)}${pay === 'relay' ? ' paying from another chain via Relay' : ''}. No transaction was created or sent.${wallet.address ? '' : ' (Connect a wallet to test the allowlist path.)'}`;
     render();
   }
 });
