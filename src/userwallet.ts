@@ -8,11 +8,11 @@ import { loadProfile, profileAvatar, profileName } from './names';
 import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
 import { usdRates, type UsdRates } from './shell';
 import CFG from '../config/collections.json';
-import { ownedNfts, insightOn, type OwnedNft } from './insight';
+import { ownedNfts, insightOn, walletTransfers, type OwnedNft } from './insight';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
 const ERC1155 = parseAbi(['function safeTransferFrom(address,address,uint256,uint256,bytes)', 'function balanceOf(address,uint256) view returns (uint256)']);
-type Nft = OwnedNft & { quantity?: string };
+type Nft = OwnedNft & { quantity?: string; acquiredTs?: number; mintedTs?: number; acquiredBlock?: number; mintedBlock?: number };
 type Bal = { k: string; bal: ChainBal; usd: number | null };
 type Asset = { key: string; k: string; kind: 'native' | 'erc20' | 'nft'; label: string; bal: bigint; decimals: number; token?: Hex; nft?: Nft };
 type Tx = { to: Hex; value: bigint; data: Hex };
@@ -30,9 +30,55 @@ const nftCard = (n: Nft, me: boolean) => {
   const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chains[n.chain]?.name || n.chain)}${send}</div>`;
   return href ? `<a class="nftc" href="${esc(href)}">${inner}</a>` : `<div class="nftc">${inner}</div>`;
 };
+const NFT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb', 'robinhood'] as const;
+function colInfo(n: Nft): { key: string; label: string } {
+  const x = ownCol(n);
+  if (x) return { key: 'ms:' + x.c.slug, label: x.c.name };
+  const slug = (n.collection || '').trim();
+  const key = slug ? 'col:' + slug.toLowerCase() : 'ct:' + n.chain + ':' + String(n.contract).toLowerCase();
+  const fromName = (n.name || '').replace(/\s*#\s*\d+\s*$/, '').trim();
+  const label = fromName || (slug ? slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : short(n.contract));
+  return { key, label };
+}
+function cmpNew(a: Nft, b: Nft, ts: (n: Nft) => number | undefined, block: (n: Nft) => number | undefined) {
+  const at = ts(a), bt = ts(b);
+  if (at && bt && at !== bt) return bt - at;
+  if (at && !bt) return -1;
+  if (bt && !at) return 1;
+  const ab = block(a), bb = block(b);
+  if (ab && bb && ab !== bb) return bb - ab;
+  if (ab && !bb) return -1;
+  if (bb && !ab) return 1;
+  const aid = Number(a.id), bid = Number(b.id);
+  if (Number.isFinite(aid) && Number.isFinite(bid) && aid !== bid) return bid - aid;
+  if (Number.isFinite(aid) && !Number.isFinite(bid)) return -1;
+  if (Number.isFinite(bid) && !Number.isFinite(aid)) return 1;
+  return (a.name || '#' + a.id).localeCompare(b.name || '#' + b.id, undefined, { numeric: true, sensitivity: 'base' });
+}
+async function attachTimes(list: Nft[], owner: string) {
+  const need = [...new Set(list.map(n => n.chain).filter(insightOn))];
+  if (!need.length) return;
+  const me = owner.toLowerCase();
+  const acquired = new Map<string, { ts: number; block: number }>(), minted = new Map<string, { ts: number; block: number }>();
+  await Promise.all(need.map(k => walletTransfers(k, owner).then(xs => {
+    for (const x of xs) {
+      const key = `${x.chain}|${String(x.contract).toLowerCase()}|${String(x.id)}`;
+      if (x.to.toLowerCase() === me && x.type !== 'burn') {
+        const prev = acquired.get(key); if (!prev || x.ts > prev.ts) acquired.set(key, { ts: x.ts, block: x.block });
+      }
+      if (x.type === 'mint') {
+        const prev = minted.get(key); if (!prev || x.ts < prev.ts) minted.set(key, { ts: x.ts, block: x.block });
+      }
+    }
+  }).catch(() => {})));
+  for (const n of list) {
+    const a = acquired.get(nftKey(n)); if (a) { n.acquiredTs = a.ts; n.acquiredBlock = a.block; }
+    const m = minted.get(nftKey(n)); if (m) { n.mintedTs = m.ts; n.mintedBlock = m.block; }
+  }
+}
 export function mountUserWallet(root: HTMLElement, address: Hex) {
   const allChains = [...FW_CHAINS, 'abstract'];
-  const S = { balances: [] as Bal[], rates: null as UsdRates | null, nfts: null as Nft[] | null, note: '', cursors: {} as Record<string, string>, insightPage: {} as Record<string, number>, busy: false, receive: false };
+  const S = { balances: [] as Bal[], rates: null as UsdRates | null, nfts: null as Nft[] | null, note: '', cursors: {} as Record<string, string>, insightPage: {} as Record<string, number>, busy: false, receive: false, chain: '', col: '', sort: 'recent' as 'recent' | 'minted' | 'az' };
   const isMe = () => !!wallet.address && wallet.address.toLowerCase() === address.toLowerCase();
   const assets = (): Asset[] => {
     const out: Asset[] = [];
@@ -53,6 +99,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
       try { const x = await ownedNfts(k, address); merge(x.nfts); if (x.more) S.insightPage[k] = 1; } catch { failures.add(k); }
     }));
     S.note = [...(j.notes || []), failures.size ? `Couldn't load all NFTs on ${[...failures].map(k => chains[k]?.name || k).join(', ')}; refresh to retry.` : '', unsupported.length ? `NFT indexing unavailable on ${unsupported.map(k => chains[k]?.name || k).join(', ')}.` : ''].filter(Boolean).join(' ');
+    await attachTimes(S.nfts || [], address);
   }
   async function load() {
     if (S.busy) return; S.busy = true; draw();
@@ -67,7 +114,25 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     }));
     await nftTask; S.busy = false; draw();
   }
+  function collections() {
+    const seen = new Map<string, string>();
+    for (const n of S.nfts || []) { const c = colInfo(n); if (!seen.has(c.key)) seen.set(c.key, c.label); }
+    const ms = CFG.collections.map(c => 'ms:' + c.slug);
+    return [...seen.entries()].sort((a, b) => {
+      const ia = ms.indexOf(a[0]), ib = ms.indexOf(b[0]);
+      if (ia >= 0 && ib >= 0) return ia - ib;
+      if (ia >= 0) return -1; if (ib >= 0) return 1;
+      return a[1].localeCompare(b[1], undefined, { sensitivity: 'base' });
+    });
+  }
+  function visible(): Nft[] {
+    const list = (S.nfts || []).filter(n => (!S.chain || n.chain === S.chain) && (!S.col || colInfo(n).key === S.col));
+    if (S.sort === 'az') return [...list].sort((a, b) => (a.name || '#' + a.id).localeCompare(b.name || '#' + b.id, undefined, { numeric: true, sensitivity: 'base' }));
+    if (S.sort === 'minted') return [...list].sort((a, b) => cmpNew(a, b, n => n.mintedTs, n => n.mintedBlock));
+    return [...list].sort((a, b) => cmpNew(a, b, n => n.acquiredTs, n => n.acquiredBlock));
+  }
   function draw() {
+
     const me = isMe(), name = profileName(address) || short(address), avatar = imageUrl(profileAvatar(address) || null);
     const total = S.balances.length && S.balances.every(c => c.usd != null) ? S.balances.reduce((n, c) => n + c.usd!, 0) : null;
     root.innerHTML = `<div class="fw uw"><section class="fwcard fwid glow"><div class="fwtop"><div class="fwnftw">${avatar ? `<img class="fwnft" src="${esc(avatar)}" alt="Profile picture">` : `<div class="fwnft uwletter">${esc(name[0].toUpperCase())}</div>`}</div><div style="min-width:0"><span class="fwtag">MultiSea profile</span><h1>${esc(name)}</h1></div></div>
@@ -83,8 +148,10 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
         (TOKENS[k as FwChain] || []).forEach((t, i) => { const v = c?.bal.tokens[i]; if (v) rows.push(`<div class="fwtok"><b>${fmt(v, t.decimals)} ${esc(t.symbol)}</b></div>`); });
         return `<div class="fwch" data-chain="${k}"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">${c ? fmtUsd(c.usd) : '…'}</span></div>${rows.join('') || `<div class="mut small">${!c ? 'Loading…' : !c.bal.ok ? 'Couldn’t read this chain' : 'Empty'}</div>`}${c && c.bal.tokens.some(v => v == null) ? '<div class="mut small">Some token balances unavailable</div>' : ''}${k === 'abstract' ? '<div class="mut small">Native coin only</div>' : ''}</div>`;
       }).join('')}</div></section>
-      <section class="fwcard fwsec"><div class="sechd"><h3>NFTs${S.nfts ? ' · ' + S.nfts.length : ''}</h3><button class="fwrbtn" data-uw="refresh" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking…' : 'Refresh'}</button></div>
-      ${S.nfts?.length ? `<div class="fwnftg">${S.nfts.map(n => nftCard(n, me)).join('')}</div>` : `<p class="mut small">${S.nfts == null ? S.busy ? 'Loading NFTs…' : 'NFT list unavailable.' : 'No NFTs found.'}</p>`}
+      <section class="fwcard fwsec"><div class="sechd"><h3>NFTs${S.nfts ? ' · ' + visible().length + (visible().length !== S.nfts.length ? ' of ' + S.nfts.length : '') : ''}</h3><div class="nfttools"><select class="sort" data-uw-sort aria-label="Sort NFTs">${[['recent', 'Most recent'], ['minted', 'Recently minted'], ['az', 'A–Z']].map(([v, n]) => `<option value="${v}" ${S.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="fwrbtn" data-uw="refresh" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking…' : 'Refresh'}</button></div></div>
+      ${S.nfts?.length ? `<div class="chips">${[['','All', (S.nfts || []).filter(n => !S.col || colInfo(n).key === S.col).length] as [string, string, number], ...NFT_CHAINS.map(k => [k, chains[k].name, (S.nfts || []).filter(n => n.chain === k && (!S.col || colInfo(n).key === S.col)).length] as [string, string, number])].map(([k, n, c]) => `<button type="button" class="chip ${S.chain === k ? 'on' : ''}" data-nft-chain="${esc(k)}">${k ? logo(k) : ''}${esc(n)} <em>${c}</em></button>`).join('')}</div>
+      <div class="chips">${[['','All', (S.nfts || []).filter(n => !S.chain || n.chain === S.chain).length] as [string, string, number], ...collections().map(([k, n]) => [k, n, (S.nfts || []).filter(x => colInfo(x).key === k && (!S.chain || x.chain === S.chain)).length] as [string, string, number])].map(([k, n, c]) => `<button type="button" class="chip ${S.col === k ? 'on' : ''}" data-nft-col="${esc(k)}">${esc(n)} <em>${c}</em></button>`).join('')}</div>
+      ${visible().length ? `<div class="fwnftg">${visible().map(n => nftCard(n, me)).join('')}</div>` : `<p class="mut small">${S.chain || S.col ? 'No NFTs match these filters.' : 'No NFTs found.'}</p>`}` : `<p class="mut small">${S.nfts == null ? S.busy ? 'Loading NFTs…' : 'NFT list unavailable.' : 'No NFTs found.'}</p>`}
       ${Object.keys(S.cursors).map(k => `<button class="obtn sm" data-more="${k}">More on ${esc(chains[k].name)}</button>`).join('')}${Object.keys(S.insightPage).map(k => `<button class="obtn sm" data-insight="${k}">More on ${esc(chains[k].name)}</button>`).join('')}
       ${S.note ? `<p class="mut small">${esc(S.note)}</p>` : ''}</section></div></div>`;
   }
@@ -229,7 +296,14 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     const selected = pre && assets().find(a => a.key === pre);
     if (selected) showStep(selected); else showList();
   }
+  root.addEventListener('change', e => {
+    const s = e.target as HTMLSelectElement; if (s.hasAttribute('data-uw-sort')) { S.sort = s.value as typeof S.sort; draw(); }
+  });
   root.addEventListener('click', async e => {
+    const chainBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-nft-chain]');
+    if (chainBtn) { S.chain = chainBtn.dataset.nftChain || ''; draw(); return; }
+    const colBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-nft-col]');
+    if (colBtn) { S.col = colBtn.dataset.nftCol || ''; draw(); return; }
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-uw],[data-send],[data-more],[data-insight]'); if (!b || b.hasAttribute('disabled')) return;
     const action = b.dataset.uw;
     if (action === 'copy') navigator.clipboard?.writeText(address).then(() => { b.textContent = b.classList.contains('fwcopy') ? '✓' : 'Copied ✓'; }).catch(() => {});
@@ -244,6 +318,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
         const r = await fetch(`${API}/wallet/${address}/nfts?chain=${k}&next=${encodeURIComponent(S.cursors[k])}`); if (!r.ok) throw Error('NFT page unavailable');
         const j = await r.json(); if (j.failed?.length) throw Error('NFT page unavailable'); merge(j.nfts || []); delete S.cursors[k]; Object.assign(S.cursors, j.cursors || {});
       } else { const j = await ownedNfts(k, address, S.insightPage[k]); merge(j.nfts); if (j.more) S.insightPage[k]++; else delete S.insightPage[k]; }
+      await attachTimes(S.nfts || [], address);
     } catch (e) { S.note = `Couldn't load more NFTs on ${chains[k].name}: ${friendly(e)}`; } draw(); }
   });
   onWallet(() => draw()); loadProfile(address).then(draw); draw(); load();
