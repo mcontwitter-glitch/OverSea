@@ -19,6 +19,12 @@
           "body": "Reduced MultiSea fee for holders (not live)."
         }
       ]
+    },
+    "multi-islands": {
+      "title": "Island's holder area",
+      "minBalance": 1,
+      "lockedText": "Hold an Island to unlock",
+      "perks": []
     }
   }
 }

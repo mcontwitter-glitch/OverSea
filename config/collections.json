@@ -164,8 +164,80 @@
         "_comment": "Bitcoin chip shows 'Coming soon' until the bridge delivery Worker lists >= 1 delivered inscription for this collection; then the chip is live with real Ordinals (no demo/mock). enabled stays false: the bridge listing is the source.",
         "enabled": false,
         "comingSoon": true,
-        "bridge": { "url": "https://ordinals.bigfoot404.biz", "collection": "lil-foots" }
+        "bridge": {
+          "url": "https://ordinals.bigfoot404.biz",
+          "collection": "lil-foots"
+        }
       }
+    },
+    {
+      "slug": "multi-islands",
+      "name": "Island's",
+      "description": "Multisea.io genesis collection of cross chain islands. Each island can float to any chain on multisea.io",
+      "standard": "ERC721",
+      "supply": 100,
+      "idStart": 1,
+      "idEnd": 100,
+      "logo": null,
+      "banner": null,
+      "metadataBase": "ipfs://QmaczreJ6fsJ4N6cP9WK46KbG15R5NrGzrZHspE5zn39YM/",
+      "metadataSuffix": ".json",
+      "imageBase": "ipfs://QmWgynML9HfhGe7iK2y7SQQ3D82RFxQEVajzRyaoQfENoh/",
+      "ipfsGateways": [
+        "https://ipfs.filebase.io/ipfs/",
+        "https://gateway.pinata.cloud/ipfs/"
+      ],
+      "openseaSlug": null,
+      "deployments": [
+        {
+          "chain": "base",
+          "address": "0x5a54e10a40320d6285bdfa323e44b7abecfe87ef",
+          "original": true
+        },
+        {
+          "chain": "ethereum",
+          "address": "0x510b1be747304dd83b296279ccf18ca3a3fbfe88"
+        },
+        {
+          "chain": "apechain",
+          "address": "0x710da1692ba974e7aa67eb071ac4a5d394e6471c"
+        },
+        {
+          "chain": "bnb",
+          "address": "0x710da1692ba974e7aa67eb071ac4a5d394e6471c"
+        },
+        {
+          "chain": "robinhood",
+          "address": "0x8BbA134d6ae56aBF32180754C030c935f28A79Ae"
+        }
+      ],
+      "escrow": [
+        {
+          "chain": "base",
+          "address": "0x6CB09C1Fca57540607f08273c9cD6335287374Ad",
+          "label": "Base escrow"
+        },
+        {
+          "chain": "ethereum",
+          "address": "0x696E180F80cCA3d66D5D5CCF6cb55A7bE3661cFD",
+          "label": "Ethereum escrow"
+        },
+        {
+          "chain": "apechain",
+          "address": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+          "label": "ApeChain escrow"
+        },
+        {
+          "chain": "bnb",
+          "address": "0x8A6F25B25Db5AeFCD76631010A86B0e46663ddd3",
+          "label": "BNB Chain escrow"
+        },
+        {
+          "chain": "robinhood",
+          "address": "0xDFe3Ad4AD4813dd89a822D732D690fDf33372aAe",
+          "label": "Robinhood escrow"
+        }
+      ]
     }
   ],
   "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100"

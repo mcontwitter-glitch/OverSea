@@ -38,7 +38,7 @@ const ipfsPath = u => u.replace('ipfs://', '');
 async function fetchMeta(tokenId) {
   const f = path.join(CACHE, 'meta', tokenId + '.json');
   try { return JSON.parse(await fs.readFile(f, 'utf8')); } catch {}
-  const p = ipfsPath(COL.metadataBase) + tokenId;
+  const p = ipfsPath(COL.metadataBase) + tokenId + (COL.metadataSuffix || '');
   for (let attempt = 0; attempt < 5; attempt++) {
     for (const g of COL.ipfsGateways) {
       try {

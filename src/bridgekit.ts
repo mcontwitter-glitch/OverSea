@@ -4,7 +4,7 @@ import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 export type BCfg = { network: string; mode: string; feeWallet: string; supportedChains: number; lzGas: number; tiers?: { min: number; max: number; eth: string; label?: string }[];
   chains: Record<string, { name: string; chainId: number; eid: number; rpc: string; explorer: string; factory: string | null; logo: string; native?: string; lzScan?: string }>;
-  collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number> }[] };
+  collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number>; kind?: 'omni'; cid?: `0x${string}`; supply?: number }[] };
 let cfgP: Promise<BCfg | null> | null = null;
 // Static config + collections the server auto-listed from creator prepayments (GET /bridge/collections) on mainnet.
 export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null).then(async (c: BCfg | null) => {
@@ -13,6 +13,8 @@ export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.js
   return c; }));
 export const ESCROW = parseAbi(['function quote(uint32,address,uint256,bytes) view returns (uint256,uint256)', 'function bridge(uint32,address,uint256,bytes) payable returns ((bytes32,uint64,(uint256,uint256)))', 'function platformFee() view returns (uint256)']);
 export const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function getApproved(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function approve(address,uint256)', 'function owner() view returns (address)', 'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
+// Launchpad multichain drops (MultiSeaOmniDrop): the holder calls drop.moveTo, priced by the chain's OmniEscrow.quoteMove.
+export const OMNI = parseAbi(['function quoteMove(bytes32,uint32,uint256,address) view returns (uint256,uint256)', 'function moveTo(uint32,uint256,address) payable']);
 export const FACTORY = parseAbi(['function listingFee(uint32[]) view returns (uint256)', 'function list(address,uint32[]) payable returns (uint256,address)', 'function prepay(bytes32,uint32[]) payable', 'function escrowOf(address) view returns (address)']);
 export const sym = (c: { native?: string }) => c.native || 'ETH';
 const chainOf = (c: BCfg['chains'][string]) => defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: sym(c), symbol: sym(c), decimals: 18 }, rpcUrls: { default: { http: [new URL(c.rpc, location.origin).href] } } });
@@ -57,8 +59,8 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
        : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img}${id}.webp" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')
        : `<p class="mut">No ${esc(C().name)} NFTs in this wallet on ${esc(cfg.chains[s.from].name)}.</p>`}</div>
      <label class="bl">Recipient on ${esc(cfg.chains[s.to].name)}<input data-k="recip" placeholder="${esc(wallet.address || '0x…')}" value="${esc(s.recip)}"></label>
-     <div class="bfee"><div><span>Platform fee</span><b>$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
-      <p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p></div>
+     <div class="bfee"><div><span>Platform fee</span><b>${C().kind === 'omni' ? (q ? `${fmtE(q.p)} ${N()}` : '…') : `$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}`}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
+      ${C().kind === 'omni' ? '<p class="mut small">The LayerZero fee is quoted by the escrow and any excess is refunded.</p>' : `<p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p>`}</div>
      <p class="msg ${s.cls}">${s.status}${s.link ? ` <a href="${esc(s.link)}" target="_blank" rel="noopener">View transaction ↗</a>` : ''}</p>
      <button class="bbtn go" data-act="bridge" ${s.busy || (wallet.address && s.sel == null) ? 'disabled' : ''}>${!wallet.address ? 'Connect wallet' : s.sel == null ? 'Select an NFT' : s.busy ? 'Working…' : `Bridge #${s.sel} to ${esc(cfg.chains[s.to].name)}`}</button>
     </div>`;
@@ -68,6 +70,13 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     s.loading = true; draw();
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const token = C().contracts[s.from];
+      if (C().kind === 'omni') { // fixed supply: read ownerOf for every id (one batched JSON-RPC call)
+        const bp = createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href, { batch: { batchSize: 100 } }) });
+        const all = Array.from({ length: C().supply || 0 }, (_, i) => i + 1);
+        const own = await Promise.all(all.map(id => bp.readContract({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null)));
+        s.ids = all.filter((_, i) => (own[i] as string | null)?.toLowerCase() === wallet.address!.toLowerCase());
+        s.loading = false; return draw();
+      }
       const logs = await pub.getLogs({ address: token, event: NFT[5] as any, args: { to: wallet.address as Address }, fromBlock: BigInt(C().fromBlock?.[s.from] || 0) });
       const cand = [...new Set(logs.map((l: any) => Number(l.args.tokenId)))];
       const own = await Promise.all(cand.map(id => pub.readContract({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null)));
@@ -78,7 +87,8 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
   async function quote() {
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const to = (s.recip || wallet.address || cfg.feeWallet) as Address;
-      const [p, lz] = await pub.readContract({ address: C().escrows[s.from], abi: ESCROW, functionName: 'quote', args: [cfg.chains[s.to].eid, to, BigInt(s.sel ?? 1), lzOptions(cfg.lzGas)] });
+      const [p, lz] = C().kind === 'omni' ? await pub.readContract({ address: C().escrows[s.from], abi: OMNI, functionName: 'quoteMove', args: [C().cid!, cfg.chains[s.to].eid, BigInt(s.sel ?? 1), to] })
+        : await pub.readContract({ address: C().escrows[s.from], abi: ESCROW, functionName: 'quote', args: [cfg.chains[s.to].eid, to, BigInt(s.sel ?? 1), lzOptions(cfg.lzGas)] });
       s.quote = { p, lz };
     } catch (e: any) { s.quote = null; s.status = 'Fee quote unavailable: ' + (e.shortMessage || e.message); s.cls = 'err'; }
     draw();
@@ -91,6 +101,12 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     s.busy = true; s.link = ''; s.status = 'Switching network…'; s.cls = 'mut'; draw();
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const w = await walletFor(c); const token = C().contracts[s.from]; const escrow = C().escrows[s.from]; const id = BigInt(s.sel);
+      if (C().kind === 'omni') { // no approval: the drop locks the token in its escrow itself
+        const [p, lz] = await pub.readContract({ address: escrow, abi: OMNI, functionName: 'quoteMove', args: [C().cid!, cfg.chains[s.to].eid, id, to] });
+        s.quote = { p, lz }; s.status = `Confirm the move (${fmtE(p + lz)} ${N()}) in your wallet…`; draw();
+        const h = await w.writeContract({ address: token, abi: OMNI, functionName: 'moveTo', args: [cfg.chains[s.to].eid, id, to], value: p + (lz * 102n) / 100n });
+        await finish(h);
+      } else {
       const ok = (await pub.readContract({ address: token, abi: NFT, functionName: 'getApproved', args: [id] })).toLowerCase() === escrow.toLowerCase()
         || (await pub.readContract({ address: token, abi: NFT, functionName: 'isApprovedForAll', args: [wallet.address as Address, escrow] }));
       if (!ok) { s.status = `Step 1/2: approve the escrow for #${s.sel} in your wallet…`; draw();
@@ -99,6 +115,9 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       s.quote = { p, lz }; s.status = `Step 2/2: confirm the bridge (${fmtE(p + lz)} ${N()}) in your wallet…`; draw();
       const value = p + (lz * 102n) / 100n; // small buffer; excess refunded by the escrow
       const h = await w.writeContract({ address: escrow, abi: ESCROW, functionName: 'bridge', args: [cfg.chains[s.to].eid, to, id, lzOptions(cfg.lzGas)], value });
+      await finish(h);
+      }
+      async function finish(h: `0x${string}`) {
       const r = await pub.waitForTransactionReceipt({ hash: h });
       if (r.status !== 'success') throw new Error('Transaction reverted');
       s.link = cfg.mode === 'fork' ? '' : `https://${cfg.network === 'mainnet' ? '' : 'testnet.'}layerzeroscan.com/tx/${h}`;
@@ -107,6 +126,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       for (let i = 0; i < 60; i++) { await new Promise(r => setTimeout(r, 3000));
         const o = await dpub.readContract({ address: dtoken, abi: NFT, functionName: 'ownerOf', args: [id] }).catch(() => null);
         if ((o as string | null)?.toLowerCase() === to.toLowerCase()) { s.status = `✓ Delivered: #${s.sel} is now on ${dst.name}.`; break; } }
+      }
     } catch (e: any) { s.status = e?.code === 4001 ? 'Rejected in wallet.' : (e.shortMessage || e.message || String(e)); s.cls = 'err'; }
     s.busy = false; await loadIds(); quote();
   }

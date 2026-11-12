@@ -1,4 +1,5 @@
 import { shareBtns } from './share';
+import GATES from '../config/gates.json';
 import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
@@ -193,7 +194,7 @@ function header() {
       ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary) ?? liveUsd)}
     </div>
   </div>
-  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
+  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}</div></div>
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${st.tab === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
