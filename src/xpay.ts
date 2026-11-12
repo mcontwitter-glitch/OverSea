@@ -8,7 +8,7 @@ import { gasUnits } from './txgas';
 
 const chains = CFG.chains as Record<string, any>;
 const SEAPORT = CFG.seaport;
-export type XPayCtx = { it: { id: number; name: string; img: string; chain: string; contract: string }; price: bigint; currency: string; tx: any; orders: any[]; onSold: (id: number) => void; restart: () => void };
+export type XPayCtx = { it: { id: number; name: string; img: string; chain: string; contract: string }; price: bigint; currency: string; tx: any; orders: any[]; onSold: (id: number) => void; restart: () => void; gas?: bigint };
 const f6 = (x: bigint) => (+formatUnits(x, 18)).toLocaleString(undefined, { maximumFractionDigits: 6 });
 const usd = (v: number) => '≈ $' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -29,7 +29,7 @@ export async function openXPay(ctx: XPayCtx) {
     if (oneStep) { call = advancedFulfillCalldata(order, me); need = call.value; }
     else {
       const [bal, gp] = await Promise.all([destPub.getBalance({ address: me }), destPub.getGasPrice().catch(() => 0n)]);
-      const gasBuf = gp * gasUnits(it.chain) * 2n; /* Abstract zkVM meters ~2.2M gas for a fulfill */ const want = BigInt(ctx.tx.value || 0) + gasBuf;
+      const gasBuf = gp * (ctx.gas ?? gasUnits(it.chain)) * 2n; /* Abstract zkVM meters ~2.2M gas for a fulfill */ const want = BigInt(ctx.tx.value || 0) + gasBuf;
       need = want > bal ? want - bal : 0n; if (need < 10n ** 13n) need = 10n ** 13n;
     }
     // Balances on every other chain (native), valued in USD.

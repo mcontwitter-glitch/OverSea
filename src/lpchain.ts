@@ -3,8 +3,9 @@
 //  - creator (/launchpad/<slug>): createDrop / createOmniDrop with the approver's signature, then reports the address
 //  - collectors: mint (single chain: price × qty; multichain: quoteMint, incl. hub value from a non-hub chain)
 import LPC from '../config/launchpad.json';
+import CFG from '../config/collections.json';
 import ABI from './lpabi.json';
-import { createWalletClient, custom, decodeEventLog, getContractAddress, type Address, type Abi } from 'viem';
+import { createWalletClient, custom, decodeEventLog, getContractAddress, formatUnits, parseAbi, type Address, type Abi } from 'viem';
 import { wallet, ensureChain, readClient, vchain } from './wallet';
 import { api } from './auth';
 
@@ -20,7 +21,11 @@ const OMNI_CID = [{ type: 'function', name: 'collectionId', stateMutability: 'vi
 
 async function walletOn(k: string) {
   if (!wallet.address || !wallet.provider) throw new Error('Connect your wallet first.');
-  await ensureChain(k);
+  try { await ensureChain(k); }
+  catch (e: any) { // e.g. Coinbase smart wallets (Base app) cannot add ApeChain or Robinhood
+    if (e?.code === 4001 || /reject|denied|cancel/i.test(e?.message || '') || e?.kind === 'wrong-chain') throw e;
+    const n = (CFG.chains as any)[k]?.name || k; throw new Error(`Your wallet can't switch to ${n}. Pick another chain to mint on (Base works in every wallet).`);
+  }
   return createWalletClient({ chain: vchain(k), transport: custom(wallet.provider), account: wallet.address as Address });
 }
 // Worker JSON has bigints as decimal strings: rebuild them from the ABI types.
@@ -84,15 +89,39 @@ export async function quote(multi: boolean, k: string, drop: Address, phaseId: n
   const [price, lz] = (await readClient(k).readContract({ address: drop, abi: O, functionName: 'quoteMint', args: [BigInt(phaseId), BigInt(qty), to, hubValue] })) as [bigint, bigint];
   return { value: price + lz, price, lz, hubValue };
 }
-export async function mint(multi: boolean, k: string, drop: Address, phaseId: number, qty: number, proof: `0x${string}`[], unitWei: bigint, onTx: (h: string) => void) {
+// Contract errors, so a revert reads as a reason instead of a raw selector.
+const MINT_ERR = parseAbi(['error IsPaused()', 'error PhaseNotActive()', 'error NotAllowlisted()', 'error WalletLimit()', 'error PhaseSoldOut()', 'error PhaseSoldOut(uint256 left)', 'error SoldOut()', 'error SoldOut(uint256 left)', 'error WrongPayment(uint256 required)', 'error BadParams()']);
+function mintError(e: any, qty: number): Error {
+  const r = e?.walk?.((x: any) => x?.data?.errorName) || e?.cause; const n = r?.data?.errorName; const a = r?.data?.args;
+  const msg: Record<string, string> = {
+    WalletLimit: `That is over this wallet's mint limit for the phase (it counts mints on every chain). Lower the quantity.`,
+    SoldOut: a?.[0] ? `Only ${a[0]} left. Lower the quantity.` : 'Sold out.', PhaseSoldOut: a?.[0] ? `Only ${a[0]} left in this phase. Lower the quantity.` : 'This phase is sold out.',
+    PhaseNotActive: "This mint phase isn't open right now.", NotAllowlisted: 'This wallet is not on the allowlist.', IsPaused: 'Minting is paused.',
+    WrongPayment: 'The price changed. Refresh the page and try again.', BadParams: qty > 50 ? 'At most 50 per transaction.' : 'The mint was rejected. Refresh the page and try again.',
+  };
+  return n && msg[n] ? new Error(msg[n]) : e;
+}
+/** Collector: price, gas and balance for one mint. Gas is estimated with the wallet's balance topped up (state override), so a
+ *  short balance shows as a clear message here instead of an RPC error, and smart wallets (Coinbase) estimate like any EOA. */
+export async function mintPlan(multi: boolean, k: string, drop: Address, phaseId: number, qty: number, proof: `0x${string}`[], unitWei: bigint) {
   const to = wallet.address as Address; const q = await quote(multi, k, drop, phaseId, qty, unitWei, to);
   const args: any = multi ? [to, BigInt(phaseId), BigInt(qty), proof, q.hubValue] : [to, BigInt(phaseId), BigInt(qty), proof];
-  const pub = readClient(k); const abi = multi ? O : D;
-  const gas = await pub.estimateContractGas({ address: drop, abi, functionName: 'mint', args, value: q.value, account: to });
-  const w = await walletOn(k);
-  const hash = await w.writeContract({ address: drop, abi, functionName: 'mint', args, value: q.value, gas: (gas * 125n) / 100n, chain: vchain(k), account: to });
+  const pub = readClient(k); const abi = [...(multi ? O : D), ...MINT_ERR] as Abi;
+  let est: bigint;
+  try { est = await pub.estimateContractGas({ address: drop, abi, functionName: 'mint', args, value: q.value, account: to, stateOverride: [{ address: to, balance: q.value + 10n ** 21n }] }); }
+  catch (e: any) { throw mintError(e, qty); }
+  const [bal, gp] = await Promise.all([pub.getBalance({ address: to }), pub.getGasPrice().catch(() => 0n)]) as [bigint, bigint];
+  const gas = (est * 125n) / 100n;
+  return { q, args, abi, gas, bal, need: q.value + gas * gp };
+}
+export async function mint(multi: boolean, k: string, drop: Address, phaseId: number, qty: number, proof: `0x${string}`[], unitWei: bigint, onTx: (h: string) => void) {
+  const to = wallet.address as Address; const p = await mintPlan(multi, k, drop, phaseId, qty, proof, unitWei);
+  if (p.bal < p.need) { const c = (CFG.chains as any)[k]; const nat = c?.native || 'ETH'; const f = (w: bigint) => (+formatUnits(w, 18)).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    throw Object.assign(new Error(`Not enough ${nat} on ${c?.name || k}: this mint needs about ${f(p.need)} ${nat} (price + gas) and the wallet has ${f(p.bal)}.`), { kind: 'funds', plan: p }); }
+  const pub = readClient(k); const w = await walletOn(k);
+  const hash = await w.writeContract({ address: drop, abi: p.abi, functionName: 'mint', args: p.args, value: p.q.value, gas: p.gas, chain: vchain(k), account: to });
   onTx(hash); const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('mint reverted');
-  return { hash, ...q };
+  return { hash, ...p.q };
 }
 
 // Delayed reveal (MultiSeaDrop and MultiSeaOmniDrop share these): owner-only reveal(baseURI), one tx per chain's contract.

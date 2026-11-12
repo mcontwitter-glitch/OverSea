@@ -431,8 +431,18 @@ app.addEventListener('click', e => {
       if (isAgentDrop(d)) { const am = await import('./agentdrop');
         const why = await am.agentMintGate(k, (d as any).addresses[k]); if (why) throw new Error(why);
         return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }, ai, proof, unit); }
-      const m = await import('./lpchain');
-      return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
+      const m = await import('./lpchain'); const addr = (d as any).addresses[k];
+      const go = () => m.mint(isMulti(d), k, addr, ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); });
+      try { return await go(); }
+      catch (e: any) {
+        if (e?.kind !== 'funds') throw e;
+        if (pay !== 'relay') throw new Error(e.message + ' Or choose "Any token, any chain" to pay from another chain.');
+        // "Any token, any chain": Relay moves funds from another chain to this wallet on the mint chain, then the mint runs.
+        let arrived = false; realMsg = ''; render();
+        await (await import('./xpay')).openXPay({ it: { id: 0, name: `Mint ${n} × ${d.name}`, img: d.img || '', chain: k, contract: addr }, price: e.plan.q.value, currency: chains[k].native, tx: { value: e.plan.q.value.toString() }, orders: [], gas: e.plan.gas, onSold: () => {}, restart: () => { arrived = true; } });
+        if (!arrived) throw new Error('Mint not sent. Funds were not moved, or the move did not finish.');
+        return go();
+      } })()
       .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; loadOnchain().catch(() => {}); })
       .catch(e => { realMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { realBusy = false; render(); });
     return;
