@@ -96,6 +96,7 @@ async function loadActivity() {
   }).catch(e => console.warn('[insight activity]', d.chain, e?.message))));
   perf.activityInsightAllMs = performance.now() - t; perf.activityInsightChains = n; perf.newestTs = Math.max(...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activityInsight = String(n);
 }
+let primVol: Record<string, number> | null = null; // launchpad drops: primary mint volume read from chain
 const listMap = new Map<number, Listing>();
 const fillMap = (ls: Listing[]) => { listMap.clear(); ls.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); }); };
 fillMap(listings);
@@ -178,7 +179,7 @@ function findEthUsd(o: any): number | null { if (!o || typeof o !== 'object') re
 function mcapStat(floorEth: number | null | undefined, supply: number, usd: number | null) { return mcapStatHtml(mcapUsd(floorEth, supply, usd)); }
 function header() {
   const pc = summary?.perChain || {};
-  const vol = summary?.volume || {};
+  const vol: Record<string, number> = { ...(summary?.volume || {}) }; if (primVol) for (const [c, v] of Object.entries(primVol)) if (v > 0) vol[c] = (vol[c] || 0) + v;
   const volMain = Object.keys(vol).length ? Object.entries(vol).map(([c, v]) => `${fmt(v as number)} ${c}`).join(' + ') : '-';
   const volTip = deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c] && Object.keys(pc[c].volume).length ? Object.entries(pc[c].volume).map(([k, v]) => fmt(v as number) + ' ' + k).join(' + ') : pc[c]?.historyComplete ? '0' : '-'}</b></div>`).join('');
   const fl = summary?.floor;
@@ -196,7 +197,7 @@ function header() {
       </div>
     </div>
     <div class="stats">
-      <div class="stat tip"><b>${volMain}</b><span>Total volume ⓘ</span><div class="tipbox">${volTip}${pc.bitcoin ? `<div class="tipr">${logo('bitcoin')}<span>Bitcoin floor</span><b>${pc.bitcoin.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) : '-'}</b></div>` : ''}<div class="tipnote">${summary?.volumeSource === 'opensea' ? 'Source: OpenSea API' : 'On-chain Seaport 1.6 sales'}</div></div></div>
+      <div class="stat tip"><b>${volMain}</b><span>Total volume ⓘ</span><div class="tipbox">${volTip}${pc.bitcoin ? `<div class="tipr">${logo('bitcoin')}<span>Bitcoin floor</span><b>${pc.bitcoin.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) : '-'}</b></div>` : ''}<div class="tipnote">${summary?.volumeSource === 'opensea' ? 'Source: OpenSea API' : 'On-chain Seaport 1.6 sales'}${primVol ? ' + primary mints' : ''}</div></div></div>
       <div class="stat"><b>${fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}${/^W?ETH$/.test(fl.currency) ? '' : ` (≈ ${fmt(fl.priceEth)} ETH)`}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
       <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
@@ -425,6 +426,8 @@ const apiLoad = async () => { loadLiveListings().then(render); try { const j = a
 checkApi().then(apiLoad); onApiUp(apiLoad);
 render();
 loadLiveOwners();
+// Launchpad drops: primary mint volume read from chain (null for collections that are not drops).
+import('./dropstats').then(D => D.primaryVolume(COL.deployments)).then(p => { if (p) { primVol = p; render(); } }).catch(() => {});
 loadOrdinals();
 if (params.get('item')) modal(+params.get('item')!);
 if (params.get('tab')) { st.tab = params.get('tab')!; if (st.tab === 'activity') loadActivity(); render(); }

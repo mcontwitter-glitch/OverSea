@@ -6,15 +6,41 @@ const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
 type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
 const fmt = (n: number) => (n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(4)).toString());
-let cards: Card[] = []; let is404 = false;
+let cards: Card[] = []; let is404 = false; const sums: Record<string, any> = {};
 export function notFound() { is404 = true; render(); }
 async function staticCards() {
   return Promise.all(CFG.collections.map(async c => {
-    const s = await fetch(`/data/${c.slug}/summary.json`).then(r => r.json()).catch(() => null);
-    const vol = s?.volume ? Object.entries(s.volume).map(([k, v]) => `${fmt(v as number)} ${k}`).join(' + ') : '-';
+    const s = sums[c.slug] = await fetch(`/data/${c.slug}/summary.json`).then(r => r.json()).catch(() => null);
+    const vol = s?.volume && Object.keys(s.volume).length ? Object.entries(s.volume).map(([k, v]) => `${fmt(v as number)} ${k}`).join(' + ') : '-';
     return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/${Math.min(2396, c.idEnd)}.webp`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: mcapUsd(s?.floor ? (s.floor.priceEth ?? s.floor.price) : null, c.supply, JSON.stringify(s ?? {}).match(/"ethUsd":([\d.]+)/)?.[1] ? +JSON.stringify(s).match(/"ethUsd":([\d.]+)/)![1] : await ethUsdRate()), volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
   }));
 }
+// After first paint: live floor (OpenSea + MultiSea native listings, as on the collection page), and for launchpad drops
+// primary mint volume and unique holders read from chain. The summary.json snapshot stays if a read fails.
+async function liveStatic() {
+  const DS = await import('./dropstats');
+  await Promise.all(CFG.collections.map(async c => {
+    const card = cards.find(x => x.slug === c.slug), s = sums[c.slug]; if (!card || !s) return;
+    const prim = await DS.primaryVolume(c.deployments);
+    const [osr, nr, holders] = await Promise.all([
+      fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${API}/native/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
+      prim ? DS.uniqueHolders(c as any) : null]);
+    if (prim) card.volume = DS.volText(DS.addVol(prim, s.volume || {}));
+    if (holders) card.owners = holders.toLocaleString();
+    if (osr || nr) {
+      const eth = (l: any) => /^W?ETH$/.test(l.currency) ? l.price : s.rates?.[l.currency]?.eth ? l.price * s.rates[l.currency].eth : null;
+      const os = osr?.listings || [];
+      const px = [...os, ...(nr?.listings || [])].map(eth).filter((x: number | null): x is number => x != null && x > 0);
+      if (!os.length && s.floor) px.push(s.floor.priceEth ?? s.floor.price);
+      const f = px.length ? Math.min(...px) : null;
+      card.floor = f ? `${fmt(f)} ETH` : '-';
+      card.mcap = mcapUsd(f, c.supply, findUsd(s) ?? await ethUsdRate());
+    }
+  }));
+  render();
+}
+const findUsd = (s: any): number | null => { const m = JSON.stringify(s ?? {}).match(/"ethUsd":([\d.]+)/); return m ? +m[1] : null; };
 const tnum = (x?: string) => { const m = (x || '').replace(/[$,]/g, '').match(/[\d.]+/); return m ? +m[0] : -1; };
 const SORTS = [['featured', 'Featured'], ['volume', 'Volume'], ['floor', 'Floor'], ['newest', 'Newest']];
 let q = '', sort = 'featured', showAll = false, chain = new URLSearchParams(location.search).get('chain') || ''; const LIMIT = 10;
@@ -90,7 +116,7 @@ function bindHome() {
   app.querySelector('[data-act="explore"]')?.addEventListener('click', e => { e.preventDefault(); document.getElementById('collections')?.scrollIntoView({ behavior: 'smooth' }); });
 }
 bindNav();
-cards = await staticCards(); render();
+cards = await staticCards(); render(); liveStatic().catch(() => {});
 onWallet(render);
 let homeLoaded = false;
 const homeLoad = async () => {
