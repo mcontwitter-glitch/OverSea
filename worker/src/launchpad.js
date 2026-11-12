@@ -95,7 +95,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   // deployed: true only once POST /launchpad/deployed verified a contract on-chain against a factory (status 'live').
   // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
   // Delayed reveal: the revealed baseURI stays private until the creator reveals (GET /launchpad/reveal-uri/<slug>).
-  const pub = d => ({ ...d, bridgePrepay: undefined, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
+  const pub = d => ({ ...d, creator: d.creator || d.submitter, bridgePrepay: undefined, baseURI: d.reveal === 'delayed' ? undefined : d.baseURI, submitter: undefined, approval: undefined, allowlists: undefined, deployed: d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0 });
 
   const AG = LP.agentDrops || { enabled: false };
   // Agent drop: single chain; full phases via AgentDropKit; art = uploaded media folder (+ optional death image), metadata JSON onchain.

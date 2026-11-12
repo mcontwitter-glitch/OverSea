@@ -311,11 +311,11 @@ async function handle(req, env, url, ctx) {
   // --- collections ---
   if (M === 'GET' && p[0] === 'collections' && p.length === 1) {
     const list = await env.COLLECTIONS.list({ prefix: 'col:' });
-    const cols = (await Promise.all(list.keys.map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).map(c => ({ ...c, submitter: undefined }));
+    const cols = (await Promise.all(list.keys.map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).map(c => ({ ...c, creator: c.creator || c.submitter || undefined, submitter: undefined }));
     const ovr = Object.fromEntries(await Promise.all(Object.keys(STATIC).map(async s => [s, await env.COLLECTIONS.get('ovr:' + s, 'json')])));
     return { collections: cols, overrides: ovr };
   }
-  if (M === 'GET' && p[0] === 'collections' && p.length === 2) { const c = await getCollection(env, p[1]); if (!c) bad('not found', 404); return { collection: { ...c, submitter: undefined } }; }
+  if (M === 'GET' && p[0] === 'collections' && p.length === 2) { const c = await getCollection(env, p[1]); if (!c) bad('not found', 404); return { collection: { ...c, creator: c.creator || c.submitter || undefined, submitter: undefined } }; }
   if (M === 'GET' && p[0] === 'collections' && p[2] === 'can-edit') { const a = url.searchParams.get('address'); if (!ADDR.test(a || '')) bad('address required'); return await canEdit(env, p[1], a); }
 
   if (M === 'POST' && p[0] === 'submit') {
@@ -449,7 +449,7 @@ async function handle(req, env, url, ctx) {
     if (b.royalty !== undefined) { const r = b.royalty; if (r === null || !r.bps) patch.royalty = null; else { if (!ADDR.test(r.recipient || '') || !Number.isFinite(+r.bps) || +r.bps < 0 || +r.bps > 1000) bad('royalty: recipient address and 0-10% required'); patch.royalty = { recipient: lc(r.recipient), bps: Math.floor(+r.bps) }; } }
     if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...patch }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return { ok: true, collection: v, via: perm.why }; }
     const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
-    const v = { ...cur, ...patch }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return { ok: true, collection: { ...v, submitter: undefined }, via: perm.why };
+    const v = { ...cur, ...patch }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return { ok: true, collection: { ...v, creator: v.creator || v.submitter || undefined, submitter: undefined }, via: perm.why };
   }
 
   // --- LIL FOOTS foot wallets: NFTs held by a foot's token-bound account (ERC-6551), all OpenSea chains in scope ---

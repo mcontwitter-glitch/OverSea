@@ -697,3 +697,11 @@ body:has(.gate[data-gate=open] .holderchat){overflow:hidden}.gate[data-gate=open
 .h3b{align-items:center}.h3b>.bbtn.big,.h3b>.obtn.big{box-sizing:border-box;display:inline-flex!important;align-items:center;justify-content:center;flex:0 0 220px;width:220px!important;min-width:0;height:56px;min-height:0;margin:0!important;padding:0 16px;font-size:16px;line-height:1.2;border-radius:12px;border-width:1px;white-space:nowrap;vertical-align:middle}
 @media (max-width:640px){.h3b>.bbtn.big,.h3b>.obtn.big{flex:1 1 0;width:auto!important;height:52px;padding:0 10px;font-size:15px;white-space:normal;text-align:center}}
 .sharebtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.sharebtns .obtn.sm{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;font-size:12.5px;line-height:1.2}.sharebtns .obtn.on{border-color:#45bdfa;color:#45bdfa}
+
+/* Founder panel (collection page) */
+.wbox.fnd{max-width:460px}.fndsec{margin:16px 0 0;padding-top:14px;border-top:1px solid #222}.fndsec:first-child{margin-top:0;padding-top:0;border:0}.fndsec h4{margin:0 0 8px;font-size:15px}
+.fndr{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #1c1c1c}.fndr .fndm{flex:1;min-width:0}.fndpick{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 0}
+.fnd input[type=checkbox]{display:inline-block;width:auto;margin:0;flex:none;accent-color:#45bdfa}
+.fnd .chk{display:flex;align-items:flex-start;gap:8px;white-space:normal;font-weight:500}
+.fndpick .chk{align-items:center}
+.fndmsg{margin:12px 0 0}
