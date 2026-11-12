@@ -1,1 +1,0 @@
-export{t as autoConnectBaseAccountSDK,n as connectBaseAccountSDK}from"./base-account-web-C6jEp_eo.js";
