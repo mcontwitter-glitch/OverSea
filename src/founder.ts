@@ -55,6 +55,11 @@ type S = {
 let S: S | null = null; let box: HTMLElement | null = null;
 
 function wc(k: string) { return createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) }); }
+// Wallet estimates can under-run (the Island's flush OOGed at the raw estimate). Buffer 1.5x with a floor.
+async function bufferedGas(pc: ReturnType<typeof readClient>, req: Parameters<ReturnType<typeof readClient>['estimateContractGas']>[0], floor: bigint) {
+  const est = await pc.estimateContractGas(req as any); const padded = est * 15n / 10n; return padded > floor ? padded : floor;
+}
+
 function account() { const a = wallet.address as Hex | undefined; if (!a || !wallet.provider) throw new Error('Connect your wallet first.'); return a; }
 
 export function openFounder(col: FounderCol) {
@@ -227,8 +232,9 @@ async function doWithdraw() {
       S.msg = `Switch to ${esc(r.name)} and sign withdraw…`; draw();
       await ensureChain(r.k);
       const pc = readClient(r.k);
-      await pc.simulateContract({ address: r.address, abi: DROP, functionName: 'withdraw', account: me });
-      const hash = await wc(r.k).writeContract({ account: me, chain: vchain(r.k), address: r.address, abi: DROP, functionName: 'withdraw' });
+      const wd = { address: r.address, abi: DROP, functionName: 'withdraw' as const, account: me };
+      await pc.simulateContract(wd);
+      const hash = await wc(r.k).writeContract({ ...wd, chain: vchain(r.k), gas: await bufferedGas(pc, wd, 300_000n) });
       S.withdrawn.add(r.k);
       S.msg = `Withdrawn on ${esc(r.name)}. <a href="${esc(chains[r.k].explorer)}/tx/${hash}" target="_blank" rel="noopener">Tx ↗</a>`;
       draw();
@@ -254,8 +260,9 @@ async function doRoyalty() {
       S.msg = `Switch to ${esc(r.name)} and sign the royalty change…`; draw();
       await ensureChain(r.k);
       const pc = readClient(r.k);
-      await pc.simulateContract({ address: r.address, abi: DROP, functionName: 'setRoyalty', args: [S.royTo as Hex, bps], account: me });
-      const hash = await wc(r.k).writeContract({ account: me, chain: vchain(r.k), address: r.address, abi: DROP, functionName: 'setRoyalty', args: [S.royTo as Hex, bps] });
+      const sr = { address: r.address, abi: DROP, functionName: 'setRoyalty' as const, args: [S.royTo as Hex, bps] as const, account: me };
+      await pc.simulateContract(sr);
+      const hash = await wc(r.k).writeContract({ ...sr, chain: vchain(r.k), gas: await bufferedGas(pc, sr, 200_000n) });
       S.sent.add('roy:' + r.k);
       S.msg = `Royalty updated on ${esc(r.name)}. <a href="${esc(chains[r.k].explorer)}/tx/${hash}" target="_blank" rel="noopener">Tx ↗</a>`;
       draw();
@@ -288,8 +295,9 @@ async function doAirdrop() {
         S.msg = `Switch to ${esc(r.name)} and sign the airdrop${parts.length > 1 ? ` (${i + 1}/${parts.length})` : ''}…`; draw();
         await ensureChain(k);
         const pc = readClient(k);
-        await pc.simulateContract({ address: MC3_ADDR, abi: MC3, functionName: 'aggregate3Value', args: [calls], account: me, value: sent });
-        const hash = await wc(k).writeContract({ account: me, chain: vchain(k), address: MC3_ADDR, abi: MC3, functionName: 'aggregate3Value', args: [calls], value: sent });
+        const air = { address: MC3_ADDR, abi: MC3, functionName: 'aggregate3Value' as const, args: [calls] as const, account: me, value: sent };
+        await pc.simulateContract(air);
+        const hash = await wc(k).writeContract({ ...air, chain: vchain(k), gas: await bufferedGas(pc, air, 500_000n) });
         S.chunkAt[k] = i + 1;
         S.msg = `Sent on ${esc(r.name)}${parts.length > 1 ? ` (${i + 1}/${parts.length})` : ''}. <a href="${esc(chains[k].explorer)}/tx/${hash}" target="_blank" rel="noopener">Tx ↗</a>`;
         draw();

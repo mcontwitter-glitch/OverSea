@@ -43,8 +43,11 @@ export async function doFlush(i: number) {
     const pool = await pc.readContract({ address: r.escrow, abi: ESC, functionName: 'poolOf', args: [r.cid] }) as bigint;
     const value = pool >= fees ? 0n : (fees - pool) * 12n / 10n;
     const account = wallet.address as Hex;
-    await pc.simulateContract({ address: r.escrow, abi: ESC, functionName: 'flush', args: [r.cid], account, value });
-    const hash = await createWalletClient({ chain: vchain('base'), transport: custom(wallet.provider) }).writeContract({ account, chain: vchain('base'), address: r.escrow, abi: ESC, functionName: 'flush', args: [r.cid], value });
+    const flush = { address: r.escrow, abi: ESC, functionName: 'flush' as const, args: [r.cid] as const, account, value };
+    await pc.simulateContract(flush);
+    const est = await pc.estimateContractGas(flush);
+    const gas = est * 16n / 10n > 2_000_000n ? est * 16n / 10n : 2_000_000n; // wallet estimate alone was 946k and both live flushes ran out of gas
+    const hash = await createWalletClient({ chain: vchain('base'), transport: custom(wallet.provider) }).writeContract({ ...flush, account, chain: vchain('base'), gas });
     r.msg = `Sent. <a href="https://basescan.org/tx/${hash}" target="_blank" rel="noopener">Base tx ↗</a> · LayerZero delivers to each chain in a few minutes (<a href="https://layerzeroscan.com/tx/${hash}" target="_blank" rel="noopener">LayerZero Scan ↗</a>).`;
     redraw(); await pc.waitForTransactionReceipt({ hash }); r.busy = false; const keep = r.msg; await loadFlush(redraw); const n = rows?.find(x => x.cid === r.cid); if (n) n.msg = keep; redraw();
   } catch (e: any) { r.busy = false; r.msg = `<span class="err">${esc(e?.code === 4001 ? 'Rejected in wallet.' : friendly(e))}</span>`; redraw(); }
