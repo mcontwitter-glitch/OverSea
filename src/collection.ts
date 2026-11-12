@@ -384,7 +384,7 @@ app.addEventListener('click', e => {
   const ca = (e.target as HTMLElement).closest('[data-cancelall]') as HTMLElement | null;
   if (ca) { const k = ca.dataset.cancelall!; import('./sell').then(m => m.cancelAllNative(k, myNative()[k] || 0, () => { const me = wallet.address?.toLowerCase(); [...listMap].forEach(([id, l]) => { if (l.source === 'multisea' && l.chain === k && l.seller?.toLowerCase() === me) listMap.delete(id); }); render(); })); return; }
   if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
-  if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, deployments: COL.deployments, creator: ovr.creator }); return; }
+  if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator }); return; }
   if (act?.dataset.act === 'sweep') { import('./cart').then(c => c.openSweep(cartItems(), COL.name)); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }
@@ -408,7 +408,7 @@ async function refreshEditable() {
   const addr = wallet.address;
   const jobs: Promise<void>[] = [];
   if (apiReady && addr) jobs.push((async () => { try { editable = !!(await (await fetch(`${API}/collections/${COL.slug}/can-edit?address=${addr}`)).json()).ok; } catch {} })());
-  if (addr) jobs.push(isFounder({ name: COL.name, deployments: COL.deployments, creator: ovr.creator }).then(v => { founder = v; }));
+  if (addr) jobs.push(isFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator }).then(v => { founder = v; }));
   await Promise.all(jobs);
   render();
 }

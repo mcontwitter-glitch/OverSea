@@ -5,9 +5,10 @@ import { concat, createWalletClient, custom, encodeAbiParameters, formatEther, g
 import CFG from '../config/collections.json';
 import { wallet, readClient, ensureChain, vchain, friendly } from './wallet';
 import { logo, esc, short } from './gx';
+import { loadFlush, founderFlushHtml, doFlush } from './flushadmin';
 
 export type Dep = { chain: string; address: string };
-export type FounderCol = { name: string; deployments: Dep[]; creator?: string | null };
+export type FounderCol = { name: string; slug?: string; deployments: Dep[]; creator?: string | null };
 const chains = CFG.chains as Record<string, { name: string; chainId: number; native: string; explorer: string }>;
 const DROP = parseAbi([
   'function owner() view returns (address)',
@@ -104,6 +105,7 @@ async function load() {
       S.royTo = recv; S.royPct = (Number(amt) / 100).toString();
     } catch {}
   }
+  if (S.col.slug && rows.some(r => r.omni)) await loadFlush(draw).catch(() => {});
 }
 
 function draw() {
@@ -138,6 +140,7 @@ function draw() {
   const airLabel = airTodo.length && S.sent.size ? 'Resume airdrop' : 'Send';
 
   box.innerHTML = `
+    ${founderFlushHtml(S.col.slug)}
     <div class="fndsec"><h4>Claim</h4><p class="mut small">Mint funds sit in the drop until you withdraw. Anyone may call it; the payout always goes to the collection payout address, minus the platform fee.</p>
       ${claimRows || '<p class="mut">No drop contracts.</p>'}
       <button class="bbtn" data-fnd="withdraw" ${S.busy || !todo.length ? 'disabled' : ''}>${S.busy ? 'Working…' : leftover}</button></div>
@@ -154,6 +157,8 @@ function bind(m: HTMLElement) {
   m.addEventListener('click', e => {
     const t = e.target as HTMLElement;
     const b = t.closest<HTMLElement>('[data-fnd]');
+    const flush = t.closest<HTMLElement>('[data-flush]');
+    if (flush?.dataset.flush != null) { e.preventDefault(); doFlush(+flush.dataset.flush); return; }
     if (b?.dataset.fnd === 'withdraw') { e.preventDefault(); doWithdraw(); }
     if (b?.dataset.fnd === 'roy') { e.preventDefault(); doRoyalty(); }
     if (b?.dataset.fnd === 'air') { e.preventDefault(); doAirdrop(); }
