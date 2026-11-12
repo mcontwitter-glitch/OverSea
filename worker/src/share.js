@@ -103,7 +103,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     // Generated cards need more CPU than the Workers Free plan's 10 ms (measured ~200 ms), so they're opt-in: set OG_CARD = "1"
     // in wrangler.toml [vars] together with [limits] cpu_ms on a paid plan. Until then, the static token/collection image.
     const st = STATIC[slug], s0 = st?.idStart ?? 1, inRange = st && item != null && item >= s0 && item <= (st.idEnd ?? st.supply ?? Infinity);
-    const image = env.OG_CARD === '1' ? `${API}/s/og/c/${slug}${item != null ? `/${item}` : ''}.png?f=${hash('v5|' + floor + '|' + (col.banner || '') + '|' + (col.logo || ''))}` : (inRange ? `${SITE}/img/${slug}/m/${item}.webp` : '') || abs(col.banner) || abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : '') || FALLBACK;
+    const image = env.OG_CARD === '1' ? `${API}/s/og/c/${slug}${item != null ? `/${item}` : ''}.png?f=${hash('v6|' + floor + '|' + (col.banner || '') + '|' + (col.logo || ''))}` : (inRange ? `${SITE}/img/${slug}/m/${item}.webp` : '') || abs(col.banner) || abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : '') || FALLBACK;
     const name = col.name || slug;
     const title = item != null ? `${name} #${item}` : name;
     const desc = [floor, `${item != null ? `${name} #${item}` : name} on MultiSea${(col.deployments || []).length > 1 ? `, live on ${(col.deployments || []).length} chains` : ''}.`, item == null ? String(col.description || '').slice(0, 160) : ''].filter(Boolean).join(' · ');
