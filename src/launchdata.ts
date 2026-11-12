@@ -7,6 +7,7 @@ export type Phase = { name: string; kind: 'allowlist' | 'public'; start: number;
 // minted: multichain = ids whose minter picked this chain (Active here at mint; escrow copies exist on every other chain).
 export type ChainAlloc = { chain: string; supply: number; minted: number; price?: number }; // price in the chain's native token (overrides public phase price)
 export type Drop = {
+  onchainTotal?: number; // live drops: total minted read on-chain (multichain: the Base hub's totalAssigned)
   mode?: 'single' | 'multichain' | 'ordinals'; // ordinals = paid in USDC on Base, inscribed on Bitcoin and delivered to the buyer's taproot address
   ordinals?: { priceUsdc: number | string; orderLimit: number; deliveryHours: number; feeBps: number; buyerPaysInscriptionFee?: boolean }; // multichain = one shared supply, escrow + LayerZero (MultiSeaOmniDrop)
   // multichain escrow copies: 'batched' (default) = Base queues them and sends one message per chain every batchK ids or
@@ -54,7 +55,7 @@ export const allDrops = () => [...DEMO, ...localDrops().filter(d => d.status ===
 export const findDrop = (slug: string) => allDrops().find(d => d.slug === slug) || localDrops().find(d => d.slug === slug);
 // ---- state helpers ----
 export const nowS = () => Math.floor(Date.now() / 1000);
-export const minted = (d: Drop) => d.chains.reduce((a, c) => a + c.minted, 0);
+export const minted = (d: Drop) => d.onchainTotal ?? d.chains.reduce((a, c) => a + c.minted, 0);
 export function activePhase(d: Drop): number { const n = nowS(); return d.phases.findIndex(p => n >= p.start && (!p.end || n < p.end)); }
 export function nextPhase(d: Drop): number { const n = nowS(); return d.phases.findIndex(p => p.start > n); }
 // Worker drops that are approved but have no contract verified on-chain yet (no 'live' marking) are "Coming soon":

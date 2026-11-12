@@ -24,8 +24,8 @@ const demoTag = (d: Drop) => (d.demo ? '<span class="ldtag demo">Demo</span>' : 
 const mcTag = (d: Drop) => (isMulti(d) ? '<span class="ldtag mc" title="One shared supply across chains; NFTs can move between chains">Multichain</span>' : '');
 const CH_COL: Record<string, string> = { base: '#3b82f6', ethereum: '#a3a3ff', apechain: '#1d4ed8', bnb: '#f0b90b', robinhood: '#c3f53c' };
 let rates: UsdRates = { ETH: null, APE: null, BNB: null };
-// Worker drops (once the launchpad Worker routes are deployed). Prices arrive in wei; per-chain minted counts would come
-// from each drop contract's totalMinted() (not wired in this preview: shows 0 until contracts exist).
+// Worker drops. Prices arrive in wei; minted counts are read on-chain by loadOnchain() (multichain: mintedHere per chain,
+// total = Base hub totalAssigned; single-chain: totalMinted).
 let remote: Drop[] = [];
 const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries((d.deployments || []).map((x: any) => [x.chain, x.address])), raw: d, mode: d.mode === 'multichain' ? 'multichain' : d.mode === 'ordinals' ? 'ordinals' : 'single', ordinals: d.ordinals, slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
   // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
@@ -433,7 +433,7 @@ app.addEventListener('click', e => {
         return am.agentMint(k, (d as any).addresses[k], n, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }, ai, proof, unit); }
       const m = await import('./lpchain');
       return m.mint(isMulti(d), k, (d as any).addresses[k], ai, n, proof, unit, h => { realMsg = `<span class="spin"></span> Sent ${txLink(k, h)}…`; render(); }); })()
-      .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; })
+      .then(r => { realMsg = `✓ Minted ${n} on ${esc(chains[k].name)}: ${txLink(k, r.hash)}${isMulti(d) && k !== 'base' ? ' · the Base hub confirms your IDs in a few minutes' : ''}`; loadOnchain().catch(() => {}); })
       .catch(e => { realMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { realBusy = false; render(); });
     return;
   }
@@ -525,10 +525,23 @@ app.addEventListener('change', e => {
     const e = lm.media.csvErr || encodeTraits(lm.media.rows); lm.media.rows = [];
     if (typeof e === 'string' || !e) { trMsg = `<span class="err">${esc(e || 'No trait columns in that CSV.')}</span>`; } else { trEnc = e; if (d) saveTraits(d.slug, e); trMsg = ''; } render(); }); }
 });
+const ONCHAIN_ABI = ['function mintedHere() view returns (uint32)', 'function totalAssigned() view returns (uint256)', 'function totalMinted() view returns (uint256)'];
+async function loadOnchain() {
+  const live = remote.filter(d => d.deployed && (d as any).addresses); if (!live.length) return;
+  const [{ readClient }, { parseAbi }] = await Promise.all([import('./wallet'), import('viem')]); const abi = parseAbi(ONCHAIN_ABI);
+  let changed = false;
+  await Promise.all(live.map(async d => {
+    const A = (d as any).addresses as Record<string, string>; const multi = isMulti(d);
+    const rd = (k: string, fn: string): Promise<number> => (readClient(k).readContract({ address: A[k] as `0x${string}`, abi, functionName: fn as any }) as Promise<unknown>).then(Number);
+    await Promise.allSettled(d.chains.filter(c => A[c.chain]).map(c => rd(c.chain, multi ? 'mintedHere' : 'totalMinted').then(n => { if (c.minted !== n) { c.minted = n; changed = true; } })));
+    if (multi && A[HUB]) { const t = await rd(HUB, 'totalAssigned').catch(() => undefined); if (t != null && d.onchainTotal !== t) { d.onchainTotal = t; changed = true; } }
+  }));
+  if (changed) render();
+}
 async function refreshRemote() { if (!apiFeatures.includes('launchpad')) return; try { const j = await fetch(API + '/launchpad/drops').then(r => r.json()); remote = (j.drops || []).map(fromApi); render(); } catch {} }
 if (path === '/launchpad/create') import('./launchcreate');
 else {
-  bindNav(); render(); setInterval(tick, 1000); onWallet(render); checkApi().then(refreshRemote).then(loadMine).then(render); onWallet(() => loadMine().then(render));
+  bindNav(); render(); setInterval(tick, 1000); onWallet(render); checkApi().then(refreshRemote).then(loadMine).then(render).then(loadOnchain); setInterval(() => { if (!document.hidden) loadOnchain().catch(() => {}); }, 20000); onWallet(() => loadMine().then(render));
   usdRates().then(r => { rates = r; render(); });
   const d = slug ? findDrop(slug) : null; if (d) loadGas(d).then(render);
 }
