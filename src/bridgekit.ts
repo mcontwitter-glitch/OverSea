@@ -71,10 +71,14 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const token = C().contracts[s.from];
       if (C().kind === 'omni') { // fixed supply: read ownerOf for every id (one batched JSON-RPC call)
-        const bp = createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href, { batch: { batchSize: 100 } }) });
+        // One Multicall3 eth_call (a 100-call JSON-RPC batch gets HTTP 429 from Robinhood's RPC, which read as "no NFTs").
+        const bp = createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href) });
         const all = Array.from({ length: C().supply || 0 }, (_, i) => i + 1);
-        const own = await Promise.all(all.map(id => bp.readContract({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null)));
-        s.ids = all.filter((_, i) => (own[i] as string | null)?.toLowerCase() === wallet.address!.toLowerCase());
+        const read = (ids: number[]) => bp.multicall({ multicallAddress: '0xcA11bde05977b3631167028862bE2a173976CA11', allowFailure: true, batchSize: 0, contracts: ids.map(id => ({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] })) }) as Promise<{ status: string; result?: unknown }[]>;
+        let res: { status: string; result?: unknown }[];
+        try { res = await read(all); } catch { res = []; for (let i = 0; i < all.length; i += 20) res.push(...await read(all.slice(i, i + 20))); }
+        if (res.length !== all.length) throw new Error('owner read incomplete');
+        s.ids = all.filter((_, i) => res[i].status === 'success' && String(res[i].result).toLowerCase() === wallet.address!.toLowerCase());
         s.loading = false; return draw();
       }
       const logs = await pub.getLogs({ address: token, event: NFT[5] as any, args: { to: wallet.address as Address }, fromBlock: BigInt(C().fromBlock?.[s.from] || 0) });
