@@ -31,18 +31,25 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     const slug = p.length === 4 ? m[1] : p[3], item = p.length === 5 ? +m[1] : null;
     const cache = caches.default, key = new Request(url.toString(), { method: 'GET' });
     const hit = await cache.match(key); if (hit) return hit;
+    // Renders are stored in KV so every Cloudflare location (X's crawler included) serves the same good image.
+    const kvKey = 'og:' + url.pathname + url.search;
+    const stored = await env.COLLECTIONS.get(kvKey, 'arrayBuffer').catch(() => null);
+    if (stored) { const res = new Response(stored, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } }); await cache.put(key, res.clone()); return res; }
     try {
       const col = await getCollection(env, slug); if (!col || col.status !== 'approved') throw new Error('nf');
       const st = STATIC[slug]; const s0 = st?.idStart ?? 1;
       const inRange = st && item != null && item >= s0 && item <= (st.idEnd ?? st.supply ?? Infinity);
       const chainsL = [...new Set((col.deployments || []).map(d => d.chain))];
-      const png = await renderCard({
+      const opts = {
         name: col.name || slug, floor: await floorOf(env, slug, col), chains: chainsL,
         banner: abs(col.banner), avatar: abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : ''),
         tiles: st && !col.banner && item == null ? Array.from({ length: 18 }, (_, i) => ({ url: `${SITE}/img/${slug}/s/${s0 + i}.webp` })) : [],
         item: item != null ? { name: `${col.name || slug} #${item}`, image: inRange ? `${SITE}/img/${slug}/m/${item}.webp` : abs(col.logo) } : null,
         partial: true, // site thumbnails can be animated (Island's): read only the first frame
-      });
+      };
+      const png = await renderCard(opts); const renderOk = opts.ok;
+      if (!renderOk) return new Response(null, { status: 302, headers: { location: FALLBACK, 'cache-control': 'no-store' } }); // art didn't load: don't keep a blank card
+      await env.COLLECTIONS.put(kvKey, png, { expirationTtl: 2592000 }).catch(() => {});
       const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
       await cache.put(key, res.clone()); return res;
     } catch { return new Response(null, { status: 302, headers: { location: FALLBACK, 'cache-control': 'public, max-age=60' } }); }
@@ -103,7 +110,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     // Generated cards need more CPU than the Workers Free plan's 10 ms (measured ~200 ms), so they're opt-in: set OG_CARD = "1"
     // in wrangler.toml [vars] together with [limits] cpu_ms on a paid plan. Until then, the static token/collection image.
     const st = STATIC[slug], s0 = st?.idStart ?? 1, inRange = st && item != null && item >= s0 && item <= (st.idEnd ?? st.supply ?? Infinity);
-    const image = env.OG_CARD === '1' ? `${API}/s/og/c/${slug}${item != null ? `/${item}` : ''}.png?f=${hash('v6|' + floor + '|' + (col.banner || '') + '|' + (col.logo || ''))}` : (inRange ? `${SITE}/img/${slug}/m/${item}.webp` : '') || abs(col.banner) || abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : '') || FALLBACK;
+    const image = env.OG_CARD === '1' ? `${API}/s/og/c/${slug}${item != null ? `/${item}` : ''}.png?f=${hash('v7|' + floor + '|' + (col.banner || '') + '|' + (col.logo || ''))}` : (inRange ? `${SITE}/img/${slug}/m/${item}.webp` : '') || abs(col.banner) || abs(col.logo) || (st ? `${SITE}/img/${slug}/m/${s0}.webp` : '') || FALLBACK;
     const name = col.name || slug;
     const title = item != null ? `${name} #${item}` : name;
     const desc = [floor, `${item != null ? `${name} #${item}` : name} on MultiSea${(col.deployments || []).length > 1 ? `, live on ${(col.deployments || []).length} chains` : ''}.`, item == null ? String(col.description || '').slice(0, 160) : ''].filter(Boolean).join(' · ');

@@ -91,6 +91,7 @@ export async function renderCard(d) {
     ...(d.banner ? [] : d.tiles.map(t => dataUri(t.url, 86400, 210, d.partial))),
   ]);
   const logos = rest.slice(0, d.chains.length), tiles = rest.slice(d.chains.length);
+  d.ok = !!(banner || avatar || itemImg); // caller only keeps renders whose art actually loaded
   const W = 1200, H = 630, item = !!d.item;
   let bg = `<rect width="${W}" height="${H}" fill="#05070b"/>`;
   if (banner) bg += `<image href="${banner}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid slice"/>`;
