@@ -20,8 +20,16 @@ const fmt = (n: bigint, d = 18) => Number(formatUnits(n, d)).toLocaleString(unde
 const imageUrl = (s: string | null) => !s ? '' : s.startsWith('ipfs://') ? 'https://ipfs.filebase.io/ipfs/' + s.slice(7) : /^(https:\/\/|\/img\/|\/media\/)/.test(s) ? (s.startsWith('/media/') ? API + s : s) : '';
 // MultiSea's own collections use the site's thumbnails (animated for Island's), whatever image the indexer returned.
 const OWN = new Map(CFG.collections.flatMap(c => c.deployments.map(d => [d.chain + ':' + d.address.toLowerCase(), c] as const)));
-const own = (n: Nft): Nft => { const c = OWN.get(n.chain + ':' + String(n.contract).toLowerCase()); const id = Number(n.id); return c && Number.isInteger(id) && id >= c.idStart && id <= c.idEnd ? { ...n, image: `/img/${c.slug}/s/${id}.webp` } : n; };
+const ownCol = (n: Nft) => { const c = OWN.get(n.chain + ':' + String(n.contract).toLowerCase()); const id = Number(n.id); return c && Number.isInteger(id) && id >= c.idStart && id <= c.idEnd ? { c, id } : null; };
+const own = (n: Nft): Nft => { const x = ownCol(n); return x ? { ...n, image: `/img/${x.c.slug}/s/${x.id}.webp` } : n; };
+const itemHref = (n: Nft) => { const x = ownCol(n); return x ? `/c/${x.c.slug}?item=${x.id}` : ''; };
 const nftKey = (n: Nft) => `${n.chain}|${n.contract.toLowerCase()}|${n.id}`;
+const nftCard = (n: Nft, me: boolean) => {
+  const href = itemHref(n);
+  const send = me && /^(erc721|erc1155)$/.test(n.standard || '') ? `<button type="button" class="obtn sm" data-send="${esc(nftKey(n))}">Send</button>` : '';
+  const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chains[n.chain]?.name || n.chain)}${send}</div>`;
+  return href ? `<a class="nftc" href="${esc(href)}">${inner}</a>` : `<div class="nftc">${inner}</div>`;
+};
 export function mountUserWallet(root: HTMLElement, address: Hex) {
   const allChains = [...FW_CHAINS, 'abstract'];
   const S = { balances: [] as Bal[], rates: null as UsdRates | null, nfts: null as Nft[] | null, note: '', cursors: {} as Record<string, string>, insightPage: {} as Record<string, number>, busy: false, receive: false };
@@ -76,7 +84,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
         return `<div class="fwch" data-chain="${k}"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">${c ? fmtUsd(c.usd) : '…'}</span></div>${rows.join('') || `<div class="mut small">${!c ? 'Loading…' : !c.bal.ok ? 'Couldn’t read this chain' : 'Empty'}</div>`}${c && c.bal.tokens.some(v => v == null) ? '<div class="mut small">Some token balances unavailable</div>' : ''}${k === 'abstract' ? '<div class="mut small">Native coin only</div>' : ''}</div>`;
       }).join('')}</div></section>
       <section class="fwcard fwsec"><div class="sechd"><h3>NFTs${S.nfts ? ' · ' + S.nfts.length : ''}</h3><button class="fwrbtn" data-uw="refresh" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking…' : 'Refresh'}</button></div>
-      ${S.nfts?.length ? `<div class="fwnftg">${S.nfts.map(n => `<div class="nftc" data-nft-chain="${esc(n.chain)}">${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chains[n.chain]?.name || n.chain)}${me && /^(erc721|erc1155)$/.test(n.standard || '') ? `<button class="obtn sm" data-send="${esc(nftKey(n))}">Send</button>` : ''}</div></div>`).join('')}</div>` : `<p class="mut small">${S.nfts == null ? S.busy ? 'Loading NFTs…' : 'NFT list unavailable.' : 'No NFTs found.'}</p>`}
+      ${S.nfts?.length ? `<div class="fwnftg">${S.nfts.map(n => nftCard(n, me)).join('')}</div>` : `<p class="mut small">${S.nfts == null ? S.busy ? 'Loading NFTs…' : 'NFT list unavailable.' : 'No NFTs found.'}</p>`}
       ${Object.keys(S.cursors).map(k => `<button class="obtn sm" data-more="${k}">More on ${esc(chains[k].name)}</button>`).join('')}${Object.keys(S.insightPage).map(k => `<button class="obtn sm" data-insight="${k}">More on ${esc(chains[k].name)}</button>`).join('')}
       ${S.note ? `<p class="mut small">${esc(S.note)}</p>` : ''}</section></div></div>`;
   }
@@ -228,7 +236,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     if (action === 'receive') { S.receive = !S.receive; draw(); }
     if (action === 'connect') openConnect();
     if (action === 'export' && isMe() && wallet.provider?.isMultiSeaEmbedded) openKeyExport();
-    if (action === 'send' || b.dataset.send) openSend(b.dataset.send);
+    if (action === 'send' || b.dataset.send) { e.preventDefault(); openSend(b.dataset.send); }
     if (action === 'refresh') load();
     const k = b.dataset.more || b.dataset.insight;
     if (k) { b.setAttribute('disabled', ''); try {
