@@ -12,7 +12,7 @@ async function staticCards() {
   return Promise.all(CFG.collections.map(async c => {
     const s = await fetch(`/data/${c.slug}/summary.json`).then(r => r.json()).catch(() => null);
     const vol = s?.volume ? Object.entries(s.volume).map(([k, v]) => `${fmt(v as number)} ${k}`).join(' + ') : '-';
-    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: mcapUsd(s?.floor ? (s.floor.priceEth ?? s.floor.price) : null, c.supply, JSON.stringify(s ?? {}).match(/"ethUsd":([\d.]+)/)?.[1] ? +JSON.stringify(s).match(/"ethUsd":([\d.]+)/)![1] : await ethUsdRate()), volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
+    return { slug: c.slug, name: c.name, description: c.description, logo: c.logo || `/img/${c.slug}/s/1.webp`, banner: c.banner || undefined, thumb: `/img/${c.slug}/s/${Math.min(2396, c.idEnd)}.webp`, chains: c.deployments.map(d => d.chain), floor: s?.floor ? `${fmt(s.floor.priceEth ?? s.floor.price)} ETH` : '-', mcap: mcapUsd(s?.floor ? (s.floor.priceEth ?? s.floor.price) : null, c.supply, JSON.stringify(s ?? {}).match(/"ethUsd":([\d.]+)/)?.[1] ? +JSON.stringify(s).match(/"ethUsd":([\d.]+)/)![1] : await ethUsdRate()), volume: vol, owners: s ? s.owners.toLocaleString() : '-', featured: c.slug === CFG.default } as Card;
   }));
 }
 const tnum = (x?: string) => { const m = (x || '').replace(/[$,]/g, '').match(/[\d.]+/); return m ? +m[0] : -1; };
@@ -27,7 +27,7 @@ async function loadBtc() {
   regrid();
 }
 function card(c: Card) {
-  const img = c.banner ? esc(media(c.banner)) : c.thumb ? `${c.thumb}2396.webp` : esc(media(c.logo));
+  const img = c.banner ? esc(media(c.banner)) : (c.thumb || esc(media(c.logo)));
   return `<a class="ccard2" href="/c/${esc(c.slug)}"><div class="cc2img"><img src="${img}" alt="" loading="lazy" width="384" height="384">${c.featured ? '<span class="ftag">Featured</span>' : ''}</div>
    <div class="cc2body"><div class="ccname">${esc(c.name)}</div>
    <div class="ccchains">${c.chains.map(k => `<img class="cl" src="/logos/${k}.svg" title="${esc(chains[k]?.name)}" alt="">`).join('')}</div>
@@ -98,7 +98,8 @@ const homeLoad = async () => {
   try {
     const j = await (await fetch(API + '/collections')).json();
     for (const [slug, o] of Object.entries(j.overrides || {})) { const c = cards.find(x => x.slug === slug); if (c && o) Object.assign(c, { logo: (o as any).logo || c.logo, banner: (o as any).banner || c.banner }); }
-    const dyn: Card[] = (j.collections || []).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain) }));
+    const have = new Set(cards.map(x => x.slug));
+    const dyn: Card[] = (j.collections || []).filter((c: any) => !have.has(c.slug)).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain) }));
     cards.push(...dyn); render();
     await Promise.all(dyn.map(async c => { try { const s = (await (await fetch(`${API}/os/${c.slug}/stats`)).json()).stats || {}; const v = Object.values(s) as any[];
       c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : '-'; const vol = v.reduce((a, x) => a + (x.volume || 0), 0); c.volume = v.length ? fmt(vol) + ' ETH' : '-';
