@@ -1,4 +1,6 @@
 import { shareBtns } from './share';
+import { ISLAND_CHAINS, islandTba, islandWalletUrl } from './islandkit';
+import type { FwChain } from './footkit';
 import GATES from '../config/gates.json';
 import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
@@ -267,7 +269,7 @@ function doSell(id: number) { const ch = myChain(id); if (!ch) return; import('.
 function doCancel(id: number) { const l = listMap.get(id); if (!l) return; import('./sell').then(s => s.cancelListing(sellItem(id, l.chain), l.orderHash, () => { listMap.delete(id); render(); }, l.source === 'multisea' ? 'multisea' : 'opensea')); }
 const eq = (l: Listing) => (!/^W?ETH$/.test(l.currency) && l.priceEth != null ? ` <span class="mut eq">≈ ${fmt(l.priceEth)} ETH</span>` : '');
 // LIL FOOTS foot wallets: "Wallet: $X" badge for feet whose wallet holds tokens (live, all 5 chains; see /w/<id>).
-const FW_ON = COL.slug === 'lil-foots'; const fwv = new Map<number, number | null>(); const fwPending = new Set<number>();
+const FW_ON = COL.slug === 'lil-foots'; const IW_ON = COL.slug === 'multi-islands'; const fwv = new Map<number, number | null>(); const fwPending = new Set<number>();
 let fwkit: typeof import('./footkit') | null = null;
 const fwBadgeFor = (id: number) => (FW_ON && fwkit && fwv.get(id) ? `<span class="fwslot">${fwkit.walletBadge(id, fwv.get(id))}</span>` : '');
 async function fwFill() {
@@ -348,6 +350,7 @@ function modal(id: number) {
     <div class="mcol">${esc(COL.name)}</div><h2>${esc(it.name)}</h2>${shareBtns(COL.slug, it.name, id)}
     ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
+    ${IW_ON ? (() => { const k = (loc && (ISLAND_CHAINS as readonly string[]).includes(loc.chain) ? loc.chain : 'base') as FwChain; return `<div class="fwmrow"><a class="obtn sm fwwbtn" href="${islandWalletUrl(id, k)}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval"><span class="fwbadge mono">${logo(k)} ${short(islandTba(k, id))}</span></span><span class="mut small">Token wallet (ERC-6551). Each chain has its own address.</span></div>`; })() : ''}
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;

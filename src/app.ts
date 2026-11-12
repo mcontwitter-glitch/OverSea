@@ -23,6 +23,7 @@ else if (path === '/me/profile') import('./profile');
 else if (path === '/me') import('./me');
 else if (path === '/bundles') import('./bundles');
 else if (/^\/w\/\d{1,5}$/.test(path)) import('./footwallet');
+else if (/^\/w\/multi-islands\/\d{1,3}$/.test(path)) import('./islandwallet');
 else if (path === '/quests' || /^\/u\/0x[0-9a-fA-F]{40}$/.test(path)) import('./quests');
 else if (m && CFG.collections.some(c => c.slug === m[1])) import('./collection');
 else if (m) import('./dyn');
