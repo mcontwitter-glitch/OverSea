@@ -5,6 +5,7 @@ import { esc } from './shell';
 import { pinImage } from './lpmedia';
 import { WORLD_ID, mediaURL, gatewaySvg, contractLayeredSvg } from './growthart';
 import { agentAddValue, agentClaim } from './agentdrop';
+import { keysFor, decodeRecord, recordsHtml, type Records } from './records8048';
 
 export const GROWTH = parseAbi([
  'function types(address e) view returns (uint8)', 'function typeName(address e,uint8 k) view returns (string)',
@@ -18,7 +19,7 @@ export const GROWTH = parseAbi([
 ]);
 export type GrowthValue = { value: string; art: string; chanceBps: number; minParentLevel: number; claimLevel: number; reqType: number; reqValue: number; id: number };
 export type GrowthType = { id: number; name: string; values: GrowthValue[] };
-export type GrowthToken = { xp: bigint; level: number; row: number[]; types: GrowthType[]; parents: bigint[]; source: string[]; claimable: { k: number; v: GrowthValue }[]; kit: Address; thresholds: number[]; image?: string };
+export type GrowthToken = { records?: Records; xp: bigint; level: number; row: number[]; types: GrowthType[]; parents: bigint[]; source: string[]; claimable: { k: number; v: GrowthValue }[]; kit: Address; thresholds: number[]; image?: string };
 const bytes = (s: string) => Array.from(s.slice(2).match(/../g) || [], x => parseInt(x, 16));
 
 export async function growthTypes(k: string, engine: Address, growth: Address, kit: Address) {
@@ -60,7 +61,7 @@ export function layerPreview(base:string,arts:string[]){const uri=contractLayere
 export async function loadGrowthToken(k:string,e:Address,g:Address,id:number,kit:Address,thresholds=[0,100,300,600,1000]) {const pre=await readClient(k).readContract({address:e,abi:GROWTH,functionName:'idPrefix'});return loadFullToken(k,e,g,((pre as bigint) << 128n) | BigInt(id),kit,thresholds);}
 export function growthHtml(g: GrowthToken) {
  const next = g.thresholds[g.level + 1], prev = g.thresholds[g.level] || 0;
- return `<i hidden data-agready></i>${g.parents.length ? `<div class="mut small">Child of #${WORLD_ID(g.parents[0])} × #${WORLD_ID(g.parents[1])}</div>` : ''}<div class="ag-xphead"><b>Level ${g.level} · ${g.xp} XP</b><span class="mut">${next == null ? 'Max level' : 'Next at ' + next}</span></div><div class="ag-xpbar"><i style="width:${next == null ? 100 : Math.max(0, Math.min(100, (Number(g.xp) - prev) * 100 / (next - prev)))}%"></i></div><div class="ag-traitgrid">${g.row.map((id, i) => `<div class="ag-trait"><span>${esc(g.types[i]?.name || 'Trait ' + i)}${g.source.length ? ' · ' + esc(g.source[i]) : ''}</span><b>${esc(g.types[i]?.values.find(v => v.id === id)?.value || '–')}</b></div>`).join('')}</div>${g.image ? `<details open><summary>Layered NFT image</summary><img src="${g.image}" alt="Layered agent" width="350" height="350" style="display:block;width:100%;height:auto;aspect-ratio:1;object-fit:contain"></details>` : ''}${g.claimable.length ? `<button class="bbtn sm" data-agclaim>Claim ${g.claimable.length} unlocked traits</button>` : '<span class="mut small">No new claimable traits</span>'}<details><summary>${g.types.reduce((n, t) => n + t.values.length, 0)} trait values</summary>${g.types.flatMap(t => t.values.filter(v => v.claimLevel || v.chanceBps).map(v => `<div class="ag-unlock"><b>${esc(t.name)}: ${esc(v.value)}</b><span class="mut">${v.claimLevel ? 'Level ' + v.claimLevel : 'Breeding ' + v.chanceBps / 100 + '%'}${g.row[t.id] === v.id ? ' · owned' : ''}</span></div>`)).join('')}</details>`;
+ return `<i hidden data-agready></i>${g.parents.length ? `<div class="mut small">Child of #${WORLD_ID(g.parents[0])} × #${WORLD_ID(g.parents[1])}</div>` : ''}<div class="ag-xphead"><b>Level ${g.level} · ${g.xp} XP</b><span class="mut">${next == null ? 'Max level' : 'Next at ' + next}</span></div><div class="ag-xpbar"><i style="width:${next == null ? 100 : Math.max(0, Math.min(100, (Number(g.xp) - prev) * 100 / (next - prev)))}%"></i></div><div class="ag-traitgrid">${g.row.map((id, i) => `<div class="ag-trait"><span>${esc(g.types[i]?.name || 'Trait ' + i)}${g.source.length ? ' · ' + esc(g.source[i]) : ''}</span><b>${esc(g.types[i]?.values.find(v => v.id === id)?.value || '–')}</b></div>`).join('')}</div>${g.image ? `<details open><summary>Layered NFT image</summary><img src="${g.image}" alt="Layered agent" width="350" height="350" style="display:block;width:100%;height:auto;aspect-ratio:1;object-fit:contain"></details>` : ''}${g.records ? recordsHtml(g.records) : ''}${g.claimable.length ? `<button class="bbtn sm" data-agclaim>Claim ${g.claimable.length} unlocked traits</button>` : '<span class="mut small">No new claimable traits</span>'}<details><summary>${g.types.reduce((n, t) => n + t.values.length, 0)} trait values</summary>${g.types.flatMap(t => t.values.filter(v => v.claimLevel || v.chanceBps).map(v => `<div class="ag-unlock"><b>${esc(t.name)}: ${esc(v.value)}</b><span class="mut">${v.claimLevel ? 'Level ' + v.claimLevel : 'Breeding ' + v.chanceBps / 100 + '%'}${g.row[t.id] === v.id ? ' · owned' : ''}</span></div>`)).join('')}</details>`;
 }
 export function creatorGrowthHtml(types: GrowthType[]) {
  return `<details class="ag-growth"><summary>Creator · new traits</summary><p class="mut small">Pin art to IPFS, then append it with your creator wallet. Layers follow trait type order; death art overrides.</p><div class="lffrow"><label>Type<select data-gtype><option value="-1">New type</option>${types.map(t => `<option value="${t.id}">${esc(t.name)} (${t.values.length})</option>`).join('')}</select></label><label>New type name<input data-gtypename></label></div><label>Value name<input data-gname></label><label>Artist layer<input type="file" accept="image/*" data-gart></label><label>Unlock by<select data-grule><option value="level">Level</option><option value="breeding">Breeding</option></select></label><div class="lffrow"><label>Level<input type="number" min="1" value="2" data-glevel></label><label>Chance %<input type="number" min="0" max="100" value="5" data-gchance></label><label>Min parent level<input type="number" min="0" value="0" data-gparent></label></div><label>Required parent trait<select data-greq><option value="255:0">None</option>${types.flatMap(t => t.values.map(v => `<option value="${t.id}:${v.id}">${esc(t.name)}: ${esc(v.value)}</option>`)).join('')}</select></label><button class="bbtn sm" data-agadd>Pin &amp; add trait</button></details>`;
@@ -77,3 +78,16 @@ export function demoGrowth(claimed = false): GrowthToken {
 }
 
 export async function loadComposite(k: string, e: Address, id: bigint) { const uri = await readClient(k).readContract({ address: e, abi: GROWTH, functionName: 'tokenURI', args: [id] }); return gatewaySvg(uri as string); }
+
+const RECORDS = parseAbi(['function metadata(uint256 id,string key) view returns (bytes)', 'function recordsOf(address e) view returns (address)']);
+/** ERC-8048 records for one agent: tokenURI's metadata_contract (else growth.recordsOf), every key via metadata(). */
+export async function loadRecords(k: string, e: Address, growth: Address, id: bigint, traitTypes: string[]): Promise<Records | null> {
+ const pub = readClient(k);
+ let contract: string | undefined;
+ try { const uri = await pub.readContract({ address: e, abi: GROWTH, functionName: 'tokenURI', args: [id] }) as string; contract = JSON.parse(atob(uri.split(',')[1])).metadata_contract; } catch {}
+ if (!contract || !/^0x[0-9a-fA-F]{40}$/.test(contract)) contract = await pub.readContract({ address: growth, abi: RECORDS, functionName: 'recordsOf', args: [e] }).catch(() => undefined) as string | undefined;
+ if (!contract || !(await pub.getCode({ address: contract as Address }).catch(() => undefined))) return null;
+ const chainId = await pub.getChainId(); const keys = keysFor(chainId, traitTypes); const values: Records['values'] = {};
+ await Promise.all(keys.map(async key => { values[key] = decodeRecord(key, await pub.readContract({ address: contract as Address, abi: RECORDS, functionName: 'metadata', args: [id, key] }).catch(() => '0x') as string); }));
+ return { contract, chainId, values };
+}

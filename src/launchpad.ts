@@ -322,6 +322,7 @@ async function loadGrowth(d: Drop) {
    const arts = g.types.map((t: any,i: number) => t.values[g.row[i]-1]?.art || '').filter(Boolean).map((u: string) => artData[u]);
    g.image = mod.layerPreview(baseSvg,arts);
    g.level = (g.claimable.length ? 1 : 2); g.xp = BigInt(g.claimable.length ? 100 : 300); growthData[a.id] = g;
+   const rec = await import('./records8048'); g.records = rec.demoRecords(a.id, Object.fromEntries(g.types.map((t: any, i: number) => [t.name, t.values[g.row[i]-1]?.value || ''])));
    const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) el.innerHTML = mod.growthHtml(g);
   }
   const creator = document.querySelector('[data-gcreator]'); if (creator) creator.innerHTML = mod.creatorGrowthHtml(growthTypes);
@@ -339,6 +340,7 @@ async function loadGrowth(d: Drop) {
  try { growthTypes = await mod.growthTypes(k, engine, growthAddress as any, kit); } catch { growthAddress = null; return; }
  for (const a of (agents || []).filter(a => !a.dead)) try {
   const g = await mod.loadGrowthToken(k, engine, growthAddress as any, a.id, kit); growthData[a.id] = g;
+  mod.tokenId(k, engine, a.id).then(t => mod.loadRecords(k, engine, growthAddress as any, t, g.types.map(x => x.name))).then(r => { if (r && growthData[a.id]) { growthData[a.id].records = r; render(); } }).catch(() => {});
   const el = document.querySelector(`[data-growth="${a.id}"]`); if (el) { el.innerHTML = mod.growthHtml(g); const p = el.querySelector('[data-preview]');
    if (p) mod.loadComposite(k, engine, (await mod.tokenId(k, engine, a.id))).then(uri => { const g = growthData[a.id]; if (g) g.image = uri; render(); }).catch(() => {});
   }
