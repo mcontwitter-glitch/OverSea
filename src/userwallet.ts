@@ -122,8 +122,8 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     return out;
   };
   const merge = (list: Nft[]) => { S.nfts = [...new Map([...(S.nfts || []), ...list.map(own)].map(n => [nftKey(n), n])).values()]; };
-  async function nfts() {
-    const r = await fetch(`${API}/wallet/${address}/nfts`); if (!r.ok) throw Error(`NFT list unavailable (API ${r.status}).`);
+  async function nfts(fresh = false) {
+    const r = await fetch(`${API}/wallet/${address}/nfts${fresh ? "?fresh=1" : ""}`); if (!r.ok) throw Error(`NFT list unavailable (API ${r.status}).`);
     const j = await r.json(); S.nfts = (j.nfts || []).map(own); S.cursors = j.cursors || {}; S.insightPage = {};
     const failures = new Set<string>(j.failed || []), unsupported: string[] = [];
     await Promise.all((j.unsupported || []).map(async (k: string) => {
@@ -133,9 +133,9 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     S.note = [...(j.notes || []), failures.size ? `Couldn't load all NFTs on ${[...failures].map(k => chains[k]?.name || k).join(', ')}; refresh to retry.` : '', unsupported.length ? `NFT indexing unavailable on ${unsupported.map(k => chains[k]?.name || k).join(', ')}.` : ''].filter(Boolean).join(' ');
     await attachTimes(S.nfts || [], address);
   }
-  async function load() {
+  async function load(fresh = false) {
     if (S.busy) return; S.busy = true; draw();
-    const nftTask = nfts().catch(e => { S.note = friendly(e); }).then(draw);
+    const nftTask = nfts(fresh).catch(e => { S.note = friendly(e); }).then(draw);
     const rates = await usdRates().catch(() => ({ ETH: null, APE: null, BNB: null } as UsdRates)); S.rates = rates;
     S.balances = await Promise.all(allChains.map(async k => {
       const bal: ChainBal = k === 'abstract' ? await readClient(k).getBalance({ address }).then((native: bigint) => ({ native, tokens: [], ok: true })).catch(() => ({ native: null, tokens: [], ok: false })) : (await chainBalances(k as FwChain, [address]))[0];
@@ -315,7 +315,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
           q('msg').innerHTML = `Submitted. ${link}`;
           const receipt = await readClient(plan.a.k).waitForTransactionReceipt({ hash, timeout: 120000 });
           q('msg').innerHTML = `${receipt.status === 'success' ? '✓ Sent.' : 'Transaction reverted.'} ${link}`;
-          load();
+          load(true);
         } catch (e) {
           q('msg').innerHTML = `<span class="err">${esc(friendly(e, plan.a.k))}</span>${hash ? ` <a href="${chains[plan.a.k].explorer}/tx/${hash}" target="_blank" rel="noopener">View submitted transaction ↗</a>` : ''}`;
         } finally {
@@ -343,7 +343,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     if (action === 'connect') openConnect();
     if (action === 'export' && isMe() && wallet.provider?.isMultiSeaEmbedded) openKeyExport();
     if (action === 'send' || b.dataset.send) { e.preventDefault(); openSend(b.dataset.send); }
-    if (action === 'refresh') load();
+    if (action === 'refresh') load(true);
     const k = b.dataset.more || b.dataset.insight;
     if (k) { b.setAttribute('disabled', ''); try {
       if (b.dataset.more) {
