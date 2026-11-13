@@ -8,7 +8,7 @@ import { loadProfile, profileAvatar, profileName } from './names';
 import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, parseFootName, footTba, type ChainBal, type FwChain } from './footkit';
 import { usdRates, type UsdRates } from './shell';
 import CFG from '../config/collections.json';
-import { ownedNfts, insightOn, walletTransfers, type OwnedNft } from './insight';
+import { ownedNfts, insightOn, walletTransfers, collectionTransfers, type OwnedNft } from './insight';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
 const ERC1155 = parseAbi(['function safeTransferFrom(address,address,uint256,uint256,bytes)', 'function balanceOf(address,uint256) view returns (uint256)']);
@@ -55,25 +55,57 @@ function cmpNew(a: Nft, b: Nft, ts: (n: Nft) => number | undefined, block: (n: N
   if (Number.isFinite(bid) && !Number.isFinite(aid)) return 1;
   return (a.name || '#' + a.id).localeCompare(b.name || '#' + b.id, undefined, { numeric: true, sensitivity: 'base' });
 }
-async function attachTimes(list: Nft[], owner: string) {
-  const need = [...new Set(list.map(n => n.chain).filter(insightOn))];
-  if (!need.length) return;
-  const me = owner.toLowerCase();
-  const acquired = new Map<string, { ts: number; block: number }>(), minted = new Map<string, { ts: number; block: number }>();
-  await Promise.all(need.map(k => walletTransfers(k, owner).then(xs => {
-    for (const x of xs) {
-      const key = `${x.chain}|${String(x.contract).toLowerCase()}|${String(x.id)}`;
-      if (x.to.toLowerCase() === me && x.type !== 'burn') {
-        const prev = acquired.get(key); if (!prev || x.ts > prev.ts) acquired.set(key, { ts: x.ts, block: x.block });
-      }
-      if (x.type === 'mint') {
-        const prev = minted.get(key); if (!prev || x.ts < prev.ts) minted.set(key, { ts: x.ts, block: x.block });
-      }
+let dropDateCache: Map<string, number> | null = null;
+async function dropDates() {
+  if (dropDateCache) return dropDateCache;
+  const out = new Map<string, number>();
+  try {
+    const j = await (await fetch(`${API}/launchpad/drops`)).json();
+    for (const d of j.drops || []) {
+      if (!d.slug) continue;
+      const starts = (d.phases || []).map((p: any) => Number(p.start) || 0).filter((n: number) => n > 0);
+      let ts = starts.length ? Math.min(...starts) : 0;
+      if (!ts && d.approvedAt) ts = Math.floor(Date.parse(d.approvedAt) / 1000);
+      if (!ts && d.submittedAt) ts = Math.floor(Date.parse(d.submittedAt) / 1000);
+      if (ts) out.set(d.slug, ts);
     }
-  }).catch(() => {})));
+  } catch {}
+  dropDateCache = out;
+  return out;
+}
+function rememberMint(map: Map<string, { ts: number; block: number }>, key: string, ts: number, block: number) {
+  const prev = map.get(key); if (!prev || ts < prev.ts) map.set(key, { ts, block });
+}
+async function attachTimes(list: Nft[], owner: string) {
+  const me = owner.toLowerCase();
+  const acquired = new Map<string, { ts: number; block: number }>(), minted = new Map<string, { ts: number; block: number }>(), mintedId = new Map<string, { ts: number; block: number }>();
+  const need = [...new Set(list.map(n => n.chain).filter(insightOn))];
+  const cols = [...new Set(list.map(n => ownCol(n)?.c).filter((c): c is NonNullable<typeof c> => !!c))];
+  const [drops] = await Promise.all([
+    dropDates(),
+    ...need.map(k => walletTransfers(k, owner).then(xs => {
+      for (const x of xs) {
+        const key = `${x.chain}|${String(x.contract).toLowerCase()}|${String(x.id)}`;
+        if (x.to.toLowerCase() === me && x.type !== 'burn') {
+          const prev = acquired.get(key); if (!prev || x.ts > prev.ts) acquired.set(key, { ts: x.ts, block: x.block });
+        }
+        if (x.type === 'mint') rememberMint(minted, key, x.ts, x.block);
+      }
+    }).catch(() => {})),
+    ...cols.flatMap(c => c.deployments.filter(d => insightOn(d.chain)).map(d => collectionTransfers(d.chain, d.address, 500).then(xs => {
+      for (const x of xs) if (x.type === 'mint') {
+        rememberMint(minted, `${x.chain}|${String(x.contract).toLowerCase()}|${String(x.id)}`, x.ts, x.block);
+        rememberMint(mintedId, 'ms:' + c.slug + ':' + String(x.id), x.ts, x.block);
+      }
+    }).catch(() => {}))),
+  ]);
   for (const n of list) {
     const a = acquired.get(nftKey(n)); if (a) { n.acquiredTs = a.ts; n.acquiredBlock = a.block; }
-    const m = minted.get(nftKey(n)); if (m) { n.mintedTs = m.ts; n.mintedBlock = m.block; }
+    const x = ownCol(n);
+    const m = minted.get(nftKey(n)) || (x ? mintedId.get('ms:' + x.c.slug + ':' + x.id) : undefined);
+    const colTs = x ? drops.get(x.c.slug) : undefined;
+    if (m) { n.mintedTs = m.ts; n.mintedBlock = m.block; }
+    else if (colTs) n.mintedTs = colTs;
   }
 }
 export function mountUserWallet(root: HTMLElement, address: Hex) {
