@@ -113,6 +113,8 @@ function callFor(a: Asset, from: Hex, to: Hex, amt: bigint): Call {
 const wc = (k: string) => createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) });
 async function gasCost(k: FwChain, est: () => Promise<bigint>) { try { const [g, p] = await Promise.all([est(), readClient(k).getGasPrice()]); return pad(g * p, 20n); } catch { return null; } }
 const feeTxt = (k: FwChain, v: bigint | null) => (v == null ? '-' : `${Number(formatUnits(v, 18)).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${esc(NATIVE[k].symbol)}${S.rates ? (() => { const r = rateOf(NATIVE[k].px, S.rates!); return r ? ` (~${fmtUsd(+formatUnits(v, 18) * r)})` : ''; })() : ''}`);
+const usdTxt = (v: number | null) => (v == null || !isFinite(v) ? '' : v > 0 && v < 0.01 ? '<$0.01' : fmtUsd(v));
+const amtUsd = (k: FwChain, a: Asset, amt: bigint) => { if (!S.rates || a.kind === 'nft') return null; const px = a.kind === 'native' ? NATIVE[k].px : ISLAND_TOKENS[k].find(t => t.address === a.token)?.px; const r = px ? rateOf(px, S.rates) : null; return r == null ? null : +formatUnits(amt, a.decimals) * r; };
 type Step = { label: string; fee: bigint | null; run: () => Promise<Hex> };
 // Tokenbound V3: the registry deploys an AccountProxy clone that must be initialized (initialize(impl), anyone may call it)
 // before execute works; an uninitialized proxy silently does nothing. Create + initialize go in one Multicall3 tx.
@@ -140,7 +142,7 @@ function openSend() {
     <div class="lbl">Asset</div>
     <select class="fld sel" data-k="asset">${list.length ? list.map(a => `<option value="${esc(a.key)}">${esc(a.label)}${a.kind === 'nft' ? ' (NFT)' : ` · ${fmt(a.bal, a.decimals)}`}</option>`).join('') : '<option value="">This wallet is empty on ' + esc(chains[c.k].name) + '</option>'}</select>
     <div class="lbl" data-amtl>Amount <span data-k="bal"></span></div>
-    <div class="fld"><input data-k="amt" inputmode="decimal" placeholder="0.0" autocomplete="off"><button class="obtn sm" data-k="max">Max</button></div>
+    <div class="fld"><input data-k="amt" inputmode="decimal" placeholder="0.0" autocomplete="off"><button class="obtn sm" data-k="max">Max</button></div><div class="mut small" data-k="usd" aria-live="polite"></div>
     <div class="lbl">To <span>NFT name, .multisea name or 0x address</span></div>
     <div class="fld"><input data-k="to" placeholder="0x…, LIL FOOT #1204 or Island #12" autocomplete="off" spellcheck="false"></div>
     <div data-k="res"></div>
@@ -149,7 +151,8 @@ function openSend() {
   const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLInputElement;
   let cur: Step[] | null = null; let seq = 0;
   const asset = () => list.find(a => a.key === q('asset').value) || null;
-  const sync = () => { const a = asset(); const nft = a?.kind === 'nft' && a.nft?.standard !== 'erc1155'; (m.querySelector('[data-amtl]') as HTMLElement).hidden = !!nft; (q('amt').parentElement as HTMLElement).hidden = !!nft; q('bal').textContent = a && !nft ? `Balance ${fmt(a.bal, a.decimals)} ${a.label}` : ''; };
+  const sync = () => { const a = asset(); const nft = a?.kind === 'nft' && a.nft?.standard !== 'erc1155'; (m.querySelector('[data-amtl]') as HTMLElement).hidden = !!nft; (q('amt').parentElement as HTMLElement).hidden = !!nft; q('bal').textContent = a && !nft ? `Balance ${fmt(a.bal, a.decimals)} ${a.label}` : ''; let v = 0n; try { v = a && a.kind !== 'nft' ? parseUnits(q('amt').value.trim() || '0', a.decimals) : 0n; } catch {} const u = a && v > 0n ? usdTxt(amtUsd(c.k, a, v)) : ''; q('usd').textContent = u ? `≈ ${u}` : ''; };
+  m.addEventListener('input', sync);
   const update = async () => {
     const my = ++seq; cur = null; q('go').setAttribute('disabled', ''); sync();
     const a = asset(); const raw = q('to').value.trim(); const r = resolveRecipient(raw, c.k);
@@ -165,7 +168,7 @@ function openSend() {
       const tot = steps.reduce((s, x) => s + (x.fee || 0n), 0n);
       q('sum').innerHTML = `${steps.map((s, i) => `<div><span class="mut">${i + 1}. ${esc(s.label)}</span><b>${s.fee == null ? 'gas (est. after step 1)' : 'gas ~' + feeTxt(c.k, s.fee)}</b></div>`).join('')}
         <div><span class="mut">You pay</span><b>${feeTxt(c.k, tot)} on ${esc(chains[c.k].name)}</b></div>
-        <div><span class="mut">Recipient gets</span><b>${a.kind === 'nft' ? esc(a.label) : `${fmt(amt, a.decimals)} ${esc(a.label)}`} on ${esc(chains[c.k].name)}</b></div>
+        <div><span class="mut">Recipient gets</span><b>${a.kind === 'nft' ? esc(a.label) : `${fmt(amt, a.decimals)} ${esc(a.label)}${usdTxt(amtUsd(c.k, a, amt)) ? ` (≈ ${usdTxt(amtUsd(c.k, a, amt))})` : ''}`} on ${esc(chains[c.k].name)}</b></div>
         <ul class="fwnotes"><li>Runs directly on ${esc(chains[c.k].name)}: your wallet calls the Island's wallet (execute).</li>${steps.length > 1 ? '<li>First use: the wallet is created on this chain. You pay that gas once.</li>' : ''}</ul>`;
       q('go').removeAttribute('disabled'); q('go').textContent = steps.length > 1 ? `Send (${steps.length} steps)` : 'Send';
     } catch (e) { if (my === seq) q('sum').innerHTML = `<div class="err small">Couldn't check fees: ${esc(friendly(e, c.k))}</div>`; }

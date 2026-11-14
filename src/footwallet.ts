@@ -219,6 +219,8 @@ export function resolveRecipient(s: string): { address: Hex; foot: number | null
 }
 function wc(k: string) { return createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) }); }
 async function gasCost(k: FwChain, est: () => Promise<bigint>) { try { const [g, p] = await Promise.all([est(), readClient(k).getGasPrice()]); return pad(g * p, 20n); } catch { return null; } }
+const usdTxt = (v: number | null) => (v == null || !isFinite(v) ? '' : v > 0 && v < 0.01 ? '<$0.01' : fmtUsd(v));
+const amtUsd = (a: Asset, amt: bigint) => { if (!S.rates || a.kind === 'nft') return null; const px = a.kind === 'native' ? NATIVE[a.k].px : TOKENS[a.k].find(t => t.address === a.token)?.px; const r = px ? rateOf(px, S.rates) : null; return r == null ? null : +formatUnits(amt, a.decimals) * r; };
 const feeTxt = (k: string, v: bigint | null) => (v == null ? '-' : `${fmtAmt(v, 18, 6)} ${esc(nat(k))}${S.rates ? (() => { const r = rateOf(NATIVE[k as FwChain]?.px || 'ETH', S.rates!); return r ? ` (~${fmtUsd(+formatUnits(v, 18) * r)})` : ''; })() : ''}`);
 
 type Plan = { route: 'local' | 'remote'; from: FwChain; steps: { label: string; k: FwChain; fee: bigint | null; run: () => Promise<Hex> }[]; notes: string[] };
@@ -279,7 +281,7 @@ function openSend(pre?: string) {
     <div class="lbl">Asset</div>
     <select class="fld sel" data-k="asset">${list.length ? list.map(a => `<option value="${esc(a.key)}" ${a.key === pre ? 'selected' : ''}>${esc(chains[a.k].name)} · ${esc(a.label)}${a.kind === 'nft' ? ' (NFT)' : ` · ${fmtAmt(a.bal, a.decimals, 6)}`}</option>`).join('') : '<option value="">This wallet is empty</option>'}</select>
     <div class="lbl" data-amtl>Amount <span data-k="bal"></span></div>
-    <div class="fld"><input data-k="amt" inputmode="decimal" placeholder="0.0" autocomplete="off"><button class="obtn sm" data-k="max">Max</button></div>
+    <div class="fld"><input data-k="amt" inputmode="decimal" placeholder="0.0" autocomplete="off"><button class="obtn sm" data-k="max">Max</button></div><div class="mut small" data-k="usd" aria-live="polite"></div>
     <div class="lbl">To <span>NFT name, .multisea name or 0x address</span></div>
     <div class="fld"><input data-k="to" placeholder="LIL FOOT #1204, foot1204.multisea or 0x…" autocomplete="off" spellcheck="false"></div>
     <div data-k="res"></div>
@@ -288,7 +290,8 @@ function openSend(pre?: string) {
   const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLInputElement;
   let cur: Plan | null = null; let seq = 0;
   const asset = () => list.find(a => a.key === q('asset').value) || null;
-  const sync = () => { const a = asset(); const nft = a?.kind === 'nft' && a.nft?.standard !== 'erc1155'; (m.querySelector('[data-amtl]') as HTMLElement).hidden = !!nft; (q('amt').parentElement as HTMLElement).hidden = !!nft; q('bal').textContent = a && !nft ? `Balance ${fmtAmt(a.bal, a.decimals, 6)} ${a.label}` : ''; };
+  const sync = () => { const a = asset(); const nft = a?.kind === 'nft' && a.nft?.standard !== 'erc1155'; (m.querySelector('[data-amtl]') as HTMLElement).hidden = !!nft; (q('amt').parentElement as HTMLElement).hidden = !!nft; q('bal').textContent = a && !nft ? `Balance ${fmtAmt(a.bal, a.decimals, 6)} ${a.label}` : ''; let v = 0n; try { v = a && a.kind !== 'nft' ? parseUnits(q('amt').value.trim() || '0', a.decimals) : 0n; } catch {} const u = a && v > 0n ? usdTxt(amtUsd(a, v)) : ''; q('usd').textContent = u ? `≈ ${u}` : ''; };
+  m.addEventListener('input', sync);
   const update = async () => {
     const my = ++seq; cur = null; q('go').setAttribute('disabled', ''); sync();
     const a = asset(); const r = resolveRecipient(q('to').value); const raw = q('to').value.trim();
@@ -303,7 +306,7 @@ function openSend(pre?: string) {
       q('sum').innerHTML = `<div><span class="mut">Route</span><b>${p.route === 'local' ? `Direct on ${esc(chains[p.from].name)}` : `LayerZero command from ${esc(chains[p.from].name)}`}</b></div>
         ${p.steps.map((s, i) => `<div><span class="mut">${i + 1}. ${esc(s.label)}</span><b>${s.fee == null ? 'gas (est. after step 1)' : (p.route === 'remote' && i === p.steps.length - 1 ? 'LayerZero fee ' : 'gas ~') + feeTxt(s.k, s.fee)}</b></div>`).join('')}
         <div><span class="mut">You pay</span><b>${feeTxt(p.from, totalFee)} on ${esc(chains[p.from].name)}</b></div>
-        <div><span class="mut">Recipient gets</span><b>${a.kind === 'nft' ? esc(a.label) : `${fmtAmt(amt, a.decimals, 6)} ${esc(a.label)}`} on ${esc(chains[a.k].name)}</b></div>
+        <div><span class="mut">Recipient gets</span><b>${a.kind === 'nft' ? esc(a.label) : `${fmtAmt(amt, a.decimals, 6)} ${esc(a.label)}${usdTxt(amtUsd(a, amt)) ? ` (≈ ${usdTxt(amtUsd(a, amt))})` : ''}`} on ${esc(chains[a.k].name)}</b></div>
         <ul class="fwnotes">${p.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`;
       q('go').removeAttribute('disabled'); q('go').textContent = p.steps.length > 1 ? `Send (${p.steps.length} steps)` : 'Send';
     } catch (e) { if (my === seq) q('sum').innerHTML = `<div class="err small">Couldn't quote: ${esc(friendly(e, f.k))}</div>`; }

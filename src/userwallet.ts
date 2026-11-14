@@ -229,6 +229,11 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
       const rate = px ? rateOf(px, S.rates) : null;
       return rate == null ? null : Number(formatUnits(a.bal, a.decimals)) * rate;
     };
+    // USD for an amount of this asset / for native-coin gas on chain k (same live rates as the asset card).
+    const rateFor = (a: Asset) => { if (!S.rates || a.kind === 'nft') return null; const px = a.kind === 'native' ? NATIVE[a.k as FwChain]?.px || 'ETH' : TOKENS[a.k as FwChain]?.find(t => t.address === a.token)?.px; return px ? rateOf(px, S.rates) : null; };
+    const usdTxt = (v: number | null) => (v == null || !isFinite(v) ? '' : v > 0 && v < 0.01 ? '<$0.01' : fmtUsd(v));
+    const amtUsd = (a: Asset, amt: bigint) => { const r = rateFor(a); return r == null ? null : Number(formatUnits(amt, a.decimals)) * r; };
+    const gasUsd = (k: string, wei: bigint) => { const r = S.rates ? rateOf(NATIVE[k as FwChain]?.px || 'ETH', S.rates) : null; return r == null ? null : Number(formatUnits(wei, 18)) * r; };
     function showList() {
       disposeStep(); inStep = false; back.setAttribute('aria-label', 'Close Send');
       const list = assets(), tokens = list.filter(a => a.kind !== 'nft' && a.bal > 0n);
@@ -242,7 +247,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     function showStep(a: Asset) {
       disposeStep(); inStep = true; back.setAttribute('aria-label', 'Back to assets');
       const single = a.kind === 'nft' && a.nft?.standard === 'erc721';
-      body.innerHTML = `<div class="uwsend-content uwsend-step fwsend"><div class="uwsend-selected">${icon(a)}<div><b>${esc(a.label)}</b><small>${esc(chains[a.k].name)}</small></div><span class="uwsend-value"><b>${a.kind === 'nft' ? 'NFT' : fmt(a.bal, a.decimals)}</b>${a.kind !== 'nft' ? `<small>${fmtUsd(assetUsd(a))}</small>` : ''}</span></div><p class="uwsend-note">Direct transfer on ${esc(chains[a.k].name)}. You pay normal gas. No bridging.</p><div data-amount ${single ? 'hidden' : ''}><label class="lbl" for="uwamt">Amount <span data-k="balance"></span></label><div class="fld"><input id="uwamt" data-k="amount" placeholder="0.0" inputmode="decimal" autocomplete="off"><button type="button" class="uwsend-max" data-k="max">Max</button></div></div><label class="lbl" for="uwto">Recipient</label><div class="fld"><input id="uwto" data-k="to" placeholder="0x…, name.eth, LIL FOOT #N" autocomplete="off" spellcheck="false"></div><div class="fwsum" data-k="summary" aria-live="polite">Enter an amount and recipient to estimate gas.</div><button class="bbtn" data-k="go" disabled>Send</button><div class="fwmsg" data-k="msg" role="status"></div></div>`;
+      body.innerHTML = `<div class="uwsend-content uwsend-step fwsend"><div class="uwsend-selected">${icon(a)}<div><b>${esc(a.label)}</b><small>${esc(chains[a.k].name)}</small></div><span class="uwsend-value"><b>${a.kind === 'nft' ? 'NFT' : fmt(a.bal, a.decimals)}</b>${a.kind !== 'nft' ? `<small>${fmtUsd(assetUsd(a))}</small>` : ''}</span></div><p class="uwsend-note">Direct transfer on ${esc(chains[a.k].name)}. You pay normal gas. No bridging.</p><div data-amount ${single ? 'hidden' : ''}><label class="lbl" for="uwamt">Amount <span data-k="balance"></span></label><div class="fld"><input id="uwamt" data-k="amount" placeholder="0.0" inputmode="decimal" autocomplete="off"><button type="button" class="uwsend-max" data-k="max">Max</button></div><div class="mut small" data-k="usd" aria-live="polite"></div></div><label class="lbl" for="uwto">Recipient</label><div class="fld"><input id="uwto" data-k="to" placeholder="0x…, name.eth, LIL FOOT #N" autocomplete="off" spellcheck="false"></div><div class="fwsum" data-k="summary" aria-live="polite">Enter an amount and recipient to estimate gas.</div><button class="bbtn" data-k="go" disabled>Send</button><div class="fwmsg" data-k="msg" role="status"></div></div>`;
       body.scrollTop = 0;
       const m = body.querySelector<HTMLElement>('.uwsend-step')!;
       const q = (k: string) => m.querySelector(`[data-k="${k}"]`) as HTMLInputElement;
@@ -273,12 +278,13 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
           if (tx.value + gas * price > native) throw Error('Insufficient funds for amount + gas on this chain.');
           if (my !== seq || fp !== fingerprint() || !m.isConnected) return;
           quote = { a, tx, gas, price, fingerprint: fp };
-          q('summary').innerHTML = `<div><span>Direct on</span><b>${esc(chains[a.k].name)}</b></div><div><span>Recipient</span><b class="mono" style="overflow-wrap:anywhere">${to}</b></div><div><span>Amount</span><b>${fmt(amount, a.decimals)} ${esc(a.label)}</b></div><div><span>Estimated gas</span><b>~${fmt(gas * price)} ${esc(chains[a.k].native)}</b></div>`;
+          q('summary').innerHTML = `<div><span>Direct on</span><b>${esc(chains[a.k].name)}</b></div><div><span>Recipient</span><b class="mono" style="overflow-wrap:anywhere">${to}</b></div><div><span>Amount</span><b>${fmt(amount, a.decimals)} ${esc(a.label)}${usdTxt(amtUsd(a, amount)) ? ` (≈ ${usdTxt(amtUsd(a, amount))})` : ''}</b></div><div><span>Estimated gas</span><b>~${fmt(gas * price)} ${esc(chains[a.k].native)}${usdTxt(gasUsd(a.k, gas * price)) ? ` (≈ ${usdTxt(gasUsd(a.k, gas * price))})` : ''}</b></div>`;
           q('go').disabled = false;
         } catch (e) { if (my === seq) q('summary').innerHTML = `<span class="err">${esc(friendly(e, a.k))}</span>`; }
       };
       let timer: ReturnType<typeof setTimeout>;
-      const changed = () => { if (sending || sent || !m.isConnected) return; ++seq; quote = null; q('go').disabled = true; clearTimeout(timer); timer = setTimeout(update, 400); };
+      const liveUsd = () => { const el = q('usd'); if (!el || a.kind === 'nft') return; let amt = 0n; try { amt = parseUnits(q('amount').value.trim() || '0', a.decimals); } catch {} const t = amt > 0n ? usdTxt(amtUsd(a, amt)) : ''; el.textContent = t ? `≈ ${t}` : ''; };
+      const changed = () => { liveUsd(); if (sending || sent || !m.isConnected) return; ++seq; quote = null; q('go').disabled = true; clearTimeout(timer); timer = setTimeout(update, 400); };
       m.addEventListener('input', changed);
       disposeStep = () => { ++seq; clearTimeout(timer); };
       q('max').addEventListener('click', async () => {
@@ -295,7 +301,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
             if (!balance) throw Error('Not enough native coin to cover gas.');
           } else if (a.nft?.standard === 'erc1155') balance = await pc.readContract({ address: a.nft.contract as Hex, abi: ERC1155, functionName: 'balanceOf', args: [address, BigInt(a.nft.id)] }) as bigint;
           if (my !== seq || !m.isConnected) return;
-          q('amount').value = formatUnits(balance, a.decimals); await update();
+          q('amount').value = formatUnits(balance, a.decimals); liveUsd(); await update();
         } catch (e) { if (my === seq && m.isConnected) q('summary').innerHTML = `<span class="err">${esc(friendly(e, a.k))}</span>`; }
         finally { if (m.isConnected) q('max').disabled = false; }
       });

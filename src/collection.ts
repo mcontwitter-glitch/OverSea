@@ -301,16 +301,21 @@ async function fwFill() {
     part.forEach(x => { const v = fwv.get(x); if (!v) return; const ci = document.querySelector(`.grid .card[data-id="${x}"] .ci`); if (ci && !ci.querySelector('.fwslot')) ci.insertAdjacentHTML('beforeend', fwBadgeFor(x)); });
   }
 }
-// Island's: "🖼 N" badge = NFTs held by the Island's token wallets on all 5 chains (Worker /islands/wallet-nfts, cached
-// 10 min there and 5 min in this tab). Loaded after the grid renders; not a link, so tapping the card works as before.
-let iwn: Record<string, number> | null = null; let iwP: Promise<void> | null = null;
-const iwBadgeFor = (id: number) => (IW_ON && iwn?.[id] ? `<span class="fwslot"><span class="iwnb" title="NFTs inside this Island's wallets (all 5 chains)">🖼 ${iwn[id]}</span></span>` : '');
+// Island's: bottom-left "Wallet: $X" = coins + tokens in the Island's 5 token wallets; bottom-right "🖼 N" = NFTs inside them.
+// Both from the Worker /islands/wallet-nfts (KV 10 min there, 5 min in this tab), loaded after the grid renders. Not links,
+// so tapping the card works as before.
+let iwn: { counts: Record<string, number>; usd: Record<string, number> } | null = null; let iwP: Promise<void> | null = null;
+const iwBadgeFor = (id: number) => {
+  if (!IW_ON || !iwn) return ''; const u = iwn.usd?.[id], n = iwn.counts?.[id];
+  return (u ? `<span class="fwslot iwbal"><span class="iwnb" title="Coins and tokens inside this Island's wallets (all 5 chains)">Wallet: $${u >= 100_000 ? Math.round(u / 1000).toLocaleString() + 'K' : u.toLocaleString(undefined, u >= 1000 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>` : '')
+    + (n ? `<span class="iwslotr"><span class="iwnb" title="NFTs inside this Island's wallets (all 5 chains)">🖼 ${n}</span></span>` : '');
+};
 function iwFill() {
   if (!IW_ON) return;
   const paint = () => document.querySelectorAll<HTMLElement>('.grid .card[data-id]').forEach(e => { const ci = e.querySelector('.ci'); if (ci && !ci.querySelector('.iwnb')) { const h = iwBadgeFor(+e.dataset.id!); if (h) ci.insertAdjacentHTML('beforeend', h); } });
   if (iwn) { paint(); return; }
-  try { const c = JSON.parse(sessionStorage.getItem('multisea-iwn') || 'null'); if (c && Date.now() - c.t < 300_000) { iwn = c.v; paint(); return; } } catch {}
-  iwP ??= fetch(`${API}/islands/wallet-nfts`).then(r => (r.ok ? r.json() : null)).then(j => { if (!j?.counts) { iwP = null; return; } iwn = j.counts; try { sessionStorage.setItem('multisea-iwn', JSON.stringify({ t: Date.now(), v: iwn })); } catch {} }).catch(() => { iwP = null; });
+  try { const c = JSON.parse(sessionStorage.getItem('multisea-iwn2') || 'null'); if (c && Date.now() - c.t < 300_000) { iwn = c.v; paint(); return; } } catch {}
+  iwP ??= fetch(`${API}/islands/wallet-nfts`).then(r => (r.ok ? r.json() : null)).then(j => { if (!j?.counts) { iwP = null; return; } iwn = { counts: j.counts, usd: j.usd || {} }; try { sessionStorage.setItem('multisea-iwn2', JSON.stringify({ t: Date.now(), v: iwn })); } catch {} }).catch(() => { iwP = null; });
   iwP.then(() => { if (iwn) paint(); });
 }
 function card(it: Item, idx = 99) {
