@@ -123,8 +123,8 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     }
     return out;
   }
-  // Public listings for a collection; invalid orders are pruned on read (cached 60s).
-  async function listings(env, slug) {
+  // Public listings for a collection; invalid orders are pruned on read (60s fresh, 60s SWR, 2 min bound).
+  async function listings(env, slug, ctx) {
     const col = await getCollection(env, slug); if (!col) bad('not found', 404);
     return cached(`n:${slug}`, 60, async () => {
       const recs = await records(env, col); const out = [];
@@ -135,7 +135,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
         out.push({ source: 'multisea', chain: r.chain, id: Number(rec.parameters.offer[0].identifierOrCriteria), price: Number(rec.priceWei) / 1e18, currency: chains[r.chain].native, orderHash: rec.hash, protocolAddress: lc(SEAPORT), seller: rec.parameters.offerer, endTime: Number(rec.parameters.endTime) });
       }));
       return out;
-    });
+    }, 60, ctx);
   }
   async function getOrder(env, k, hash) {
     const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` });

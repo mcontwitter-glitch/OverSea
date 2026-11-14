@@ -50,10 +50,24 @@ const footTba = id => getContractAddress({ opcode: 'CREATE2', from: FOOT_REG, sa
 const osFetch = (env, path, init = {}) => fetch(OS + path, { ...init, headers: { 'x-api-key': env.OPENSEA_API_KEY, accept: 'application/json', 'content-type': 'application/json', ...(init.headers || {}) } });
 // Foot wallet NFT list cache (seconds); see GET /foot/<id>/nfts.
 const FW_TTL = 30, FW_TTL_PARTIAL = 10, FW_MIN_AGE = 10;
-async function cached(key, ttl, fn) {
+// Listing GETs: 60s fresh, then serve stale up to 60s more while refreshing (stale bound ~2 min).
+const LISTING_TTL = 60, LISTING_SWR = 60;
+const listingCC = `public, max-age=${LISTING_TTL}, stale-while-revalidate=${LISTING_SWR}`;
+function listingJson(body) {
+  return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json', 'cache-control': listingCC } });
+}
+async function cached(key, ttl, fn, swrTtl = 0, ctx) {
   const cache = caches.default; const req = new Request('https://cache.multisea/' + key);
-  const hit = await cache.match(req); if (hit) return hit.json();
-  const val = await fn(); await cache.put(req, new Response(JSON.stringify(val), { headers: { 'cache-control': `public, max-age=${ttl}` } })); return val;
+  const put = val => cache.put(req, new Response(JSON.stringify(val), { headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl + (swrTtl || 0)}`, 'x-ms-cached-at': String(Date.now()) } }));
+  const refresh = () => fn().then(put).catch(() => {});
+  const hit = await cache.match(req);
+  if (hit) {
+    const at = Number(hit.headers.get('x-ms-cached-at') || 0);
+    const age = at ? (Date.now() - at) / 1000 : 0;
+    if (!at || age < ttl) return hit.json();
+    if (swrTtl > 0 && age < ttl + swrTtl) { if (ctx?.waitUntil) ctx.waitUntil(refresh()); else refresh(); return hit.json(); }
+  }
+  const val = await fn(); await put(val); return val;
 }
 const RPC_READ = new Set(['eth_call', 'eth_chainId', 'eth_blockNumber', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_getTransactionByHash', 'eth_getBlockByNumber', 'eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_feeHistory', 'eth_estimateGas', 'net_version']);
 // Try each configured RPC in order (2 rounds); an HTTP error, a non-JSON body or a JSON-RPC rate-limit/internal error moves on to the next.
@@ -382,7 +396,7 @@ async function handle(req, env, url, ctx) {
   if (p[0] === 'native') {
     const N = native();
     if (M === 'GET' && p[1] === 'config' && p.length === 3) { const col = await getCollection(env, p[2]); if (!col) bad('not found', 404); return { seaport: CFG.seaport, feeRecipient: feeWallet(env), feeBps: NATIVE_FEE_BPS, royalty: await N.royaltyFor(env, p[2]), chains: Object.fromEntries(Object.entries(chains).map(([k, c]) => [k, { chainId: c.chainId, native: c.native }])) }; }
-    if (M === 'GET' && p.length === 3 && p[2] === 'listings') return { listings: await N.listings(env, p[1]) };
+    if (M === 'GET' && p.length === 3 && p[2] === 'listings') return listingJson({ listings: await N.listings(env, p[1], ctx) });
     if (M === 'GET' && p[1] === 'order' && p.length === 4) { if (!chains[p[2]] || !HASH.test(p[3])) bad('invalid input'); return await N.getOrder(env, p[2], p[3]); }
     if (M === 'POST' && p[1] === 'list' && p.length === 2) return await N.list(env, await body());
     if (M === 'POST' && p[1] === 'cancelled' && p.length === 2) { const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '') || (b.txHash && !HASH.test(b.txHash))) bad('invalid input'); return await N.cancelled(env, b.chain, b.orderHash, b.txHash); }
@@ -496,7 +510,7 @@ async function handle(req, env, url, ctx) {
   if (M === 'GET' && p[0] === 'os' && p.length === 3) {
     if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
     const col = await getCollection(env, p[1]); if (!col || col.status !== 'approved') bad('not found', 404);
-    if (p[2] === 'listings') return { listings: await cached(`l:${p[1]}`, 120, () => osListings(env, col)) };
+    if (p[2] === 'listings') return listingJson({ listings: await cached(`l:${p[1]}`, LISTING_TTL, () => osListings(env, col), LISTING_SWR, ctx) });
     if (p[2] === 'stats') return { stats: await cached(`s:${p[1]}`, 300, () => osStats(env, col)) };
     if (p[2] === 'items') { const ch = url.searchParams.get('chain') || ''; const nx = url.searchParams.get('next') || ''; if (nx.length > 400) bad('bad cursor'); return await cached(`i:${p[1]}:${ch}:${nx}`, 600, () => osItems(env, col, ch, nx)); }
   }

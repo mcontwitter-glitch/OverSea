@@ -23,6 +23,13 @@ const params = new URLSearchParams(location.search);
 const pathSlug = location.pathname.match(/^\/c\/([a-z0-9-]+)/)?.[1] || CFG.default;
 const COL = CFG.collections.find(c => c.slug === pathSlug)!;
 const DATA = `/data/${COL.slug}/`;
+// Live listings start now, in parallel with the snapshot JSON, and do not wait for /health.
+const listingsLiveP: Promise<[Response | null, Response | null]> = API
+  ? Promise.all([
+      fetch(`${API}/os/${COL.slug}/listings`).catch(() => null),
+      fetch(`${API}/native/${COL.slug}/listings`).catch(() => null),
+    ])
+  : Promise.resolve([null, null]);
 // Owner-editable overrides (logo, banner, description, links) served by the Worker when online.
 let ovr: any = {}; let editable = false; let founder = false;
 document.title = `${COL.name} · MultiSea`;
@@ -112,21 +119,35 @@ async function loadActivity() {
 let primVol: Record<string, number> | null = null; // launchpad drops: primary mint volume read from chain
 const listMap = new Map<number, Listing>();
 const fillMap = (ls: Listing[]) => { listMap.clear(); ls.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); }); };
-fillMap(listings);
-// Live listings from the Worker (OpenSea, ~2 min cache) replace the static snapshot so new listings/cancels show after a refresh.
+let listsReady = false;
+function syncListedHeader() {
+  if (!summary) return;
+  let f: Listing | null = null;
+  listMap.forEach(l => { if (l.priceEth != null && (!f || l.priceEth < f.priceEth!)) f = l; });
+  summary.floor = f; summary.listedCount = listMap.size;
+}
+const pricePending = () => listsReady ? '<span class="mut">Not listed</span>' : '<span class="mut">…</span>';
+// Live listings from the Worker (OpenSea + MultiSea, 60s fresh / 60s SWR). Empty snapshot is not shown as "Not listed".
+let listingsReq: Promise<[Response | null, Response | null]> | null = listingsLiveP;
+let listingsInflight: Promise<void> | null = null;
 async function loadLiveListings() {
-  try {
-    // OpenSea (live, else static snapshot) + MultiSea native listings; cheapest per item wins.
-    const [osr, nr] = await Promise.all([fetch(`${API}/os/${COL.slug}/listings`).catch(() => null), fetch(`${API}/native/${COL.slug}/listings`).catch(() => null)]);
-    const os: Listing[] = osr?.ok ? (await osr.json()).listings || [] : []; const nat: Listing[] = nr?.ok ? (await nr.json()).listings || [] : [];
-    const rate: Record<string, number> = {}; listings.forEach(l => { if (l.priceEth && l.price) rate[l.currency] = l.priceEth / l.price; });
-    if (rates?.ETH) for (const [c, v] of Object.entries(rates)) if (v && c !== 'ETH') rate[c] ??= v / rates.ETH;
-    const eth = (l: Listing) => ({ ...l, priceEth: /^W?ETH$/.test(l.currency) ? l.price : rate[l.currency] ? l.price * rate[l.currency] : null });
-    fillMap([...(os.length ? os : listings).map(l => eth({ ...l, source: 'opensea' as const })), ...nat.map(l => eth({ ...l, source: 'multisea' as const }))]);
-    ordById.forEach((o, id) => { if (o.priceSats != null) addOrdListing(id, o); });
-    // The header floor follows the live listings the grid shows, not the build-time snapshot.
-    if (summary) { let f: Listing | null = null; listMap.forEach(l => { if (l.priceEth != null && (!f || l.priceEth < f.priceEth!)) f = l; }); summary.floor = f; }
-  } catch {}
+  if (listingsInflight) return listingsInflight;
+  listingsInflight = (async () => {
+    try {
+      const reqs = listingsReq || Promise.all([fetch(`${API}/os/${COL.slug}/listings`).catch(() => null), fetch(`${API}/native/${COL.slug}/listings`).catch(() => null)]);
+      listingsReq = null;
+      const [osr, nr] = await reqs;
+      const os: Listing[] = osr?.ok ? (await osr.json()).listings || [] : []; const nat: Listing[] = nr?.ok ? (await nr.json()).listings || [] : [];
+      const rate: Record<string, number> = {}; listings.forEach(l => { if (l.priceEth && l.price) rate[l.currency] = l.priceEth / l.price; });
+      if (rates?.ETH) for (const [c, v] of Object.entries(rates)) if (v && c !== 'ETH') rate[c] ??= v / rates.ETH;
+      const eth = (l: Listing) => ({ ...l, priceEth: /^W?ETH$/.test(l.currency) ? l.price : rate[l.currency] ? l.price * rate[l.currency] : null });
+      // OpenSea (live, else static snapshot) + MultiSea native listings; cheapest per item wins.
+      fillMap([...(os.length ? os : listings).map(l => eth({ ...l, source: 'opensea' as const })), ...nat.map(l => eth({ ...l, source: 'multisea' as const }))]);
+      ordById.forEach((o, id) => { if (o.priceSats != null) addOrdListing(id, o); });
+    } catch { fillMap(listings); ordById.forEach((o, id) => { if (o.priceSats != null) addOrdListing(id, o); }); }
+    listsReady = true; syncListedHeader();
+  })();
+  try { await listingsInflight; } finally { listingsInflight = null; }
 }
 const deployedChains = COL.deployments.map(d => d.chain);
 // ---- Bitcoin Ordinals as one more chain (only for collections whose config/override marks `ordinals`; see src/ordlayer.ts) ----
@@ -158,7 +179,7 @@ async function loadOrdinals() {
     if (o.priceSats != null) addOrdListing(id, o); });
   const listed = L.items.filter(o => o.priceSats != null).map(o => o.priceSats!);
   if (summary) { (summary.perChain ??= {}).bitcoin = { ok: true, live: L.items.length, holders: new Set(L.items.map(o => o.owner)).size, minted: L.items.length, inEscrow: 0, sales: 0, volume: {}, historyComplete: false, floorSats: listed.length ? Math.min(...listed) : null };
-    if (summary.listedCount != null) summary.listedCount += listed.length; }
+    syncListedHeader(); }
   render();
 }
 // BTC listings carry priceEth (via USD) so the mixed-chain price sort works like APE/BNB do.
@@ -193,8 +214,8 @@ function header() {
   const vol: Record<string, number> = { ...(summary?.volume || {}) }; if (primVol) for (const [c, v] of Object.entries(primVol)) if (v > 0) vol[c] = (vol[c] || 0) + v;
   const volMain = Object.keys(vol).length ? Object.entries(vol).map(([c, v]) => `${fmt(v as number)} ${c}`).join(' + ') : '-';
   const volTip = deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c] && Object.keys(pc[c].volume).length ? Object.entries(pc[c].volume).map(([k, v]) => fmt(v as number) + ' ' + k).join(' + ') : pc[c]?.historyComplete ? '0' : '-'}</b></div>`).join('');
-  const fl = summary?.floor;
-  const listedPct = summary?.listedCount != null ? ((100 * summary.listedCount) / COL.supply).toFixed(1) + '%' : '-';
+  const fl = listsReady ? summary?.floor : undefined;
+  const listedPct = !listsReady ? '…' : summary?.listedCount != null ? ((100 * summary.listedCount) / COL.supply).toFixed(1) + '%' : '-';
   const avatarSrc = media(ovr.logo) || COL.logo || (items[0] ? thumbUrl(items[0].id) : '');
   return `
   <div class="banner ${ovr.banner || COL.banner ? 'has-img' : ''}" style="${ovr.banner || COL.banner ? `background-image:url(${media(ovr.banner) || COL.banner})` : ''}">
@@ -209,7 +230,7 @@ function header() {
     </div>
     <div class="stats">
       <div class="stat tip"><b>${volMain}</b><span>Total volume ⓘ</span><div class="tipbox">${volTip}${pc.bitcoin ? `<div class="tipr">${logo('bitcoin')}<span>Bitcoin floor</span><b>${pc.bitcoin.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) : '-'}</b></div>` : ''}<div class="tipnote">${summary?.volumeSource === 'opensea' ? 'Source: OpenSea API' : 'On-chain Seaport 1.6 sales'}${primVol ? ' + primary mints' : ''}</div></div></div>
-      <div class="stat"><b>${fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}${/^W?ETH$/.test(fl.currency) ? '' : ` (≈ ${fmt(fl.priceEth)} ETH)`}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
+      <div class="stat"><b>${!listsReady ? '…' : fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}${/^W?ETH$/.test(fl.currency) ? '' : ` (≈ ${fmt(fl.priceEth)} ETH)`}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
       <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
@@ -322,15 +343,15 @@ function card(it: Item, idx = 99) {
   if (isOrd(it.id)) return ordCard(it);
   const loc = owners[it.id]; const l = listMap.get(it.id); const ob = onBtc.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}${iwBadgeFor(it.id)}</div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : pricePending()}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function ordCard(it: Item) {
   const o = ordById.get(it.id)!; const l = listMap.get(it.id); const sats = o.priceSats;
   if (o.tokenId) return `<div class="card ordc bridged" data-ord="${it.id}"><a class="ci" href="${ordHref(it.id)}">${ordKit!.ordFrame(o.iid, thumbUrl(+o.tokenId), esc(it.name))}<span class="badge btcb" title="Bitcoin Ordinal">${logo('bitcoin')}</span><span class="rank">Ordinal</span></a>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="own mut small" title="${esc(o.owner)}">Owner <a class="mono" href="https://ordinals.com/address/${esc(o.owner)}" target="_blank" rel="noopener">${esc(short(o.owner))}</a></div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : '<span class="mut">Not listed</span>'}</div><a class="buy ghost" href="https://ordinals.com/inscription/${esc(o.iid)}" target="_blank" rel="noopener">ordinals.com ↗</a></div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="own mut small" title="${esc(o.owner)}">Owner <a class="mono" href="https://ordinals.com/address/${esc(o.owner)}" target="_blank" rel="noopener">${esc(short(o.owner))}</a></div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : pricePending()}</div><a class="buy ghost" href="https://ordinals.com/inscription/${esc(o.iid)}" target="_blank" rel="noopener">ordinals.com ↗</a></div></div>`;
   return `<a class="card ordc" data-ord="${it.id}" href="${ordHref(it.id)}"><div class="ci">${ordKit!.ordThumb(o.iid, esc(it.name))}<span class="badge btcb" title="Bitcoin Ordinals${ORD?.demo ? ' (DEMO)' : ''}">${logo('bitcoin')}</span>${ORD?.demo ? '<span class="rank demo">DEMO</span>' : o.num ? `<span class="rank">#${o.num.toLocaleString()}</span>` : ''}</div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : '<span class="mut">Not listed</span>'}</div><span class="buy ${l ? '' : 'ghost'}">${l ? 'Buy with BTC' : 'View / List'}</span></div></a>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l && sats ? `<b>${ordKit!.D.fmtBtc(sats)}</b>${usd(l)}${srcBadge(l)}` : pricePending()}</div><span class="buy ${l ? '' : 'ghost'}">${l ? 'Buy with BTC' : 'View / List'}</span></div></a>`;
 }
 function itemsView() {
   const arr = filtered();
@@ -391,7 +412,7 @@ function modal(id: number) {
     ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
     ${IW_ON ? (() => { const k = (loc && (ISLAND_CHAINS as readonly string[]).includes(loc.chain) ? loc.chain : 'base') as FwChain; return `<div class="fwmrow"><a class="obtn sm fwwbtn" href="${islandWalletUrl(id, k)}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval"><span class="fwbadge mono">${logo(k)} ${short(islandTba(k, id))}</span></span><span class="mut small">Token wallet (ERC-6551). Each chain has its own address.</span></div>`; })() : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : '-'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
@@ -452,10 +473,13 @@ async function refreshEditable() {
   render();
 }
 onWallet(() => { if (!wallet.address && st.status === 'mine') st.status = 'all'; refreshEditable(); });
-// Load API data even if /health was blocked (other routes often still work); retry when the API comes back.
-const apiLoad = async () => { loadLiveListings().then(render); try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; render(); if (ovr.ordinals) loadOrdinals(); } catch {} refreshEditable(); };
-checkApi().then(apiLoad); onApiUp(apiLoad);
+// Listings already started above (not gated on /health). Other API data still loads after the health probe; retry when the API comes back.
+const listingsReady = loadLiveListings();
+const apiLoad = async () => { try { const j = await (await fetch(`${API}/collections/${COL.slug}`)).json(); ovr = j.collection || {}; render(); if (ovr.ordinals) loadOrdinals(); } catch {} refreshEditable(); };
+checkApi().then(apiLoad); onApiUp(() => { loadLiveListings().then(render); apiLoad(); });
+await Promise.race([listingsReady, new Promise<void>(r => setTimeout(r, 200))]);
 render();
+listingsReady.then(() => render());
 loadLiveOwners();
 // Launchpad drops: primary mint volume read from chain (null for collections that are not drops).
 import('./dropstats').then(D => D.primaryVolume(COL.deployments)).then(p => { if (p) { primVol = p; render(); } }).catch(() => {});
