@@ -207,6 +207,32 @@ function chainOfErr(e: any, m: string): string | undefined {
   const viaProxy = all.match(/\/rpc\/([a-z]+)/)?.[1]; if (viaProxy && chains[viaProxy]) return chains[viaProxy].name;
   for (const k of Object.keys(chains)) for (const u of (chains[k].rpcs || [chains[k].rpc])) { try { if (all.includes(new URL(u).host)) return chains[k].name; } catch {} }
 }
+// Custom-error reverts that wallets and viem show as "Execution reverted for an unknown reason": the 4-byte selector of the
+// revert data -> what actually blocked it (mostly NFT collections using Limit Break's Creator Token transfer rules).
+const REVERTS: Record<string, string> = {
+  '0x369c2f4c': "This collection's contract blocks direct transfers from smart-account wallets (EIP-7702), and your wallet has smart-account mode turned on. Nothing is wrong with the NFT or the recipient. Turn off smart-account mode in your wallet's settings, then try again.",
+  '0x30211a0f': "This collection's contract blocks direct transfers from smart-contract wallets.",
+  '0xef28f901': "This collection's contract only allows transfers through approved marketplaces, not direct sends.",
+  '0x7f954ba1': "This collection's contract doesn't allow this NFT to be transferred right now.",
+  '0x409e6e1e': "This collection's contract blocks this transfer route (operator not allowed).",
+  '0xede71dcc': "This collection's contract blocks this transfer route (operator not allowed).",
+  '0xaca58aa0': "This collection's contract only allows sending to regular wallets, not to contracts.",
+  '0xce32f2aa': "This collection's contract requires the recipient to verify their wallet first.",
+  '0x2a5cb1c3': "This collection's contract has frozen the recipient's wallet.",
+  '0x2b635c88': "This collection's contract has frozen your wallet for transfers.",
+  '0xd73e63af': "This NFT is soulbound: its contract doesn't allow transfers.",
+  '0xf284641b': "This NFT is locked by its contract and can't be transferred right now.",
+  '0xd93c0665': "This contract is paused, so transfers are blocked right now.",
+  '0x64a0ae92': "The recipient is a contract that can't receive NFTs.",
+  '0xd1a57ed6': "The recipient is a contract that can't receive NFTs.",
+  '0x59c896be': "This wallet doesn't own (or isn't approved for) this NFT anymore.",
+  '0x177e802f': "This wallet doesn't own (or isn't approved for) this NFT anymore.",
+  '0x64283d7b': "This wallet doesn't own this NFT anymore.",
+};
+function revertReason(e: any): string | null {
+  for (let c = e, i = 0; c && i < 8; c = c.cause, i++) { const d = typeof c.data === 'string' ? c.data : typeof c.data?.data === 'string' ? c.data.data : null; if (d && /^0x[0-9a-f]{8}/i.test(d)) { const r = REVERTS[d.slice(0, 10).toLowerCase()]; if (r) return r; } }
+  return null;
+}
 export function friendly(e: any, chainKey?: string): string {
   try { console.error('[MultiSea]', e); } catch {}
   if (e instanceof TypeError && /Failed to fetch|NetworkError|Load failed|fetch/i.test(e.message)) return API_DOWN_MSG;
@@ -218,6 +244,7 @@ export function friendly(e: any, chainKey?: string): string {
     const n = (chainKey && chains[chainKey]?.name) || chainOfErr(e, full); return `Couldn't reach the ${n || 'blockchain'} network. Please try again in a moment.`;
   }
   if (e?.code === 4001 || /user rejected|denied|rejected the request/i.test(m)) return 'You rejected the request in your wallet.';
+  { const r = revertReason(e); if (r) return r; }
   if (/insufficient funds|exceeds balance/i.test(m)) return 'Insufficient funds for price + gas on this chain.';
   if (e?.kind === 'wrong-chain' || /chain mismatch|does not match the target chain/i.test(m)) return 'Wrong network. Switch your wallet to the listing’s chain and try again.';
   if (e?.kind === 'stale') return m;
