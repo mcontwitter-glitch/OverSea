@@ -11,6 +11,7 @@ import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { addrHtml } from './names';
 import { collectionTransfers, insightOn } from './insight';
+import { makeRpc, rpcTransfers, annotateSales, assemble, escrowSet, type Raw, type Row, type Kv } from './activitycore';
 const perf: Record<string, number> = ((window as any).__msPerf ??= {}); const t0 = performance.now();
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
@@ -79,22 +80,34 @@ async function loadLiveOwners() {
   } catch {}
   document.documentElement.dataset.ownersLive = ownersLiveAt ? '1' : '0';
 }
-let activity: any[] = []; let activityLoaded = false;
-// Activity: the build-time snapshot paints first (instant, but frozen at build); thirdweb Insight then merges the latest
-// mints / transfers / sales from every Insight-covered chain (Robinhood isn't covered: snapshot only there).
-let activitySrc = 'snapshot';
+let activity: Row[] = []; let activityLoaded = false; let activityState: 'loading' | 'ok' | 'error' = 'loading';
+// Activity: live on-chain events only (mint, sent, sale, bridged) on every chain the collection is on. The API returns
+// Insight-chain transfers with sale prices (GET /activity/<slug>); Robinhood (no indexer, and its RPC refuses the API)
+// and any chain the API couldn't read are read here from the chain RPC. src/activitycore.ts turns them into rows.
+const actKv: Kv = {
+  async get(k) { try { return JSON.parse(localStorage.getItem('ms-act:' + k) || 'null') ?? undefined; } catch { return undefined; } },
+  async put(k, v) { try { localStorage.setItem('ms-act:' + k, JSON.stringify(v)); } catch {} },
+};
 async function loadActivity() {
   if (activityLoaded) return; activityLoaded = true; const t = performance.now();
-  activity = [...await j<any[]>('activity.json', []), ...ordActivity()]; perf.activitySnapshotMs = performance.now() - t; render();
-  const deps = COL.deployments.filter(d => insightOn(d.chain)); if (!deps.length) return;
-  const seen = new Set(activity.map(a => `${a.chain}:${a.tx}:${a.id}`)); let n = 0;
-  await Promise.all(deps.map(d => collectionTransfers(d.chain, d.address, 200).then(xs => {
-    const add = xs.filter(x => !COL.escrow.some(e => e.chain === x.chain && [x.from, x.to].some(a => a.toLowerCase() === e.address.toLowerCase())) || x.type === 'mint')
-      .filter(x => !seen.has(`${x.chain}:${x.tx}:${x.id}`)).map(x => ({ type: x.type === 'burn' ? 'transfer' : x.type, chain: x.chain, id: x.id, from: x.from, to: x.to, tx: x.tx, block: x.block, ts: x.ts, price: null, currency: '' }));
-    add.forEach(a => seen.add(`${a.chain}:${a.tx}:${a.id}`)); activity.push(...add); n++; perf.activityAdded = (perf.activityAdded || 0) + add.length; (perf as any)['added_' + d.chain] = add.length;
-    if (perf.activityInsightFirstMs == null) perf.activityInsightFirstMs = performance.now() - t; activitySrc = 'insight'; if (st.tab === 'activity') render();
-  }).catch(e => console.warn('[insight activity]', d.chain, e?.message))));
-  perf.activityInsightAllMs = performance.now() - t; perf.activityInsightChains = n; perf.newestTs = Math.max(...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activityInsight = String(n);
+  const esc = escrowSet(COL); const R = makeRpc(CFG.chains as any); let raw: Raw[] = []; let todo: string[];
+  try {
+    const r = await fetch(`${API}/activity/${COL.slug}`, { signal: AbortSignal.timeout(30_000) }); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const v = await r.json(); raw = v.raw || []; todo = [...(v.browser || []), ...(v.failed || [])];
+  } catch (e: any) { console.warn('[activity api]', e?.message); todo = COL.deployments.map(d => d.chain); }
+  let ok = 0;
+  await Promise.all(COL.deployments.filter(d => todo.includes(d.chain)).map(async d => {
+    try {
+      const rows = insightOn(d.chain)
+        ? (await collectionTransfers(d.chain, d.address, 200)).map(x => ({ chain: x.chain, contract: d.address.toLowerCase(), id: x.id, from: x.from.toLowerCase(), to: x.to.toLowerCase(), tx: x.tx.toLowerCase(), log: 0, block: x.block, ts: x.ts }))
+        : await rpcTransfers(R, actKv, d.chain, d.address);
+      await annotateSales(R, actKv, CFG.chains as any, d.chain, rows, esc).catch(() => {});
+      raw.push(...rows); ok++;
+    } catch (e: any) { console.warn('[activity]', d.chain, e?.message); }
+  }));
+  activity = assemble(raw, esc); activityState = activity.length || ok ? 'ok' : 'error';
+  perf.activityMs = performance.now() - t; perf.newestTs = Math.max(0, ...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activity = activityState;
+  if (st.tab === 'activity') render();
 }
 let primVol: Record<string, number> | null = null; // launchpad drops: primary mint volume read from chain
 const listMap = new Map<number, Listing>();
@@ -146,7 +159,6 @@ async function loadOrdinals() {
   const listed = L.items.filter(o => o.priceSats != null).map(o => o.priceSats!);
   if (summary) { (summary.perChain ??= {}).bitcoin = { ok: true, live: L.items.length, holders: new Set(L.items.map(o => o.owner)).size, minted: L.items.length, inEscrow: 0, sales: 0, volume: {}, historyComplete: false, floorSats: listed.length ? Math.min(...listed) : null };
     if (summary.listedCount != null) summary.listedCount += listed.length; }
-  if (activityLoaded) activity.push(...ordActivity());
   render();
 }
 // BTC listings carry priceEth (via USD) so the mixed-chain price sort works like APE/BNB do.
@@ -154,7 +166,6 @@ function addOrdListing(id: number, o: import('./ordlayer').OrdItem) {
   const btc = o.priceSats! / 1e8; const pe = btcUsdR && rates?.ETH ? (btc * btcUsdR) / rates.ETH : null;
   listMap.set(id, { chain: 'bitcoin', id, price: btc, currency: 'BTC', priceEth: pe, orderHash: o.iid, protocolAddress: '', seller: o.owner, source: 'multisea' });
 }
-const ordActivity = () => !ORD ? [] : ORD.items.filter(o => o.priceSats != null).map(o => ({ type: 'list', chain: 'bitcoin', id: [...ordById].find(([, x]) => x === o)![0], price: o.priceSats! / 1e8, currency: 'BTC', from: o.owner, to: '', tx: o.txid, ts: Math.floor((o.createdAt || Date.now()) / 1000) }));
 const ordHref = (id: number) => `/btc/i/${encodeURIComponent(ordById.get(id)!.iid)}`;
 
 // Always open on 'Price: low to high': never restore a sort from URL or storage; clear any old saved values.
@@ -323,13 +334,16 @@ function holdersView() {
    ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrHtml(a)}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
 }
 function activityView() {
-  const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain) || (a.chain2 && st.chains.has(a.chain2))).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const byId = new Map(items.map(i => [i.id, i]));
+  const cn = (k: string) => esc(chains[k]?.name || k);
+  const label = (a: Row) => a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'bridge' ? 'Bridged' : 'Sent';
+  const route = (a: Row) => a.type !== 'bridge' ? '' : `<small class="mut">${a.dir === 'out' ? `from ${cn(a.chain)}` : a.dir === 'in' ? `to ${cn(a.chain2!)}` : `${cn(a.chain)} → ${cn(a.chain2!)}`}</small>`;
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
-   ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'list' ? 'List' : 'Transfer'}</b></span>
-     <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}${a.ids?.length > 1 ? ` +${a.ids.length - 1}` : ''}</span></span>
-     <span>${(a.type === 'sale' || a.type === 'list') && a.price != null ? `${fmt(a.price)} ${esc(a.currency.startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrHtml(a.from)}</span><span>${addrHtml(a.to)}</span>
-     <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || '<div class="empty">No activity found</div>'}</div>`;
+   ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
+     <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}</span></span>
+     <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrHtml(a.from)}</span><span>${addrHtml(a.to)}</span>
+     <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || `<div class="empty">${activityState === 'loading' ? 'Loading on-chain activity…' : activityState === 'error' ? "Couldn't load activity. Try again in a minute." : 'No activity found'}</div>`}</div>`;
 }
 
 function chainsView() {
