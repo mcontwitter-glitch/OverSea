@@ -67,10 +67,16 @@ export function makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }) {
     }
     return out;
   }
+  // CoinGecko (same as the site) first; it often refuses Cloudflare Worker IPs, so Coinbase spot prices are the fallback.
   async function rates() {
-    const j = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin&vs_currencies=usd', { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10000) }).then(r => r.json());
-    const r = { USD: 1, ETH: j?.ethereum?.usd, APE: j?.apecoin?.usd, BNB: j?.binancecoin?.usd };
-    if (!r.ETH || !r.APE || !r.BNB) throw new Error('rates'); return r;
+    const ok = r => r.ETH && r.APE && r.BNB;
+    try {
+      const j = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin&vs_currencies=usd', { headers: { accept: 'application/json', 'user-agent': 'multisea-api' }, signal: AbortSignal.timeout(8000) }).then(r => r.json());
+      const r = { USD: 1, ETH: j?.ethereum?.usd, APE: j?.apecoin?.usd, BNB: j?.binancecoin?.usd }; if (ok(r)) return r;
+    } catch {}
+    const cb = async s => +(await fetch(`https://api.coinbase.com/v2/prices/${s}-USD/spot`, { headers: { 'user-agent': 'multisea-api' }, signal: AbortSignal.timeout(8000) }).then(r => r.json()))?.data?.amount || null;
+    const [ETH, APE, BNB] = await Promise.all(['ETH', 'APE', 'BNB'].map(s => cb(s).catch(() => null)));
+    const r = { USD: 1, ETH, APE, BNB }; if (!ok(r)) throw new Error('rates'); return r;
   }
   /** USD of native + listed ERC-20s in each wallet on chain k (array aligned with addrs). */
   async function usdOn(k, addrs, px) {
@@ -100,9 +106,9 @@ export function makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }) {
   }
   return async function handle(req, env, url, p, M) {
     if (!(M === 'GET' && p[0] === 'islands' && p[1] === 'wallet-nfts' && p.length === 2)) return undefined;
-    const key = new Request('https://cache.multisea/island-wallet-nfts:v2');
+    const key = new Request('https://cache.multisea/island-wallet-nfts:v3');
     const hit = await caches.default.match(key); if (hit) return hit.json();
-    const KV = env.COLLECTIONS, kk = 'cache:island-wallets:v2'; const now = Math.floor(Date.now() / 1000);
+    const KV = env.COLLECTIONS, kk = 'cache:island-wallets:v3'; const now = Math.floor(Date.now() / 1000);
     let v = KV ? await KV.get(kk, 'json').catch(() => null) : null;
     if (!v || now - v.at > (v.failed?.length ? 60 : 600)) { v = await build(env); if (KV) await KV.put(kk, JSON.stringify(v), { expirationTtl: 3600 }).catch(() => {}); }
     await caches.default.put(key, new Response(JSON.stringify(v), { headers: { 'cache-control': 'public, max-age=60' } }));
