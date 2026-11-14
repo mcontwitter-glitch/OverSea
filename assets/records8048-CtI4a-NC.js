@@ -1,0 +1,1 @@
+export{t as ENDPOINTS,n as SKILLS,r as addressKey,i as chainIdentifier,a as decodeRecord,o as demoRecords,s as keysFor,c as kindOf,l as recordsHtml}from"./records8048-BJDGJ1JE.js";
