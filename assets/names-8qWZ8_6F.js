@@ -1,0 +1,1 @@
+export{n as autoNames,a as invalidateProfiles}from"./names-B5Zj4Zy3.js";
