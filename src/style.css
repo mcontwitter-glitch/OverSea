@@ -444,6 +444,7 @@ svg.fi{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;strok
 /* "Wallet: $X" badges on LIL FOOTS cards and the item page */
 .fwbadge{display:inline-block;font-size:11px;font-weight:700;color:#001321;background:linear-gradient(180deg,#7fd3ff,#45bdfa);border-radius:999px;padding:2px 8px;white-space:nowrap;text-decoration:none}
 .ci .fwslot{position:absolute;left:8px;bottom:8px}
+.iwnb{display:inline-block;font-size:11px;font-weight:700;color:#001321;background:linear-gradient(180deg,#7fd3ff,#45bdfa);border-radius:999px;padding:2px 8px;white-space:nowrap}
 .fwmrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 2px}.fwwbtn{display:inline-flex;align-items:center;gap:6px}
 @media (max-width:640px){
   .fwpage{padding:14px 14px 50px}

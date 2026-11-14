@@ -301,10 +301,22 @@ async function fwFill() {
     part.forEach(x => { const v = fwv.get(x); if (!v) return; const ci = document.querySelector(`.grid .card[data-id="${x}"] .ci`); if (ci && !ci.querySelector('.fwslot')) ci.insertAdjacentHTML('beforeend', fwBadgeFor(x)); });
   }
 }
+// Island's: "🖼 N" badge = NFTs held by the Island's token wallets on all 5 chains (Worker /islands/wallet-nfts, cached
+// 10 min there and 5 min in this tab). Loaded after the grid renders; not a link, so tapping the card works as before.
+let iwn: Record<string, number> | null = null; let iwP: Promise<void> | null = null;
+const iwBadgeFor = (id: number) => (IW_ON && iwn?.[id] ? `<span class="fwslot"><span class="iwnb" title="NFTs inside this Island's wallets (all 5 chains)">🖼 ${iwn[id]}</span></span>` : '');
+function iwFill() {
+  if (!IW_ON) return;
+  const paint = () => document.querySelectorAll<HTMLElement>('.grid .card[data-id]').forEach(e => { const ci = e.querySelector('.ci'); if (ci && !ci.querySelector('.iwnb')) { const h = iwBadgeFor(+e.dataset.id!); if (h) ci.insertAdjacentHTML('beforeend', h); } });
+  if (iwn) { paint(); return; }
+  try { const c = JSON.parse(sessionStorage.getItem('multisea-iwn') || 'null'); if (c && Date.now() - c.t < 300_000) { iwn = c.v; paint(); return; } } catch {}
+  iwP ??= fetch(`${API}/islands/wallet-nfts`).then(r => (r.ok ? r.json() : null)).then(j => { if (!j?.counts) { iwP = null; return; } iwn = j.counts; try { sessionStorage.setItem('multisea-iwn', JSON.stringify({ t: Date.now(), v: iwn })); } catch {} }).catch(() => { iwP = null; });
+  iwP.then(() => { if (iwn) paint(); });
+}
 function card(it: Item, idx = 99) {
   if (isOrd(it.id)) return ordCard(it);
   const loc = owners[it.id]; const l = listMap.get(it.id); const ob = onBtc.get(it.id);
-  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}</div>
+  return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}${iwBadgeFor(it.id)}</div>
    <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : '<span class="mut">Not listed</span>'}</div>${buyBtn(it.id)}</div></div>`;
 }
 
@@ -387,7 +399,7 @@ function render() {
   app.innerHTML = `${navHtml()}
   ${header()}<div class="content">${st.tab === 'items' ? (soonOn ? btcSoonView() : itemsView()) : st.tab === 'activity' ? activityView() : st.tab === 'holders' ? holdersView() : st.tab === 'bridge' ? '<div id="bridgebox"></div>' : chainsView()}</div>`;
   window.scrollTo(0, y);
-  applyBridgeFlag(); if (st.tab === 'items') fwFill();
+  applyBridgeFlag(); if (st.tab === 'items') { fwFill(); iwFill(); }
   const on = document.querySelector<HTMLElement>('.chips .chip.on'); if (on) { const r = on.parentElement!; r.scrollLeft = on.offsetLeft - r.offsetLeft - 12; }
   if (st.tab === 'bridge') bridgeEnabled().then(on => { if (!on) { st.tab = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(document.getElementById('bridgebox')!, { slug: COL.slug })); });
 }

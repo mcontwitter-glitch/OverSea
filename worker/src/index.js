@@ -15,6 +15,7 @@ import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
+import { makeIslandNfts } from './islandnfts.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -240,6 +241,7 @@ let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
+let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
 // ---------- router ----------
@@ -250,6 +252,7 @@ async function handle(req, env, url, ctx) {
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
+  { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
   { const pr = await profiles().handle(req, env, url, p, M, body); if (pr !== undefined) return pr; }
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
