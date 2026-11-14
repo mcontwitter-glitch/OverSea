@@ -52,19 +52,19 @@ const MC_ABI = parseAbi(['function getEthBalance(address) view returns (uint256)
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)']);
 export type ChainBal = { native: bigint | null; tokens: (bigint | null)[]; ok: boolean };
 /** Native + ERC-20 balances of many foot accounts on one chain, one multicall. */
-export async function chainBalances(k: FwChain, addrs: Hex[]): Promise<ChainBal[]> {
-  const contracts = addrs.flatMap(a => [{ address: MC3, abi: MC_ABI, functionName: 'getEthBalance', args: [a] }, ...TOKENS[k].map(t => ({ address: t.address, abi: ERC20, functionName: 'balanceOf', args: [a] }))]);
+export async function chainBalances(k: FwChain, addrs: Hex[], toks: Tok[] = TOKENS[k]): Promise<ChainBal[]> {
+  const contracts = addrs.flatMap(a => [{ address: MC3, abi: MC_ABI, functionName: 'getEthBalance', args: [a] }, ...toks.map(t => ({ address: t.address, abi: ERC20, functionName: 'balanceOf', args: [a] }))]);
   try {
     const r: any[] = await readClient(k).multicall({ contracts, multicallAddress: MC3, allowFailure: true, batchSize: 4096 });
-    const n = 1 + TOKENS[k].length;
+    const n = 1 + toks.length;
     return addrs.map((_, i) => { const s = r.slice(i * n, i * n + n).map(x => (x.status === 'success' ? (x.result as bigint) : null)); return { native: s[0], tokens: s.slice(1), ok: s[0] != null }; });
-  } catch { return addrs.map(() => ({ native: null, tokens: TOKENS[k].map(() => null), ok: false })); }
+  } catch { return addrs.map(() => ({ native: null, tokens: toks.map(() => null), ok: false })); }
 }
 export const rateOf = (px: Px, r: UsdRates) => (px === 'USD' ? 1 : r[px]);
-export function chainUsd(k: FwChain, b: ChainBal, r: UsdRates): number | null {
+export function chainUsd(k: FwChain, b: ChainBal, r: UsdRates, toks: Tok[] = TOKENS[k]): number | null {
   if (!b.ok) return null; let v = 0; const nr = rateOf(NATIVE[k].px, r);
   if (b.native) { if (nr == null) return null; v += +formatUnits(b.native, 18) * nr; }
-  TOKENS[k].forEach((t, i) => { const x = b.tokens[i]; if (x) { const tr = rateOf(t.px, r); if (tr != null) v += +formatUnits(x, t.decimals) * tr; } });
+  toks.forEach((t, i) => { const x = b.tokens[i]; if (x) { const tr = rateOf(t.px, r); if (tr != null) v += +formatUnits(x, t.decimals) * tr; } });
   return v;
 }
 /** USD value of tokens in each foot's wallet across the 5 chains (NFTs not priced). Cached 5 min per session. */
