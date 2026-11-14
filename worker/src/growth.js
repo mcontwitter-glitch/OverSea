@@ -3,7 +3,7 @@
 import { keccak256, toBytes, parseAbi, parseEventLogs, createPublicClient, createWalletClient, http, fallback, verifyTypedData, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-export const QUEST_CHAINS = ['ethereum', 'base', 'abstract', 'apechain', 'robinhood'];
+export const QUEST_CHAINS = ['ethereum', 'base', 'bnb', 'apechain', 'robinhood'];
 export const QUEST_KINDS = ['buy', 'list', 'bridge', 'hold'];
 export const DEFAULTS = { refBps: 2000, rsFeeCapBps: 5000 }; // referral = 20% of MultiSea's 0.5% fee; revshare can take up to 50% of it
 const ZERO = '0x0000000000000000000000000000000000000000', ZERO32 = '0x' + '0'.repeat(64);
