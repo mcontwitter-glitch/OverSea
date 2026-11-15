@@ -254,6 +254,7 @@ html{scroll-behavior:smooth}#collections{scroll-margin-top:70px}
 .wbox .chk{display:flex;gap:8px;align-items:center;margin:6px 0;white-space:normal;color:#bbb}
 .sfees b:last-child{color:#fff}
 .buy.ghost{background:#202020!important;color:#d9d9d9!important;border:1px solid #3a3a3a!important;box-shadow:none!important}.buy.ghost:hover{border-color:#45bdfa!important;filter:none}
+.offer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.offer-actions .buy{flex:1 1 160px;width:auto;margin-top:0}.pricebox .offer-actions{margin-top:10px;flex-wrap:nowrap}.pricebox .buy.accept-offer{flex:1.35 1 auto;white-space:nowrap;font-size:15px}.pricebox .offer-actions .buy.ghost{flex:.9 1 auto}.cb .offer-actions{flex-direction:column}.cb .offer-actions .buy{width:100%;flex:none}.buy.accept-offer{letter-spacing:.01em}
 .nosell{display:block;margin-top:6px;font-size:11px}
 .wbox .bhead{padding-right:34px}
 /* USD value next to listing prices */

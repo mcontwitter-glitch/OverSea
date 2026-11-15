@@ -107,7 +107,13 @@
     }
   },
   "seaport": "0x0000000000000068F116a894984e2DB1123eB395",
-  "collectionOffers": {},
+  "collectionOffers": {
+    "ethereum": "0x5Aa1F7D976929dB567F513C6c3eCA676286973f1",
+    "base": "0x5Aa1F7D976929dB567F513C6c3eCA676286973f1",
+    "apechain": "0x5Aa1F7D976929dB567F513C6c3eCA676286973f1",
+    "bnb": "0x5Aa1F7D976929dB567F513C6c3eCA676286973f1",
+    "robinhood": "0x5Aa1F7D976929dB567F513C6c3eCA676286973f1"
+  },
   "collections": [
     {
       "slug": "lil-foots",

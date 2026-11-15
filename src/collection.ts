@@ -7,7 +7,7 @@ import './style.css';
 import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
-import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, openMakeOffer, openAccept, openCancel, type OffersPayload, type Offer } from './offers';
+import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, openMakeOffer, openAccept, openCancel, offerUsd, type OffersPayload, type Offer } from './offers';
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { addrHtml } from './names';
@@ -299,7 +299,21 @@ const sellBtn = (id: number, cls = '') => {
   if (l && l.seller?.toLowerCase() === me) return sellOn() ? `<button class="buy ghost ${cls}" data-cancel="${id}">Cancel listing</button>` : '';
   return sellOn() ? `<button class="buy ${cls}" data-sell="${id}">List for sale</button>` : '';
 };
-const buyBtn = (id: number, cls = '') => { const sb = sellBtn(id, cls); if (sb !== null) return sb; const l = listMap.get(id); if (!l || (l.source !== 'multisea' && !chains[l.chain]?.openseaSlug)) return ''; return `<button class="buy ${cls}" data-buy="${id}">Buy</button>`; };
+const acceptLabel = (o: Offer) => {
+  const c = chains[o.chain]; const price = `${fmt(Number(o.pricePerItem) / 1e18)} ${esc(c?.native || '')}`;
+  const u = offerUsd(o, offerRates); const usd = u == null ? '' : ` (${usdTxt(u)})`;
+  return `Accept offer · ${price}${usd}`;
+};
+const acceptBtn = (id: number, cls = '') => { const o = acceptOfferOf(id); if (!o) return ''; return `<button class="buy accept-offer ${cls}" data-accept="${id}">${acceptLabel(o)}</button>`; };
+// Holder: Accept (primary, with native + USD) beside List/Sell (secondary). Hidden for non-holders and when no offer on this item's chain.
+const itemActions = (id: number, cls = '') => {
+  const acc = acceptBtn(id, cls);
+  const held = sellBtn(id, acc ? `ghost ${cls}` : cls);
+  if (held !== null) return (acc || held) ? `<div class="offer-actions">${acc}${held || ''}</div>` : '';
+  const l = listMap.get(id); if (!l || (l.source !== 'multisea' && !chains[l.chain]?.openseaSlug)) return '';
+  return `<button class="buy ${cls}" data-buy="${id}">Buy</button>`;
+};
+const buyBtn = (id: number, cls = '') => itemActions(id, cls);
 function doBuy(id: number) {
   const l = listMap.get(id); const it = items.find(i => i.id === id); if (!l || !it) return;
   if (l.source === 'multisea') { import('./sell').then(s => s.buyNative(sellItem(id, l.chain), l.orderHash, sid => { listMap.delete(sid); sold.add(sid); owners[sid] = { chain: l.chain, owner: wallet.address! }; render(); }, gid => { listMap.delete(gid); render(); })); return; }
@@ -311,7 +325,6 @@ function doBuy(id: number) {
 const sellItem = (id: number, chain: string) => { const it = items.find(i => i.id === id)!; return { id, name: it.name, img: thumbUrl(id), chain, contract: COL.deployments.find(d => d.chain === chain)!.address, slug: COL.slug }; };
 // Accept is shown only if this wallet holds the token on a chain that has a live offer (liveowners already excludes omni-escrowed / not isActiveHere).
 const acceptOfferOf = (id: number): Offer | null => { const ch = myChain(id); if (!ch || !anyOffersLive(COL.deployments.filter(d => d.chain === ch))) return null; return bestOfferOn(offerData.offers, ch); };
-const acceptBtn = (id: number, cls = '') => { const o = acceptOfferOf(id); if (!o) return ''; const c = chains[o.chain]; return `<button class="buy ${cls}" data-accept="${id}">Accept offer ${fmt(Number(o.pricePerItem) / 1e18)} ${esc(c?.native || '')}</button>`; };
 const doAccept = (id: number) => { const o = acceptOfferOf(id); const ch = myChain(id); if (!o || !ch) return; const it = items.find(i => i.id === id); if (!it) return; openAccept({ id, name: it.name, img: thumbUrl(id), chain: ch, contract: COL.deployments.find(d => d.chain === ch)!.address, slug: COL.slug, offer: o }, () => { loadOfferData().then(() => render()); }); };
 // Buyable listings as cart items (cheapest per item; excludes my own listings).
 function cartItems() {
@@ -357,7 +370,7 @@ function card(it: Item, idx = 99) {
   if (isOrd(it.id)) return ordCard(it);
   const loc = owners[it.id]; const l = listMap.get(it.id); const ob = onBtc.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}${iwBadgeFor(it.id)}</div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : pricePending()}</div>${buyBtn(it.id)}${acceptBtn(it.id)}</div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : pricePending()}</div>${buyBtn(it.id)}</div></div>`;
 }
 
 function ordCard(it: Item) {
@@ -426,7 +439,7 @@ function modal(id: number) {
     ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
     ${IW_ON ? (() => { const k = (loc && (ISLAND_CHAINS as readonly string[]).includes(loc.chain) ? loc.chain : 'base') as FwChain; return `<div class="fwmrow"><a class="obtn sm fwwbtn" href="${islandWalletUrl(id, k)}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval"><span class="fwbadge mono">${logo(k)} ${short(islandTba(k, id))}</span></span><span class="mut small">Token wallet (ERC-6551). Each chain has its own address.</span></div>`; })() : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${acceptBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
   m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const ab = (e.target as HTMLElement).closest('[data-accept]') as HTMLElement; if (ab) { m.remove(); doAccept(+ab.dataset.accept!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });

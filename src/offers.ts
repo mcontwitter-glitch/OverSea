@@ -193,7 +193,9 @@ export async function openAccept(ctx: AcceptCtx, onDone?: () => void) {
     const fee = price * 50n / 10_000n;
     const roy = offer.royaltyBps ? price * BigInt(offer.royaltyBps) / 10_000n : 0n;
     const net = price - fee - roy;
-    body.innerHTML = `<div class="kv bkv"><span>You receive</span><b>${fmt(net)} ${esc(c.native)}</b><span>Offer price</span><b>${fmt(price)} ${esc(c.native)}</b><span>MultiSea fee (0.5%)</span><b>${fmt(fee)} ${esc(c.native)}</b>${roy ? `<span>Creator royalty</span><b>${fmt(roy)} ${esc(c.native)}</b>` : ''}<span>Chain</span><b>${logo(k)} ${esc(c.name)}</b></div>
+    const rates = await usdRates().catch(() => null);
+    const usdBit = (w: bigint) => { const px = rates?.[pxKey(c.native)]; if (!px) return ''; const v = Number(formatUnits(w, 18)) * px; return ` (${'$' + v.toLocaleString(undefined, { minimumFractionDigits: v < 1000 ? 2 : 0, maximumFractionDigits: v < 1000 ? 2 : 0 })})`; };
+    body.innerHTML = `<div class="kv bkv"><span>You receive</span><b>${fmt(net)} ${esc(c.native)}${usdBit(net)}</b><span>Offer price</span><b>${fmt(price)} ${esc(c.native)}${usdBit(price)}</b><span>MultiSea fee (0.5%)</span><b>${fmt(fee)} ${esc(c.native)}</b>${roy ? `<span>Creator royalty</span><b>${fmt(roy)} ${esc(c.native)}</b>` : ''}<span>Chain</span><b>${logo(k)} ${esc(c.name)}</b></div>
       ${approved ? '' : `<p class="mut small">You'll first approve the MultiSea offers contract to transfer this NFT (one-time per collection on ${esc(c.name)}).</p>`}
       <p class="mut small">This NFT must stay in your wallet on ${esc(c.name)} until the transaction confirms. If this collection uses a transfer validator (for example Creator Token / EIP-7702 rules), the creator may need to allowlist the offers contract.</p>
       <button class="bbtn go">Accept offer</button>`;
