@@ -129,6 +129,29 @@ test('multichain drop: validation, shared supply via the Base hub, omni approval
 });
 
 
+test('Solana (last chain): refused until the program exists, then AT_MINT, lamport prices, EIP-191 approval over the program digest', async () => {
+  const SOLC = '85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS', PID = 'Abu55rcZKUwUvuMDbpNrHy28RF9A8PBasZa5BGGNWiA7';
+  const md = o => drop({ slug: 'sol-foots', mode: 'multichain', chains: ['base', 'bnb'], maxSupply: 4404, creatorReserve: 0, solana: true, solanaCreator: SOLC,
+    phases: [{ name: 'Public', kind: 'public', start: 1800000000, end: 0, price: '3000000000000000', prices: { bnb: '10000000000000000', solana: '50000000' }, maxPerWallet: 5 }], ...o });
+  await assert.rejects(setup().call('POST', '/launchpad/submit', md()), /Solana is not available yet/);
+  const { call, env, as } = setup({ LP: { solana: { ...LP0.solana, programId: PID, eid: 30168 } } });
+  await assert.rejects(call('POST', '/launchpad/submit', md({ solanaCreator: '0xabc' })), /Solana address/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ copyMode: 'batched' })), /at-mint/);
+  await assert.rejects(call('POST', '/launchpad/submit', md({ phases: [{ kind: 'public', start: 1800000000, price: '1', prices: { bnb: '1' } }] })), /Solana \(lamports\)/);
+  await call('POST', '/launchpad/submit', md()); as(ADMIN); await call('POST', '/admin/launchpad/approve/sol-foots'); as(creator.address);
+  env.LAUNCHPAD_APPROVER_KEY = (await import('viem/accounts')).generatePrivateKey(); const appr = privateKeyToAccount(env.LAUNCHPAD_APPROVER_KEY);
+  const e = await call('POST', '/launchpad/approval/sol-foots', { chain: 'base' });
+  assert.deepEqual(e.params.eids, [30184, 30102, 30168], 'Solana is the last eid'); assert.equal(e.params.copyMode, 1, 'AT_MINT');
+  assert.deepEqual(e.params.prices, ['3000000000000000', '10000000000000000', '50000000']);
+  const s = await call('POST', '/launchpad/approval/sol-foots', { chain: 'solana' });
+  assert.equal(s.programId, PID); assert.equal(s.creator, SOLC); assert.equal(s.collectionId, e.collectionId, 'same collection id as the EVM side');
+  assert.equal(s.params.payout, SOLC); assert.deepEqual(s.params.eids, [30184, 30102, 30168]); assert.equal(s.params.phases[0].price, '50000000');
+  const { dropApprovalDigest } = await import('../src/solanadrop.js');
+  const P = { ...s.params, phases: s.params.phases.map(x => ({ ...x, start: BigInt(x.start), end: BigInt(x.end), price: BigInt(x.price) })) };
+  const dg = dropApprovalDigest(PID, SOLC, s.collectionId, P, BigInt(s.deadline));
+  assert.ok(await (await import('viem')).verifyMessage({ address: appr.address, message: { raw: dg }, signature: s.signature }));
+});
+
 test('mainnet: approver wallet signs in /admin (no key in the Worker), creator gets the stored signature', async () => {
   const apprAcct = privateKeyToAccount(generatePrivateKey()); const RANDO = '0x00000000000000000000000000000000000000e5';
   const { call, as } = setup({ LP: { approver: lc(apprAcct.address) } });

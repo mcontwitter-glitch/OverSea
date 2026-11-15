@@ -235,5 +235,16 @@
       "ethereum": "1846000000000000",
       "bnb": "1180000000000000"
     }
+  },
+  "solana": {
+    "_note": "Solana (MultiSea omni program, multichain drops only, last chain). programId stays null until MC deploys the mainnet program and wires it up (/deploy-solana); while null the Solana option is hidden and the Worker refuses Solana drops.",
+    "programId": null,
+    "eid": 30168,
+    "feeRecipient": "85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS",
+    "feeBps": 50,
+    "moveFeeLamports": 1000000,
+    "rpc": "https://api.mainnet-beta.solana.com",
+    "sendLib": "7a4WjyR8VZ7yZz5XJAKm39BUGn5iT9CKcv2pmG9tdXVH",
+    "maxLzFeeLamports": 50000000
   }
 }
