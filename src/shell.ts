@@ -59,14 +59,14 @@ export const soon = (what = 'This') => `<div class="soon">${esc(what)} couldn't 
 export { apiReady };
 
 // Live USD rates (CoinGecko), shared by market cap and listing prices; cached 10 min in sessionStorage.
-export type UsdRates = { ETH: number | null; APE: number | null; BNB: number | null };
+export type UsdRates = { ETH: number | null; APE: number | null; BNB: number | null; SOL?: number | null };
 let _ur: Promise<UsdRates> | null = null;
 export function usdRates(): Promise<UsdRates> {
   return _ur ??= (async () => {
-    try { const c = JSON.parse(sessionStorage.getItem('multisea-usd') || 'null'); if (c && Date.now() - c.t < 600_000) return c.r; } catch {}
-    const r: UsdRates = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin&vs_currencies=usd').then(r => r.json())
-      .then(j => ({ ETH: j?.ethereum?.usd || null, APE: j?.apecoin?.usd || null, BNB: j?.binancecoin?.usd || null })).catch(() => ({ ETH: null, APE: null, BNB: null }));
-    if (r.ETH) try { sessionStorage.setItem('multisea-usd', JSON.stringify({ t: Date.now(), r })); } catch {}
+    try { const c = JSON.parse(sessionStorage.getItem('multisea-usd2') || 'null'); if (c && Date.now() - c.t < 600_000) return c.r; } catch {}
+    const r: UsdRates = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum,apecoin,binancecoin,solana&vs_currencies=usd').then(r => r.json())
+      .then(j => ({ ETH: j?.ethereum?.usd || null, APE: j?.apecoin?.usd || null, BNB: j?.binancecoin?.usd || null, SOL: j?.solana?.usd || null })).catch(() => ({ ETH: null, APE: null, BNB: null, SOL: null }));
+    if (r.ETH) try { sessionStorage.setItem('multisea-usd2', JSON.stringify({ t: Date.now(), r })); } catch {}
     return r;
   })();
 }

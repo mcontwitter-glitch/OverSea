@@ -42,6 +42,12 @@ export async function signApprovals(slug: string, log: (s: string) => void) {
   if (wallet.address?.toLowerCase() !== String(g.approver).toLowerCase()) throw new Error(`Connect the factory approver wallet ${g.approver} to sign.`);
   for (const a of g.approvals) {
     if (a.signed || a.deployed) { log(`${a.chain}: ${a.deployed ? 'already deployed' : 'already signed'}`); continue; }
+    if (a.chain === 'solana') { // EIP-191 message over the program's digest; no chain switch needed
+      const w = await walletOn(g.approvals.find((x: any) => x.chain !== 'solana')?.chain || 'base');
+      const sig = await w.signMessage({ account: wallet.address as Address, message: { raw: a.raw } });
+      await api('/admin/launchpad/approvals/' + slug, { auth: true, body: { chain: 'solana', signature: sig, deadline: a.deadlineNew } });
+      log('solana: signed ✓'); continue;
+    }
     const w = await walletOn(a.chain); const t = a.typed;
     const sig = await w.signTypedData({ account: wallet.address as Address, domain: t.domain, types: t.types, primaryType: t.primaryType, message: { ...t.message, deadline: BigInt(t.message.deadline) } });
     await api('/admin/launchpad/approvals/' + slug, { auth: true, body: { chain: a.chain, signature: sig, deadline: t.message.deadline } });

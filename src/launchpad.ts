@@ -7,6 +7,7 @@ import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wal
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
 import { LP_LIVE, factoryOn } from './lpchain';
+import { SOLANA_ON } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
@@ -128,7 +129,8 @@ function qtyHint(d: Drop, k: string) {
 function mintBox(d: Drop) {
   const R = d as any; const isCreator = !!getSession() && mine.has(d.slug);
   const undeployed = R.remote && LP_LIVE ? d.chains.filter(c => !R.addresses?.[c.chain]) : [];
-  const dep = isCreator && undeployed.length ? deployBox(d, undeployed.map(c => c.chain)) : '';
+  const solTodo = SOLANA_ON && R.remote && LP_LIVE && !!R.raw?.solana && !R.raw.solana.drop;
+  const dep = isCreator && (undeployed.length || solTodo) ? deployBox(d, [...undeployed.map(c => c.chain), ...(solTodo ? ['solana'] : [])]) : '';
   if (comingSoon(d)) return dep || `${R.remote && LP_LIVE && !getSession() ? '<div class="fcard small" style="margin-bottom:10px">Creator? <button class="pill" data-act="lsignin">Sign in to deploy</button></div>' : ''}` + `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
    <p class="mut small">This drop is approved. Minting opens once its contract is deployed and verified on-chain.</p>
    <button class="bbtn" disabled>Minting opens soon</button></div>`;
@@ -184,13 +186,17 @@ function revealBox(d: Drop) {
 let realBusy = false; let realMsg = ''; let depMsg = ''; let depBusy = '';
 const EXPL: Record<string, string> = Object.fromEntries(Object.entries(CFG.chains as any).map(([k, c]: any) => [k, c.explorer]));
 const txLink = (k: string, h: string) => `<a href="${EXPL[k]}/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>`;
+const cn = (k: string) => (k === 'solana' ? 'Solana' : chains[k]?.name || k);
+const txL = (k: string, h: string) => (k === 'solana' ? `<a href="https://solscan.io/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>` : txLink(k, h));
 function deployBox(d: Drop, todo: string[]) {
-  const ok = todo.filter(k => factoryOn(k)).sort((a, b) => (b === HUB ? 1 : 0) - (a === HUB ? 1 : 0));
+  const ok = todo.filter(k => k === 'solana' || factoryOn(k)).sort((a, b) => (b === HUB ? 1 : 0) - (a === HUB ? 1 : 0) + (a === 'solana' ? 1 : 0) - (b === 'solana' ? 1 : 0)); // Solana last
   return `<div class="fcard ldmintbox" style="margin-top:14px"><div class="gh">Deploy your drop <span class="mut small">you are the creator</span></div>
    <p class="mut small">MultiSea approved this drop. Deploying creates your contract through the MultiSea factory with MultiSea's signed approval; you pay the gas and own the contract.${isMulti(d) ? ' Deploy on every chain (Base, the supply hub, first).' : ''}</p>
-   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(chains[depBusy].name)}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(chains[ok[0]].name)}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(chains[k].name)).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : '')}
+   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(cn(depBusy))}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(cn(ok[0]))}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(cn(k))).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : '')}
+   ${ok.includes('solana') && getSession() ? `<p class="small" style="margin-top:8px">Solana wallet (the one you entered when creating the drop): ${solAddr ? `<span class="mono">${esc(solAddr.slice(0, 4))}…${esc(solAddr.slice(-4))}</span>` : '<button type="button" class="obtn sm" data-solact="connect" data-solw="phantom">Phantom</button> <button type="button" class="obtn sm" data-solact="connect" data-solw="solflare">Solflare</button>'}</p>` : ''}
    ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
 }
+let solAddr = '';
 function alBox(d: Drop) {
   const al = d.phases.filter(p => p.kind === 'allowlist'); if (!al.length) return '';
   return `<div class="fcard"><div class="gh">Allowlist check</div><div class="ldal"><input data-al placeholder="0x… wallet address" value="${esc(alAddr || wallet.address || '')}"><button class="obtn sm" data-act="alcheck">Check</button></div>${alRes ? `<p class="small">${alRes}</p>` : '<p class="mut small">Checks every allowlist phase. In production the Worker returns your Merkle proof from /launchpad/proof.</p>'}</div>`;
@@ -385,7 +391,7 @@ function dropPage(d: Drop) {
     ${isMulti(d) ? sharedBar(d) : `<div class="ldprog big"><div class="ldprogh"><b>${pct(minted(d), d.maxSupply).toFixed(1)}% minted</b><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()}</span></div><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div>
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
-   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${revealBox(d)}${mintBox(d)}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
+   <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${revealBox(d)}${mintBox(d)}${SOLANA_ON && (d as any).remote && (d as any).raw?.solana && !soon ? '<div data-solcard></div>' : ''}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
     <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isAgentDrop(d) ? 'ERC-463N7 agents (experimental, unaudited)' : isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
@@ -406,9 +412,12 @@ function render() {
   const d = findDrop(slug);
   if (!d) { app.innerHTML = `${navHtml('launchpad')}<section class="page"><h2>Drop not found</h2><p><a href="/launchpad">Back to Launchpad</a></p></section>`; return; }
   dropPage(d);
+  const sc = app.querySelector<HTMLElement>('[data-solcard]'); if (sc) import('./solui').then(m => m.mountSolCard(sc, d as any)).catch(() => {});
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
+  const sa = t.closest('[data-solact]') as HTMLElement | null;
+  if (sa && !t.closest('[data-solcard]')) { e.preventDefault(); import('./solwallet').then(m => m.connectSol(sa.dataset.solw!)).then(pk => { solAddr = pk.toBase58(); render(); }).catch(x => { depMsg = `<span class="err">${esc(x?.message || x)}</span>`; render(); }); return; }
   const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr],[data-agclaim],[data-agadd]') as HTMLElement | null;
   if (ag) { const d = findDrop(slug); if (d) (ag.hasAttribute('data-agclaim') || ag.hasAttribute('data-agadd') ? onGrowth(d, ag) : onAgent(d, ag)); return; }
   const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst],[data-deploy]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
@@ -444,10 +453,10 @@ app.addEventListener('click', e => {
         .catch(e => { revMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { revBusy = false; render(); }); return; } }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
   if (el.dataset.deploy) { const list = el.dataset.deploy.split(','); const done: string[] = []; depMsg = '';
-    const one = (k: string) => (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')}. ` : ''}${esc(chains[k].name)} transaction sent: ${txLink(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')}. ` : ''}${esc(chains[k].name)} transaction sent: ${txLink(k, h)}`; render(); })));
-    (async () => { for (const k of list) { depBusy = k; render(); const a = await one(k); (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; done.push(k); }
-      depMsg = `✓ Deployed on ${done.map(c => esc(chains[c].name)).join(', ')}.`; await refreshRemote(); })()
-      .catch(e => { depMsg = `${done.length ? `✓ ${done.map(c => esc(chains[c].name)).join(', ')} deployed. ` : ''}<span class="err">${depBusy ? esc(chains[depBusy].name) + ': ' : ''}${esc(e?.shortMessage || e?.message || e)}</span> Tap the button to continue from there.`; refreshRemote().catch(() => {}); }).finally(() => { depBusy = ''; render(); }); return; }
+    const one = (k: string) => k === 'solana' ? import('./solui').then(m => m.deploySolanaDrop(d.slug, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}Solana transaction sent: ${txL(k, h)}`; render(); })) : (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })));
+    (async () => { for (const k of list) { depBusy = k; render(); const a = await one(k); if (k !== 'solana') (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; done.push(k); }
+      depMsg = `✓ Deployed on ${done.map(c => esc(cn(c))).join(', ')}.`; await refreshRemote(); })()
+      .catch(e => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')} deployed. ` : ''}<span class="err">${depBusy ? esc(cn(depBusy)) + ': ' : ''}${esc(e?.shortMessage || e?.message || e)}</span> Tap the button to continue from there.`; refreshRemote().catch(() => {}); }).finally(() => { depBusy = ''; render(); }); return; }
   if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
   if (el.dataset.act === 'mint' && (d as any).remote && LP_LIVE && (d as any).addresses?.[chainSel]) {
     if (!wallet.address) { openConnect(); return; } const k = chainSel; const ai = activePhase(d); const ph: any = (d as any).raw.phases[ai]; const n = qty;

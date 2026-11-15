@@ -13,6 +13,7 @@ else if (path === '/list-collection') import('./listpage');
 else if (path === '/bridge') import('./bridgepage');
 else if (path === '/admin') import('./admin');
 else if (path === '/deploy-offers') import('./offersdeploy');
+else if (path === '/deploy-solana') import('./soldeploy');
 else if (path === '/offer-test' && import.meta.env.VITE_OFFERS_TEST === '1') import('./offerstest');
 else if (path === '/launchpad/testnet' && import.meta.env.VITE_LP_TESTNET === '1') import('./launchtestnet'); // staging build only
 else if (path === '/launchpad' || /^\/launchpad\/[a-z0-9-]{3,40}$/.test(path)) import('./launchpad');
