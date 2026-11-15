@@ -1,8 +1,9 @@
 // Sell flow: list an owned NFT on OpenSea (Seaport 1.6, EIP-712) and cancel it. The OpenSea key lives only in the Worker.
-import { createPublicClient, createWalletClient, custom, http, parseAbi, parseUnits, formatUnits, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, custom, http, parseAbi, parseUnits, formatUnits, encodeFunctionData, type Hex } from 'viem';
 import CFG from '../config/collections.json';
 import { API, readClient, wallet, openConnect, overlay, vchain, ensureChain, friendly, esc } from './wallet';
 import { buildListing, orderTypedData, cancelTypedData, splitPrice, EXPIRY, ZERO32, type Fee } from './seaorder';
+import { preflight } from './txgas';
 
 const chains = CFG.chains as Record<string, any>;
 export type SellItem = { id: number; name: string; img: string; chain: string; contract: string; slug?: string };
@@ -75,6 +76,9 @@ export async function openSell(it: SellItem, onListed: () => void) {
     const operator = (market === 'multisea' ? seaport : or.conduit) as Hex; // MultiSea: approve Seaport directly (no conduit)
     if (!(await pub.readContract({ address: it.contract as Hex, abi: ERC721, functionName: 'isApprovedForAll', args: [me, operator] }))) {
       step(market === 'multisea' ? 'Approve Seaport in your wallet (one-time per collection)…' : 'Approve OpenSea’s conduit in your wallet (one-time per collection)…');
+      const approval = encodeFunctionData({ abi: ERC721, functionName: 'setApprovalForAll', args: [operator, true] });
+      const pre = await preflight(it.chain, { to: it.contract, data: approval, value: 0n }).catch(() => null);
+      if (pre && !pre.enough) throw Object.assign(new Error(`You need a little ${c.native} on ${c.name} to pay the one-time approval fee (about $0.01). Add some ${c.native} on ${c.name} and try again.`), { kind: 'stale' });
       const h = await wc.writeContract({ account: me, address: it.contract as Hex, abi: ERC721, functionName: 'setApprovalForAll', args: [operator, true] });
       step(`Waiting for approval… <a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">View ↗</a>`);
       const rc = await pub.waitForTransactionReceipt({ hash: h, timeout: 180_000 }); if (rc.status !== 'success') throw new Error('Approval transaction failed.');
