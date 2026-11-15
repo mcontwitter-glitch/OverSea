@@ -107,6 +107,7 @@
     }
   },
   "seaport": "0x0000000000000068F116a894984e2DB1123eB395",
+  "collectionOffers": {},
   "collections": [
     {
       "slug": "lil-foots",

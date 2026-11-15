@@ -7,6 +7,7 @@ import CFG from '../../config/collections.json';
 import { verifyMessage, createPublicClient, http, getContractAddress, concat, encodeAbiParameters } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
+import { makeOffers } from './offers.js';
 import { makeGrowth } from './growth.js';
 import { makeLaunchpad } from './launchpad.js';
 import { makeBridgeAuto } from './bridgeauto.js';
@@ -239,6 +240,7 @@ async function rpcBalance(chainKey, addr) {
 }
 
 let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks: { onSale: (env, s) => growth().recordSale(env, s), onList: (env, a, k) => growth().questEvent(env, a, k, 'list') } }));
+let _offers; const offers = () => (_offers ??= makeOffers({ CFG, chains, bad, HASH, getCollection, feeWallet, cached, royaltyFor: (env, slug) => native().royaltyFor(env, slug), hooks: { onSale: (env, s) => growth().recordSale(env, s) } }));
 // Launchpad: factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
 const isDropOnChain = async (k, factory, drop) => { const c = chains[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
   return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
@@ -264,7 +266,7 @@ async function handle(req, env, url, ctx) {
   if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p, ctx); if (r) return r; }
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
@@ -402,6 +404,23 @@ async function handle(req, env, url, ctx) {
     if (M === 'POST' && p[1] === 'cancelled' && p.length === 2) { const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '') || (b.txHash && !HASH.test(b.txHash))) bad('invalid input'); return await N.cancelled(env, b.chain, b.orderHash, b.txHash); }
     if (M === 'POST' && p[1] === 'counter' && p.length === 2) { const b = await body(); if (!chains[b.chain] || !ADDR.test(b.seller || '') || (b.txHash && !HASH.test(b.txHash))) bad('invalid input'); return await N.counterBumped(env, b.chain, b.seller, b.txHash); }
     if (M === 'POST' && p[1] === 'remove' && p.length === 2) { const s = await requireSession(req, env); const b = await body(); if (!chains[b.chain] || !HASH.test(b.orderHash || '')) bad('invalid input'); return await N.remove(env, b.chain, b.orderHash, s.address); }
+  }
+
+
+  // --- Collection offers (native-coin escrow; empty until contracts are configured) ---
+  if (p[0] === 'offers') {
+    const O = offers();
+    if (M === 'GET' && p[1] === 'config' && p.length === 3) {
+      const col = await getCollection(env, p[2]); if (!col) bad('not found', 404);
+      return { feeRecipient: feeWallet(env), feeBps: NATIVE_FEE_BPS, royalty: await native().royaltyFor(env, p[2]), contracts: O.contracts(), chains: Object.fromEntries(Object.entries(chains).map(([k, c]) => [k, { chainId: c.chainId, native: c.native }])), maxExpiryDays: 180 };
+    }
+    if (M === 'GET' && p.length === 3 && p[2] === 'best') return listingJson(await O.best(env, p[1], ctx));
+    if (M === 'GET' && p.length === 2) return listingJson(await O.list(env, p[1], ctx));
+    if (M === 'POST' && p[1] === 'sync' && p.length === 2) {
+      const b = await body(); if (!chains[b.chain] || !HASH.test(b.txHash || '')) bad('invalid input');
+      return await O.sync(env, b.chain, b.txHash);
+    }
+    bad('not found', 404);
   }
 
   // --- Chain RPC proxy for browser reads: POST /rpc/:chain, read-only allowlist, fallback across public RPCs. ---
@@ -599,6 +618,7 @@ async function handle(req, env, url, ctx) {
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r))));
+    ctx.waitUntil(offers().sweep(env).then(r => console.log('offers sweep', JSON.stringify(r))).catch(e => console.log('offers sweep error', e?.message)));
     if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
   },
   async fetch(req, env, ctx) {

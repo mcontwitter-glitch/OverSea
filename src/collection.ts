@@ -7,6 +7,7 @@ import './style.css';
 import CFG from '../config/collections.json';
 import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
+import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, openMakeOffer, openAccept, openCancel, type OffersPayload, type Offer } from './offers';
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { addrHtml } from './names';
@@ -117,6 +118,8 @@ async function loadActivity() {
   if (st.tab === 'activity') render();
 }
 let primVol: Record<string, number> | null = null; // launchpad drops: primary mint volume read from chain
+let offerData: OffersPayload = { offers: [], contracts: {}, best: {} };
+let offerRates: UsdRates | null = null;
 const listMap = new Map<number, Listing>();
 const fillMap = (ls: Listing[]) => { listMap.clear(); ls.forEach(l => { const c = listMap.get(l.id); if (!c || (l.priceEth ?? Infinity) < (c.priceEth ?? Infinity)) listMap.set(l.id, l); }); };
 let listsReady = false;
@@ -204,6 +207,12 @@ function cancelAllBar() {
   if (st.status !== 'mine') return ''; const by = myNative(); const ks = Object.keys(by); if (!ks.length) return '';
   return `<div class="cabar"><span>Your MultiSea listings: ${ks.map(k => `${logo(k)} ${by[k]}`).join(' · ')}</span>${ks.map(k => `<button class="obtn sm" data-cancelall="${k}">Cancel all on ${esc(chains[k]?.name)}</button>`).join('')}</div>`;
 }
+function myOffersBar() {
+  const mine = myOpenOffers(offerData.offers, wallet.address);
+  if (!mine.length) return '';
+  const now = Math.floor(Date.now() / 1000);
+  return `<div class="cabar"><span>Your collection offers: ${mine.map(o => `${logo(o.chain)} ${fmt(Number(o.pricePerItem) / 1e18)} ${esc(chains[o.chain]?.native || '')} × ${o.remaining}${Number(o.expiry) <= now ? ' (expired)' : ''}`).join(' · ')}</span>${mine.map(o => `<button class="obtn sm" data-canceloffer="${o.chain}:${o.id}">${Number(o.expiry) <= now ? 'Claim refund' : 'Cancel offer'}</button>`).join('')}</div>`;
+}
 const srcBadge = (l: Listing) => l.source === 'multisea' ? ' <span class="src ms" title="Listed on MultiSea">MultiSea</span>' : ' <span class="src os" title="Listed on OpenSea">OpenSea</span>';
 const usd = (l: Listing) => { const v = usdOf(l); return v == null ? '' : ` <span class="usd">≈ ${usdTxt(v)}</span>`; };
 let liveUsd: number | null = null; ethUsdRate().then(r => { if (r && !findEthUsd(summary)) { liveUsd = r; document.querySelectorAll('.mcap b').forEach(e => e.textContent = mcapUsd(summary?.floor?.priceEth ?? null, COL.supply, r)); } });
@@ -234,10 +243,11 @@ function header() {
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
       <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
+      ${offerStatHtml(offerData.best, st.chains.size === 1 ? [...st.chains][0] : null, offerRates, COL.deployments)}
       ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary) ?? liveUsd)}
     </div>
   </div>
-  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
+  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${anyOffersLive(COL.deployments) ? '<button class="obtn sm" data-act="makeoffer">Make collection offer</button>' : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${st.tab === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
@@ -299,6 +309,10 @@ function doBuy(id: number) {
     gid => { listMap.delete(gid); render(); });
 }
 const sellItem = (id: number, chain: string) => { const it = items.find(i => i.id === id)!; return { id, name: it.name, img: thumbUrl(id), chain, contract: COL.deployments.find(d => d.chain === chain)!.address, slug: COL.slug }; };
+// Accept is shown only if this wallet holds the token on a chain that has a live offer (liveowners already excludes omni-escrowed / not isActiveHere).
+const acceptOfferOf = (id: number): Offer | null => { const ch = myChain(id); if (!ch || !anyOffersLive(COL.deployments.filter(d => d.chain === ch))) return null; return bestOfferOn(offerData.offers, ch); };
+const acceptBtn = (id: number, cls = '') => { const o = acceptOfferOf(id); if (!o) return ''; const c = chains[o.chain]; return `<button class="buy ${cls}" data-accept="${id}">Accept offer ${fmt(Number(o.pricePerItem) / 1e18)} ${esc(c?.native || '')}</button>`; };
+const doAccept = (id: number) => { const o = acceptOfferOf(id); const ch = myChain(id); if (!o || !ch) return; const it = items.find(i => i.id === id); if (!it) return; openAccept({ id, name: it.name, img: thumbUrl(id), chain: ch, contract: COL.deployments.find(d => d.chain === ch)!.address, slug: COL.slug, offer: o }, () => { loadOfferData().then(() => render()); }); };
 // Buyable listings as cart items (cheapest per item; excludes my own listings).
 function cartItems() {
   const me = wallet.address?.toLowerCase(); const out: any[] = [];
@@ -343,7 +357,7 @@ function card(it: Item, idx = 99) {
   if (isOrd(it.id)) return ordCard(it);
   const loc = owners[it.id]; const l = listMap.get(it.id); const ob = onBtc.get(it.id);
   return `<div class="card" data-id="${it.id}"><div class="ci" style="background:${it.color || '#1a1a1a'}">${thumb(it, idx < 10)}${ob && !loc ? `<span class="badge btcb" title="On Bitcoin: locked in the Abstract vault, inscribed as ${esc(ob.iid)}">${logo('bitcoin')}</span>` : loc ? `<span class="badge">${logo(loc.chain)}</span>` : `<span class="badge none" title="Not located on any chain (unminted or in vault)">?</span>`}${ob ? '<span class="onbtc">On Bitcoin</span>' : ''}<span class="rank" title="Rarity rank (statistical, out of 4404)">Rank ${it.rank}</span>${fwBadgeFor(it.id)}${iwBadgeFor(it.id)}</div>
-   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : pricePending()}</div>${buyBtn(it.id)}</div></div>`;
+   <div class="cb"><div class="cn">${esc(it.name)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>${usd(l)}${srcBadge(l)}` : sold.has(it.id) ? '<span class="ok">Sold to you</span>' : pricePending()}</div>${buyBtn(it.id)}${acceptBtn(it.id)}</div></div>`;
 }
 
 function ordCard(it: Item) {
@@ -360,7 +374,7 @@ function itemsView() {
   return `<div class="bar"><button class="fbtn" data-act="toggle-side"><span class="fi" aria-hidden="true">☰</span> <span>Filters</span></button><input class="search" enterkeyhint="search" placeholder="${mob ? 'Search by ID or trait' : 'Search by name or ID'}" value="${esc(st.q)}"><select class="sort" aria-label="Sort">
     ${[['price-asc', 'Price: low to high', 'Price ↑'], ['price-desc', 'Price: high to low', 'Price ↓'], ['rarity', 'Rarity: rarest first', 'Rarest'], ['rarity-desc', 'Rarity: common first', 'Common']].map(([v, n, sh]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${mob ? sh : n}</option>`).join('')}</select><button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button></div>
    <div class="layout">${sidebar()}<section class="main">${ORD?.demo && (!st.chains.size || st.chains.has('bitcoin')) ? `<div class="btcdemo"><b>DEMO DATA</b> The Bitcoin chain here is a signet preview: ${ORD.items.length} mocked Ordinals (real mainnet ${esc(ORD.collection)} artwork) shown to demo the unified view. ${esc(COL.name)} has no real inscriptions. <a href="?demo=0">Hide demo</a></div>` : ''}<div class="count">${arr.length.toLocaleString()} items ${activeTraits ? `<span class="pills">${activeTraits}<button class="pill clr" data-act="clear">Clear all</button></span>` : ''}</div>
-   ${cancelAllBar()}
+   ${cancelAllBar()}${myOffersBar()}
    <div class="grid">${arr.slice(0, st.limit).map((it, k) => card(it, k)).join('')}</div>${arr.length > st.limit ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</section></div>`;
 }
 
@@ -412,10 +426,10 @@ function modal(id: number) {
     ${mrowHtml(id)}
     ${FW_ON ? `<div class="fwmrow"><a class="obtn sm fwwbtn" href="/w/${id}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval" data-fwm="${id}"><span class="fwbadge">Wallet: …</span></span><span class="mut small">Tokens and NFTs inside this foot, on 5 chains</span></div>` : ''}
     ${IW_ON ? (() => { const k = (loc && (ISLAND_CHAINS as readonly string[]).includes(loc.chain) ? loc.chain : 'base') as FwChain; return `<div class="fwmrow"><a class="obtn sm fwwbtn" href="${islandWalletUrl(id, k)}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/></svg> Wallet</a><span class="fwmval"><span class="fwbadge mono">${logo(k)} ${short(islandTba(k, id))}</span></span><span class="mut small">Token wallet (ERC-6551). Each chain has its own address.</span></div>`; })() : ''}
-    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
+    <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${acceptBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
-  m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
+  m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const ab = (e.target as HTMLElement).closest('[data-accept]') as HTMLElement; if (ab) { m.remove(); doAccept(+ab.dataset.accept!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
   document.body.appendChild(m);
   if (FW_ON) import('./footkit').then(async k => { fwkit = k; const r = await k.walletUsd([id]).catch(() => null); const v = r ? r.get(id) ?? null : null; fwv.set(id, v); const el = m.querySelector(`[data-fwm="${id}"]`); if (el) el.innerHTML = k.walletBadge(id, v, true).replace('Wallet: -', 'Wallet: unavailable'); });
 }
@@ -438,12 +452,15 @@ app.addEventListener('click', e => {
     // Chips are single-select (one chain, or All); multi-chain picks stay in the sidebar checkboxes. A union of BNB + Bitcoin read as a leak on mobile.
     const only = st.chains.size === 1 && st.chains.has(c); st.chains.clear(); if (c && !only) st.chains.add(c); render(); return; }
   const bb = t.closest('[data-buy]') as HTMLElement; if (bb) { e.stopPropagation(); doBuy(+bb.dataset.buy!); return; }
+  const ab = t.closest('[data-accept]') as HTMLElement; if (ab) { e.stopPropagation(); doAccept(+ab.dataset.accept!); return; }
+  const co = t.closest('[data-canceloffer]') as HTMLElement; if (co) { e.stopPropagation(); const [ck, oid] = (co.dataset.canceloffer || '').split(':'); const off = offerData.offers.find(o => o.chain === ck && o.id === oid); if (off) openCancel(off, () => { loadOfferData().then(() => render()); }); return; }
   const sb = t.closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { e.stopPropagation(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; }
   if (t.closest('.nosell')) { e.stopPropagation(); return; }
   const act = t.closest('[data-act]') as HTMLElement;
   const ca = (e.target as HTMLElement).closest('[data-cancelall]') as HTMLElement | null;
   if (ca) { const k = ca.dataset.cancelall!; import('./sell').then(m => m.cancelAllNative(k, myNative()[k] || 0, () => { const me = wallet.address?.toLowerCase(); [...listMap].forEach(([id, l]) => { if (l.source === 'multisea' && l.chain === k && l.seller?.toLowerCase() === me) listMap.delete(id); }); render(); })); return; }
   if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
+  if (act?.dataset.act === 'makeoffer') { openMakeOffer({ slug: COL.slug, name: COL.name, deployments: COL.deployments }, () => { loadOfferData().then(() => render()); }); return; }
   if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator }); return; }
   if (act?.dataset.act === 'sweep') { import('./cart').then(c => c.openSweep(cartItems(), COL.name)); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
@@ -481,6 +498,13 @@ await Promise.race([listingsReady, new Promise<void>(r => setTimeout(r, 200))]);
 render();
 listingsReady.then(() => render());
 loadLiveOwners();
+async function loadOfferData() {
+  if (!anyOffersLive(COL.deployments)) return;
+  const [d, r] = await Promise.all([loadOffers(COL.slug), usdRates().catch(() => null)]);
+  offerData = d; offerRates = r;
+}
+loadOfferData().then(() => render());
+
 // Launchpad drops: primary mint volume read from chain (null for collections that are not drops).
 import('./dropstats').then(D => D.primaryVolume(COL.deployments)).then(p => { if (p) { primVol = p; render(); } }).catch(() => {});
 loadOrdinals();
