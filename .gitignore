@@ -26,3 +26,8 @@ dist-staging
 
 # local env overrides (thirdweb client id etc.)
 .env*.local
+
+# solana build output + local e2e deps
+solana/target/
+solana/e2e/node_modules
+solana/deploy/program-*-keypair.json
