@@ -12,7 +12,7 @@ import { api } from './auth';
 import { uploadHtml, addMedia, clearMedia, loadCsv, downloadTemplate, uploadProblem, usingUpload, pinAll, media, ph as phd, setPlaceholder, placeholderHtml, pinPlaceholder, agentMediaProblem, agentPin, death, setDeath, deathHtml, pinDeath, DEATH_RE, pinJson, pinningReady } from './lpmedia';
 import { AGENT_UI, AGENT_PREVIEW, DEATH_CHAINS, AGENT_CHAINS, ORA_FEE_WEI } from './agentdrop';
 import { encodeTraits, traitsCard, primeCost, saveTraits, loadTraits, type TraitEnc } from './agenttraits';
-import { SOLANA_ON, SOL_MAX_QTY, SOL_SOON } from './solflag';
+import { SOLANA_ON, SOL_MAX_QTY, SOL_SOON, onSolanaFlag } from './solflag';
 import { LP_CHAINS, FEE_BPS, localDrops, saveLocal, isLocalHost, BATCH, batchShareUsd, mintLegs, legsUsd, type Drop, type Phase } from './launchdata';
 const app = document.getElementById('app')!; document.title = 'Create a drop · Launchpad · MultiSea';
 const chains = CFG.chains as Record<string, { name: string; native: string }>;
@@ -380,4 +380,4 @@ app.addEventListener('click', e => {
 app.addEventListener('dragover', e => { const d = (e.target as HTMLElement).closest('[data-drop]'); if (d) { e.preventDefault(); d.classList.add('over'); } });
 app.addEventListener('dragleave', e => (e.target as HTMLElement).closest('[data-drop]')?.classList.remove('over'));
 app.addEventListener('drop', e => { const d = (e.target as HTMLElement).closest('[data-drop]') as HTMLElement | null; if (!d || !e.dataTransfer?.files.length) return; e.preventDefault(); if (d.dataset.drop === 'death') { msg = setDeath(e.dataTransfer.files[0]); msgCls = 'err'; st.deathURI = ''; save(); render(); return; } if (d.dataset.drop === 'csv') { const csv = Array.from(e.dataTransfer.files).find(f => /\.csv$/i.test(f.name) || f.type === 'text/csv'); if (!csv) { msg = 'Drop a .csv file here.'; msgCls = 'err'; render(); return; } csv.text().then(t => { loadCsv(csv.name, t); st.baseURI = ''; msg = ''; save(); render(); }); return; } if (d.dataset.drop === 'ph') { setPlaceholder(e.dataTransfer.files[0]); st.preRevealURI = ''; save(); render(); return; } const fs = Array.from(e.dataTransfer.files); const csv = fs.find(f => /\.csv$/i.test(f.name)); const rest = fs.filter(f => f !== csv); if (rest.length) addMedia(rest); st.baseURI = ''; if (csv) csv.text().then(t => { loadCsv(csv.name, t); render(); }); else render(); });
-bindNav(); render(); onWallet(render); checkApi().then(render);
+bindNav(); render(); onWallet(render); onSolanaFlag(render); checkApi().then(render);

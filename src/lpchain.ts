@@ -17,6 +17,7 @@ export const HUB: string = LP.hubChain;
 const F = ABI.factory as Abi, D = ABI.drop as Abi, O = ABI.omni as Abi;
 const ESC = [{ type: 'function', name: 'quoteHubValue', stateMutability: 'view', inputs: [{ type: 'bytes32' }, { type: 'uint32' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] }] as const;
 const FX = [{ type: 'function', name: 'usedSalt', stateMutability: 'view', inputs: [{ type: 'bytes32' }], outputs: [{ type: 'bool' }] }, { type: 'function', name: 'omniImplementation', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }, { type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }] as const;
+const OMNI_ESC = [{ type: 'function', name: 'escrow', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }] as const;
 const OMNI_CID = [{ type: 'function', name: 'collectionId', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] }] as const;
 
 async function walletOn(k: string) {
@@ -88,9 +89,11 @@ export async function quote(multi: boolean, k: string, drop: Address, phaseId: n
   if (!multi) return { value: unitWei * BigInt(qty), price: unitWei * BigInt(qty), lz: 0n, hubValue: 0n };
   let hubValue = 0n;
   if (k !== HUB) {
-    const cid = await readClient(k).readContract({ address: drop, abi: OMNI_CID, functionName: 'collectionId' });
+    const [cid, esc] = await Promise.all([readClient(k).readContract({ address: drop, abi: OMNI_CID, functionName: 'collectionId' }), readClient(k).readContract({ address: drop, abi: OMNI_ESC, functionName: 'escrow' }) as Promise<Address>]);
+    // V1 drops (created before factory.setOmni(V2)) use the V1 escrows; V2 drops the V2 escrows (config solana.v2).
+    const hubEsc = esc.toLowerCase() === String(escrowOn(k) || '').toLowerCase() ? escrowOn(HUB)! : (LP.solana?.v2?.escrows?.[HUB] as Address);
     const eid = LP.mainnet.chains[k].eid ?? LP.eids?.[k];
-    hubValue = ((await readClient(HUB).readContract({ address: escrowOn(HUB)!, abi: ESC, functionName: 'quoteHubValue', args: [cid, eid, BigInt(qty)] })) as bigint) * 13n / 10n;
+    hubValue = ((await readClient(HUB).readContract({ address: hubEsc, abi: ESC, functionName: 'quoteHubValue', args: [cid, eid, BigInt(qty)] })) as bigint) * 13n / 10n;
   }
   const [price, lz] = (await readClient(k).readContract({ address: drop, abi: O, functionName: 'quoteMint', args: [BigInt(phaseId), BigInt(qty), to, hubValue] })) as [bigint, bigint];
   return { value: price + lz, price, lz, hubValue };

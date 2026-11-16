@@ -3,6 +3,8 @@
 //   lpending:<slug>  submitted drop awaiting review      ldrop:<slug>   approved / deployed drop (public)
 //   lrejected:<slug> rejected drop (+reason)            lallow:<slug>:<phase>  allowlist addresses (lowercase, sorted)
 // Endpoints:
+//   GET  /launchpad/solana                    { on, programId, store, escrows } Solana switch (KV lp:solana)
+//   POST /launchpad/solana/enable             { message, signature } MC's signed "turn Solana on" -> on-chain check -> on
 //   GET  /launchpad/drops                     public list (approved + live)
 //   GET  /launchpad/drops/<slug>              one drop (phases, no allowlist contents)
 //   GET  /launchpad/proof/<slug>/<phase>/<a>  { eligible, proof[] } Merkle proof for an allowlist phase
@@ -17,7 +19,7 @@
 //   POST /admin/launchpad/approvals/<slug>    (admin)  { chain, signature } -> verified against the on-chain approver, stored
 // Approvals: with the LAUNCHPAD_APPROVER_KEY secret (testnet staging) the Worker signs on request. Without it (mainnet) the
 // approver wallet signs each chain's approval in /admin (signature only, no transaction) and the Worker hands it to the creator.
-import { keccak256, encodeAbiParameters, concat, recoverTypedDataAddress, toBytes } from 'viem';
+import { keccak256, encodeAbiParameters, concat, recoverTypedDataAddress, recoverMessageAddress, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { solKey, solName, dropApprovalDigest as solDigest, recoverSolApprover } from './solanadrop.js';
 
@@ -87,7 +89,18 @@ export const omniConfigHash = p => keccak256(encodeAbiParameters(OMNI_T, [{ ...p
 export const collectionIdOf = (slug, creator) => keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'address' }], [slug, creator]));
 export const configHash = p => keccak256(encodeAbiParameters(INIT_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
 
-export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed, now = () => Date.now() }) {
+export const SOL_SWITCH_TITLE = 'MultiSea: turn Solana on';
+/** The text MC's wallet signs on /deploy-solana (free signature, no transaction). */
+export const solSwitchMessage = (programId, issued) => `${SOL_SWITCH_TITLE}\nProgram: ${programId}\nIssued: ${issued}`;
+export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed, verifySolana, now = () => Date.now() }) {
+  // Solana switch: config/launchpad.json solana.programId (tests / staging) or the KV record written by POST /launchpad/solana/enable
+  // after MC's signed "Turn Solana on" and the on-chain check. Until then SOLP is null: Solana drops are refused.
+  let SOLP = LP.solana?.programId || null; let solAt = 0; let solRec = null;
+  async function loadSol(env, force) {
+    if (LP.solana?.programId) return;
+    if (!force && now() - solAt < 30_000) return;
+    solRec = await env.COLLECTIONS?.get('lp:solana', 'json').catch(() => null) || null; SOLP = solRec?.programId || null; solAt = now();
+  }
   const SLUG = /^[a-z0-9-]{3,40}$/;
   const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const int = (v, lo, hi, what) => { const n = Number(v); if (!Number.isInteger(n) || n < lo || n > hi) bad(`${what} must be an integer ${lo}-${hi}`); return n; };
@@ -171,11 +184,11 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     }
     // Multichain escrow copies: BATCHED (default) queues them on the hub and flushes one message per chain every K ids or
     // T minutes; AT_MINT sends them with every mint (≈ 5-35x the LayerZero cost, see spec §7.4).
-    // Solana (multichain only, last chain): enabled once LP.solana.programId (the mainnet program) is configured. The creator's
+    // Solana (multichain only, last chain): enabled once SOLP (the mainnet program) is configured. The creator's
     // Solana wallet creates and owns the Solana side; copies go out with every mint (AT_MINT), never batched.
     let solana;
     if (b.solana) {
-      if (!LP.solana?.programId) bad('Solana is not available yet');
+      if (!SOLP) bad('Solana is not available yet');
       if (mode !== 'multichain') bad('Solana is only available for multichain drops');
       if (isAgent) bad('Solana is not available for agent drops');
       if (b.copyMode === 'batched') bad('drops with Solana send copies at mint (copyMode at-mint)');
@@ -249,11 +262,11 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), maxPerWallet: p.maxPerWallet, maxSupply: p.maxSupply ?? 0, merkleRoot: p.merkleRoot, price: BigInt(p.prices.solana) })) });
   // Solana approval: { raw digest } the approver signs as an EIP-191 message; create_drop checks it on-chain.
   function solApproval(d, deadline) {
-    if (!d.solana || !LP.solana?.programId) bad('no Solana program yet', 501);
+    if (!d.solana || !SOLP) bad('no Solana program yet', 501);
     const sp = solParams(d); const collectionId = collectionIdOf(d.slug, lc(d.submitter));
-    const digest = solDigest(LP.solana.programId, d.solana.creator, collectionId, sp, deadline);
+    const digest = solDigest(SOLP, d.solana.creator, collectionId, sp, deadline);
     const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
-    return { digest, out: { chain: 'solana', programId: LP.solana.programId, creator: d.solana.creator, collectionId, deadline: deadline.toString(), params: ser(sp) } };
+    return { digest, out: { chain: 'solana', programId: SOLP, creator: d.solana.creator, collectionId, deadline: deadline.toString(), params: ser(sp) } };
   }
 
   // EIP-712 approval for one chain of an approved drop. Creator = the submitter (createDrop: msg.sender; createOmniDrop: p.owner).
@@ -281,8 +294,26 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   }
 
   async function handle(req, env, url, p, M, body) {
+    if (p[0] === 'launchpad' || (p[0] === 'admin' && p[1] === 'launchpad')) await loadSol(env);
     if (p[0] === 'launchpad') {
       const K = env.COLLECTIONS;
+      if (M === 'GET' && p[1] === 'solana' && p.length === 2) return { on: !!SOLP, programId: SOLP, store: solRec?.store || null, escrows: SOLP ? LP.solana?.v2?.escrows || null : null, enabledAt: solRec?.enabledAt || null, signer: LP.solana?.switchSigner || null };
+      if (M === 'POST' && p[1] === 'solana' && p[2] === 'enable' && p.length === 3) {
+        const b = await body(); const msg = String(b.message || ''); const sig = String(b.signature || '');
+        if (msg.length > 400 || !/^0x[0-9a-fA-F]{130}$/.test(sig)) bad('message and signature required');
+        const m = msg.match(/^MultiSea: turn Solana on\nProgram: ([1-9A-HJ-NP-Za-km-z]{32,44})\nIssued: (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)$/);
+        if (!m || msg !== solSwitchMessage(m[1], m[2])) bad('not a "turn Solana on" message');
+        const t = Date.parse(m[2]); if (!(t <= now() + 120_000 && t >= now() - 15 * 60_000)) bad('message expired: sign again', 401);
+        try { solKey(m[1]); } catch { bad('bad program id'); }
+        const signer = lc(await recoverMessageAddress({ message: msg, signature: sig }).catch(() => ''));
+        if (!LP.solana?.switchSigner || signer !== lc(LP.solana.switchSigner)) bad('only the MultiSea owner wallet can turn Solana on', 403);
+        if (!verifySolana) bad('on-chain check unavailable', 501);
+        const v = await verifySolana(m[1]);
+        if (!v?.ok) bad('Not ready: ' + (v?.problems || ['check failed']).join('; '), 409);
+        const rec = { programId: m[1], store: v.store, enabledAt: new Date(now()).toISOString(), signedBy: signer, message: msg, signature: sig };
+        await K.put('lp:solana', JSON.stringify(rec)); await loadSol(env, true);
+        return { ok: true, on: true, programId: m[1], store: v.store };
+      }
       if (M === 'GET' && p[1] === 'drops' && p.length === 2) { const l = await K.list({ prefix: 'ldrop:' }); return { drops: (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(Boolean).map(pub) }; }
       if (M === 'GET' && p[1] === 'drops' && p.length === 3) { const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404); return { drop: pub(d) }; }
       if (M === 'GET' && p[1] === 'proof' && p.length === 5) {
@@ -334,12 +365,12 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         if (lc(d.submitter) !== s.address) bad('creator only', 403);
         const b = await body(); const chain = b.chain, address = lc(b.address);
         if (chain === 'solana') { // the Drop account must be owned by the MultiSea program and carry this drop's collection id
-          if (!d.solana || !LP.solana?.programId) bad('no Solana side for this drop');
+          if (!d.solana || !SOLP) bad('no Solana side for this drop');
           const acct = String(b.address || ''); try { solKey(acct); } catch { bad('bad Solana address'); }
           const r = await fetch(LP.solana.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getAccountInfo', params: [acct, { encoding: 'base64', commitment: 'confirmed' }] }) }).then(x => x.json()).catch(() => null);
           const v = r?.result?.value; const raw = v ? Uint8Array.from(atob(v.data[0]), c => c.charCodeAt(0)) : null;
           const cid = collectionIdOf(d.slug, lc(d.submitter)).slice(2); const got = raw && raw.length >= 40 ? [...raw.slice(8, 40)].map(x => x.toString(16).padStart(2, '0')).join('') : '';
-          if (!v || v.owner !== LP.solana.programId || got !== cid) bad('address is not this drop on the MultiSea Solana program');
+          if (!v || v.owner !== SOLP || got !== cid) bad('address is not this drop on the MultiSea Solana program');
           const live = { ...d, solana: { ...d.solana, drop: acct } }; await K.put('ldrop:' + d.slug, JSON.stringify(live));
           return { ok: true, drop: pub(live) };
         }
@@ -352,7 +383,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         const col = (await K.get('col:' + d.slug, 'json')) || { slug: d.slug, name: d.name, description: d.description, website: d.website, x: d.x, logo: d.logo, banner: d.banner, escrow: [], submitter: d.submitter, status: 'approved', approvedAt: new Date(now()).toISOString(), source: 'launchpad' };
         col.deployments = deployments;
         // Multichain: the shared per-chain escrow holds every non-Active copy, so it is excluded from holder counts.
-        if (d.mode === 'multichain') col.escrow = deployments.map(x => ({ chain: x.chain, address: lc(LP.omniEscrows?.[x.chain] || ZERO) })).filter(x => x.address !== ZERO);
+        if (d.mode === 'multichain') col.escrow = deployments.flatMap(x => [...new Set([LP.omniEscrows?.[x.chain], LP.solana?.v2?.escrows?.[x.chain]].filter(Boolean).map(lc))].map(address => ({ chain: x.chain, address }))).filter(x => x.address !== ZERO && x.chain !== 'solana');
         await K.put('col:' + d.slug, JSON.stringify(col));
         if (onDeployed) await onDeployed(env, live, chain, address).catch(e => console.log('bridge enqueue failed', e?.message));
         return { ok: true, drop: pub(live) };
@@ -374,7 +405,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
           for (const chain of d.chains) { if (!LP.factories?.[chain]) continue; const st = await K.get(`lsig:${d.slug}:${chain}`, 'json');
             const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec); const done = (d.deployments || []).some(x => x.chain === chain);
             out.push({ chain, signed: !!st, deadline: st?.deadline, deployed: done, typed: ser(approvalTyped(d, chain, deadline).typed) }); }
-          if (d.solana && LP.solana?.programId) { const st = await K.get(`lsig:${d.slug}:solana`, 'json'); const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
+          if (d.solana && SOLP) { const st = await K.get(`lsig:${d.slug}:solana`, 'json'); const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec);
             out.push({ chain: 'solana', signed: !!st, deadline: st?.deadline, deployed: (d.deployments || []).some(x => x.chain === 'solana'), deadlineNew: deadline.toString(), raw: solApproval(d, deadline).digest }); }
           return { approver: LP.approver, approvals: out };
         }

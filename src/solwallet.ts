@@ -3,7 +3,7 @@
 import { Connection, PublicKey, Transaction, ComputeBudgetProgram, type TransactionInstruction } from '@solana/web3.js';
 import LP from '../config/launchpad.json';
 
-type Prov = { publicKey?: { toBase58(): string } | null; connect(): Promise<unknown>; disconnect?(): Promise<void>; signTransaction(tx: Transaction): Promise<Transaction> };
+type Prov = { publicKey?: { toBase58(): string } | null; connect(): Promise<unknown>; disconnect?(): Promise<void>; signTransaction(tx: Transaction): Promise<Transaction>; signAllTransactions?(txs: Transaction[]): Promise<Transaction[]> };
 const W = window as any;
 export const SOL_WALLETS = [
   { id: 'phantom', name: 'Phantom', get: (): Prov | undefined => W.phantom?.solana, url: 'https://phantom.app/' },

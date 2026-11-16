@@ -1,132 +1,291 @@
-// /deploy-solana: MC wires up Solana for NEW multichain drops with his own wallets. Never uses a server key.
-// Order: (1) CLI: solana/deploy/deploy-program.sh (program deploy, MC's keypair) -> program id.
-// (2) node scripts/lp-solana-plan.mjs --i-will-sign-myself --deployer <MC> --solana-program <id> -> plan JSON.
-// (3) This page: load the plan, send the EVM txs (EVM wallet, chain by chain) and the Solana steps (Phantom / Solflare).
-// (4) The new contracts (V2 escrow/drop impl, mover) stay owned by MC's wallet (direct calls). The live factory + V1 escrow are
-//     owned by the existing 48 h timelock: the plan's step 1 schedules the timelock exit (default: ownership back to MC); 48 h later
-//     send the executeBatch step and the rest of the chain (acceptOwnership, V1 escrow Solana peer, setOmni) here.
-// (5) Only then put the program id + V2 escrows into config/launchpad.json (that is what un-hides Solana on the site).
-// Existing V1 collections (Option A): per chain set_mover (the plan's MultiSeaSolanaMover + the chain's V1 escrow), then per
-// collection register_existing + existing_copies (all ids created as locked copies, ~0.0032 SOL each, paid by the admin wallet).
+// /deploy-solana: "Turn on Solana" in 5 big steps. MC signs everything with his own wallets; MultiSea never holds a key.
+// Every step's ✓ comes from an on-chain read, so the page picks up where MC left off (any browser, any time).
+//  1 Connect Phantom (or Solflare)
+//  2 Deploy the Solana program from the browser: 2 wallet approvals; the upload in between is signed by a throwaway key kept
+//    in this browser (src/solprogdeploy.ts). Resume / cancel-and-refund. CLI fallback under Details.
+//  3 Set up the program: settings + links to every EVM chain, one "Approve all" (src/solsetup.ts)
+//  4 Each EVM chain: one "Sign next step" button over the ~28 steps of src/solplan.ts (48 h timelock exit countdown)
+//  5 Turn Solana on: a free signature from MC's EVM wallet; the Worker checks everything on-chain, then switches Solana on.
 import './btc/polyfill';
-import { createWalletClient, custom, type Hex } from 'viem';
-import { PublicKey } from '@solana/web3.js';
+import './solshim';
+import { createWalletClient, custom, formatUnits, type Hex, type Address } from 'viem';
+import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import CFG from '../config/collections.json';
 import LP from '../config/launchpad.json';
-import { wallet, openConnect, onWallet, ensureChain, vchain, readClient, esc } from './wallet';
+import ART from './solartifacts.json';
+import { wallet, openConnect, onWallet, ensureChain, vchain, readClient, esc, API } from './wallet';
 import { navHtml, bindNav } from './shell';
-import { solWallet, solConn, sendSol, SOL_RPC } from './solwallet';
+import { solWallet, solConn, connectSol, onSolWallet, SOL_RPC } from './solwallet';
 import * as O from './solanaomni';
+import { chainPlan, type ChainPlan } from './solplan';
+import * as PD from './solprogdeploy';
+import type { SetupItem, Link } from './solsetup';
+// The LayerZero SDK is loaded on demand, after the `process` shim (a static import would evaluate first in the production build).
+const SS = () => import('./solsetup');
+const ULN302 = '7a4WjyR8VZ7yZz5XJAKm39BUGn5iT9CKcv2pmG9tdXVH';
 
-const SL: any = (LP as any).solana; const M: any = (LP as any).mainnet;
-const FEE_RECIPIENT = SL.feeRecipient || '85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS';
-// Solana-side DVNs (LayerZero metadata, Nov 2026): the same 2-of-2 policy as the EVM chains (LayerZero Labs + Horizen).
-const SOL_DVNS = ['4VDjp6XQaxoZf5RGwiPU9NR1EXSZn2TP4ATMmiSzLfhb', 'HR9NQKK1ynW9NzgdM37dU5CBtqRHTukmbMKS7qkwSkHX'];
-const ULN302 = new PublicKey(SL.sendLib || '7a4WjyR8VZ7yZz5XJAKm39BUGn5iT9CKcv2pmG9tdXVH');
-const chains = CFG.chains as Record<string, { name: string; explorer: string }>;
-const app = document.getElementById('app')!; document.title = 'Deploy Solana · MultiSea';
-let programId = new URLSearchParams(location.search).get('program') || SL.programId || '';
-let plan: any = null; let log = ''; let busy = ''; const done: Record<string, boolean> = {};
-const pid = () => new PublicKey(programId);
-const lg = (s: string) => { log += s + '\n'; render(); };
+const L: any = LP; const SL = L.solana; const M = L.mainnet; const V2 = SL.v2;
+const chainsCfg = CFG.chains as Record<string, { name: string; explorer: string; logo?: string }>;
+const KEYS: string[] = Object.keys(V2.escrows);
+const NAMES: Record<string, string> = Object.fromEntries(KEYS.map(k => [k, chainsCfg[k]?.name || k]));
+const MC: string = V2.owner;
+// LayerZero message library: ULN302 on mainnet; a local-validator test build may point at the simple test library (no DVN config there).
+const MSGLIB: string = (import.meta as any).env?.VITE_SOLANA_MSGLIB || SL.sendLib || ULN302;
+const SO = (ART as any).so as { path: string; size: number; sha256: string };
+const app = document.getElementById('app')!; document.title = 'Turn on Solana · MultiSea';
+const short = (s: string, a = 4, b = 4) => (s && s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s);
+const sol = (l: number) => (l / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const lsKeys: PD.KeyStore = { get: () => localStorage.getItem('msea-solprog-keys'), set: v => localStorage.setItem('msea-solprog-keys', v), clear: () => localStorage.removeItem('msea-solprog-keys') };
 
-async function refresh() {
-  if (!programId) return render();
-  try { const st = await solConn.getAccountInfo(O.storePda(pid())); done.store = !!st;
-    for (const k of Object.keys(plan?.chains || {})) { const pa = await solConn.getAccountInfo(O.peerPda(plan.chains[k].eid, pid())); done['sol:' + k] = !!pa;
-      done['mover:' + k] = !!pa && O.decodePeer(pa.data).mover.some((x: number) => x !== 0); }
-    if (xcid) { const d = await solConn.getAccountInfo(O.dropPda(xcid, pid())); done.xreg = !!d; if (d) xminted = await countCopies(); } } catch (e: any) { lg('RPC: ' + (e?.message || e)); }
+// ------------------------------------------------------------------ state
+let programId = new URLSearchParams(location.search).get('program') || localStorage.getItem('msea-solprog-id') || '';
+let soBytes: Uint8Array | null = null;
+let dst: PD.DeployState | null = null; let costs: Awaited<ReturnType<typeof PD.costs>> | null = null;
+let solBal: number | null = null;
+let setup: SetupItem[] | null = null;
+const plans: Record<string, ChainPlan | undefined> = {}; const gasPrice: Record<string, bigint | undefined> = {}; const clockSkew: Record<string, number> = {};
+const chainErr: Record<string, string> = {};
+let flag: { on: boolean; programId: string | null; enabledAt: string | null } | null = null;
+let busy = ''; let msg = ''; let up: { written: number; total: number } | null = null;
+const openDet = new Set<string>();
+const say = (s: string) => { msg = s; render(); };
+const errText = (e: any) => String(e?.shortMessage || e?.message || e).slice(0, 300);
+
+const store32 = (): Hex | null => (programId ? O.hexOf(O.storePda(new PublicKey(programId)).toBytes()) : null);
+const deployed = () => dst?.phase === 'deployed';
+const setupDone = () => !!setup && setup.every(i => i.done);
+const chainDone = (k: string) => !!plans[k] && plans[k]!.firstOpen === -1;
+const isOn = () => !!flag?.on && !!programId && flag.programId === programId;
+
+// ------------------------------------------------------------------ reads
+async function soFile() {
+  if (soBytes) return soBytes;
+  const b = new Uint8Array(await (await fetch(SO.path, { cache: 'force-cache' })).arrayBuffer());
+  const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource)), x => x.toString(16).padStart(2, '0')).join('');
+  if (h !== SO.sha256 || b.length !== SO.size) throw new Error('The program file did not download correctly (hash mismatch). Reload the page.');
+  return (soBytes = b);
+}
+/** Program id: ?program=, this browser (saved / upload keys), the Worker's switch, or the Base V2 escrow's Solana peer -> Store -> owner. */
+async function findProgram() {
+  if (programId) return;
+  const k = PD.loadKeys(lsKeys, SO.sha256); if (k) { programId = k.program.publicKey.toBase58(); return; }
+  if (flag?.programId) { programId = flag.programId; return; }
+  try {
+    const peer = await readClient(L.hubChain).readContract({ address: V2.escrows[L.hubChain], abi: [{ type: 'function', name: 'peers', stateMutability: 'view', inputs: [{ type: 'uint32' }], outputs: [{ type: 'bytes32' }] }], functionName: 'peers', args: [SL.eid] }) as Hex;
+    if (peer && !/^0x0+$/.test(peer)) { const st = await solConn.getAccountInfo(new PublicKey(Buffer.from(peer.slice(2), 'hex'))); if (st) programId = st.owner.toBase58(); }
+  } catch { /* the V2 escrow is not deployed yet */ }
+}
+async function readFlag() { try { const r = await fetch(API + '/launchpad/solana', { cache: 'no-store' }); if (r.ok) flag = await r.json(); } catch {} }
+async function readSolana() {
+  try {
+    const so = await soFile();
+    [costs, dst] = await Promise.all([PD.costs(solConn, so), PD.deployState(solConn, so, lsKeys, SO.sha256, programId || undefined)]);
+    if (dst.programId && dst.phase === 'deployed') { programId = dst.programId; localStorage.setItem('msea-solprog-id', programId); }
+    solBal = solWallet.pubkey ? await solConn.getBalance(solWallet.pubkey) : null;
+    if (deployed()) setup = await (await SS()).setupPlan(solConn, setupCfg());
+  } catch (e) { msg = `<span class="err">Solana: ${esc(errText(e))}</span>`; }
+}
+function links(): Link[] { return KEYS.map(k => ({ k, name: NAMES[k], eid: M.chains[k].eid, escrow: V2.escrows[k], mover: V2.movers[k], v1: M.chains[k].omniEscrow, confirmations: M.chains[k].confirmations })); }
+function setupCfg() {
+  return { pid: new PublicKey(programId), admin: solWallet.pubkey || new PublicKey(dst?.authority || programId), localEid: SL.eid, approver: M.approver, feeRecipient: new PublicKey(SL.feeRecipient),
+    feeBps: SL.feeBps ?? 50, moveFee: BigInt(SL.moveFeeLamports ?? 1_000_000), links: links(), msgLib: new PublicKey(MSGLIB), dvnConfig: MSGLIB === ULN302 };
+}
+let cidCache: Record<string, Hex[]> | null = null;
+/** Existing multichain (V1) collections: their ids, so the mover can be enabled for them (setCollection steps). */
+async function existingCids(): Promise<Record<string, Hex[]>> {
+  if (cidCache) return cidCache;
+  const cand: Record<string, Set<string>> = Object.fromEntries(KEYS.map(k => [k, new Set<string>()]));
+  for (const c of (CFG as any).collections) for (const d of c.deployments || []) if (cand[d.chain]) cand[d.chain].add(d.address);
+  try { const r = await fetch(API + '/launchpad/drops'); const j = await r.json(); for (const d of j.drops || []) if (d.mode === 'multichain') for (const x of d.deployments || []) if (cand[x.chain]) cand[x.chain].add(x.address); } catch {}
+  const CID = [{ type: 'function', name: 'collectionId', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] }] as const;
+  const out: Record<string, Hex[]> = {};
+  await Promise.all(KEYS.map(async k => { const ids = await Promise.all([...cand[k]].map(a => readClient(k).readContract({ address: a as Address, abi: CID, functionName: 'collectionId' }).catch(() => null)));
+    out[k] = [...new Set(ids.filter(Boolean) as Hex[])]; }));
+  return (cidCache = out);
+}
+async function readChain(k: string) {
+  try {
+    const pub = readClient(k) as any; const [blk, gp, cids] = await Promise.all([pub.getBlock(), pub.getGasPrice().catch(() => undefined), existingCids()]);
+    const now = Number(blk.timestamp); clockSkew[k] = now - Math.floor(Date.now() / 1000); gasPrice[k] = gp;
+    plans[k] = await chainPlan({ k, pub, LP, names: NAMES, store32: deployed() ? store32() : null, existingCids: cids[k] || [], now }); delete chainErr[k];
+  } catch (e) { chainErr[k] = errText(e); }
+}
+async function refresh(what: 'all' | 'sol' | string = 'all') {
+  if (what === 'all') { await readFlag(); await findProgram(); }
+  if (what === 'all' || what === 'sol') await readSolana();
+  render();
+  if (what === 'all') await Promise.all(KEYS.map(k => readChain(k).then(render)));
+  else if (what !== 'sol') await readChain(what);
   render();
 }
-async function lz() { const m = await import('@layerzerolabs/lz-solana-sdk-v2'); return { ep: new m.EndpointProgram.Endpoint(O.LZ_ENDPOINT_ID), uln: new m.UlnProgram.Uln(ULN302), T: m.SetConfigType }; }
-async function initStore() {
-  const { ep } = await lz(); const admin = solWallet.pubkey!; const store = O.storePda(pid());
-  lg(`init_store: admin ${admin.toBase58()}, approver ${M.approver}, fee ${FEE_RECIPIENT} 50 bps, move fee 0.001 SOL`);
-  const sig = await sendSol([O.initStoreIx({ payer: admin, admin, localEid: SL.eid, approver: M.approver, feeRecipient: new PublicKey(FEE_RECIPIENT), feeBps: SL.feeBps ?? 50, moveFee: BigInt(SL.moveFeeLamports ?? 1_000_000),
-    registerAccounts: ep.getRegisterOappIxAccountMetaForCPI(admin, store) as any }, pid())], 400_000);
-  lg('  ✓ ' + sig);
+
+// ------------------------------------------------------------------ actions
+const solSigner = () => { if (!solWallet.pubkey || !solWallet.prov) throw new Error('Connect Phantom first (step 1).'); const p = solWallet.prov;
+  return { publicKey: solWallet.pubkey, signTransaction: (t: any) => p.signTransaction(t), signAllTransactions: async (ts: any[]) => (p.signAllTransactions ? p.signAllTransactions(ts) : Promise.all(ts.map(t => p.signTransaction(t)))) }; };
+async function doDeploy() {
+  const so = await soFile(); const w = solSigner();
+  if (solBal !== null && costs && solBal < costs.need && dst?.phase === 'new') throw new Error(`Your wallet has ${sol(solBal)} SOL; the deploy needs about ${sol(costs.need)} SOL while it runs.`);
+  const pid = await PD.deployProgram(solConn, so, w, lsKeys, SO.sha256, p => {
+    if (p.stage === 'approve-1') say('Approve 1 of 2 in your wallet: create the upload account.');
+    if (p.stage === 'upload') { up = { written: p.written || 0, total: p.total || 0 }; say('Uploading the program… keep this tab open.'); }
+    if (p.stage === 'approve-2') say('Approve 2 of 2 in your wallet: create the program.');
+  });
+  up = null; programId = pid; localStorage.setItem('msea-solprog-id', pid); say(`<span class="ok">Program deployed: <span class="mono">${esc(pid)}</span></span>`);
+  await refresh('all');
 }
-async function wireChain(k: string) {
-  const { ep, uln, T } = await lz(); const admin = solWallet.pubkey!; const store = O.storePda(pid()); const c = plan.chains[k]; const eid = c.eid;
-  const peer = O.evmTo32(c.predicted.omniEscrowV2);
-  lg(`${k}: set_peer -> ${c.predicted.omniEscrowV2}, LayerZero libraries, nonce, ULN config`);
-  lg('  ✓ ' + await sendSol([O.setPeerIx(admin, eid, peer, pid()), ep.initSendLibrary(admin, store, eid), ep.initReceiveLibrary(admin, store, eid), ep.initOAppNonce(admin, eid, store, peer), ep.initOAppConfig(admin, uln as any, admin, store, eid)], 400_000));
-  const dvns = SOL_DVNS.map(a => new PublicKey(a)).sort((a, b) => Buffer.compare(a.toBuffer(), b.toBuffer()));
-  const cfg = (conf: number) => ({ confirmations: conf, requiredDvnCount: 2, optionalDvnCount: 0, optionalDvnThreshold: 0, requiredDvns: dvns, optionalDvns: [] });
-  lg('  ✓ ' + await sendSol([await ep.setOappConfig(solConn as any, admin, store, ULN302, eid, { configType: T.SEND_ULN, value: cfg(32) } as any), await ep.setOappConfig(solConn as any, admin, store, ULN302, eid, { configType: T.RECEIVE_ULN, value: cfg(M.chains[k].confirmations) } as any)], 400_000));
+async function doCancel() { await PD.cancelUpload(solConn, solSigner(), lsKeys, SO.sha256); up = null; programId = ''; localStorage.removeItem('msea-solprog-id'); say('Upload cancelled; the deposit went back to your wallet.'); await refresh('sol'); }
+async function doSetup() {
+  const w = solSigner(); if (dst?.authority && dst.authority !== w.publicKey.toBase58()) throw new Error(`Connect the wallet that deployed the program (${short(dst.authority)}).`);
+  const { setupPlan, runSetup } = await SS(); const items = await setupPlan(solConn, setupCfg());
+  await runSetup(solConn, w, items, m => say(esc(m)));
+  say('<span class="ok">Program set up.</span>'); await refresh('sol'); await Promise.all(KEYS.map(k => readChain(k))); render();
 }
-async function wireMover(k: string) {
-  const { ep } = await lz(); const admin = solWallet.pubkey!; const store = O.storePda(pid()); const c = plan.chains[k];
-  if (!c.predicted.solanaMover || !c.predicted.v1Escrow) throw new Error('This plan has no mover (re-run lp-solana-plan.mjs).');
-  const mv = O.evmTo32(c.predicted.solanaMover), v1 = O.evmTo32(c.predicted.v1Escrow);
-  lg(`${k}: set_mover -> mover ${c.predicted.solanaMover}, existing V1 escrow ${c.predicted.v1Escrow}, LayerZero nonces`);
-  lg('  ✓ ' + await sendSol([O.setMoverIx(admin, c.eid, mv, v1, pid()), ep.initOAppNonce(admin, c.eid, store, mv), ep.initOAppNonce(admin, c.eid, store, v1)], 400_000));
+const isMcWallet = () => !!wallet.address && wallet.address.toLowerCase() === MC.toLowerCase();
+async function doStep(k: string) {
+  if (!wallet.address) { openConnect(); throw new Error('Connect your EVM wallet.'); }
+  if (!isMcWallet()) throw new Error(`These steps must be signed by ${short(MC, 6, 4)} (the owner wallet). Connected: ${short(wallet.address, 6, 4)}.`);
+  const p = plans[k]; if (!p || p.next < 0) return; const s = p.steps[p.next];
+  say(`${esc(NAMES[k])}: confirm step ${p.next + 1} of ${p.steps.length} in your wallet (${esc(s.title)}).`);
+  await ensureChain(k);
+  const wc = createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) });
+  const h = await wc.sendTransaction({ account: wallet.address as Hex, to: s.to as Hex, data: s.data as Hex, value: 0n } as any);
+  say(`${esc(NAMES[k])}: step ${p.next + 1} sent, waiting for the chain…`);
+  const rc = await readClient(k).waitForTransactionReceipt({ hash: h, timeout: 300_000 });
+  if (rc.status !== 'success') throw new Error(`${NAMES[k]} step ${p.next + 1} failed on-chain.`);
+  say(`<span class="ok">${esc(NAMES[k])}: step ${p.next + 1} done ✓</span>`); await readChain(k);
 }
-// existing collection form (Solana side of a live V1 drop)
-let xcid = ''; let xminted = 0; const xf: any = { name: '', collectionUri: '', baseUri: '', payout: '', royaltyBps: 500, maxSupply: 0, eids: '' };
-async function countCopies() { let n = 0; for (let i = 1; i <= Number(xf.maxSupply || 0); i += 100) { const ks = []; for (let j = i; j < i + 100 && j <= xf.maxSupply; j++) ks.push(O.assetPda(xcid, j, pid()));
-  n += (await solConn.getMultipleAccountsInfo(ks)).filter(Boolean).length; } return n; }
+async function doTurnOn() {
+  if (!wallet.address) { openConnect(); throw new Error('Connect your EVM wallet.'); }
+  if (!isMcWallet()) throw new Error(`Only ${short(MC, 6, 4)} can turn Solana on.`);
+  const message = `MultiSea: turn Solana on\nProgram: ${programId}\nIssued: ${new Date().toISOString()}`;
+  say('Sign the message in your wallet (free, no transaction).');
+  const wc = createWalletClient({ transport: custom(wallet.provider) });
+  const signature = await wc.signMessage({ account: wallet.address as Hex, message });
+  say('MultiSea is checking every contract on-chain…');
+  const r = await fetch(API + '/launchpad/solana/enable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `MultiSea answered ${r.status}`);
+  localStorage.setItem('msea-solana-v1', JSON.stringify({ programId }));
+  say('<span class="ok">Solana is on for creators and collectors.</span>'); await readFlag();
+}
+// ---- existing collections (live V1 drops) on Solana: register + create every id as a locked copy (from the previous page)
+let xcid = ''; let xminted = 0; let xreg = false; const xf: any = { name: '', collectionUri: '', baseUri: '', payout: '', royaltyBps: 500, maxSupply: 0, eids: '' };
+const pid = () => new PublicKey(programId);
+async function xRefresh() { if (!programId || !/^0x[0-9a-fA-F]{64}$/.test(xcid)) return; xreg = !!(await solConn.getAccountInfo(O.dropPda(xcid, pid()))); xminted = 0;
+  for (let i = 1; i <= Number(xf.maxSupply || 0); i += 100) { const ks = []; for (let j = i; j < i + 100 && j <= xf.maxSupply; j++) ks.push(O.assetPda(xcid, j, pid())); xminted += (await solConn.getMultipleAccountsInfo(ks)).filter(Boolean).length; } render(); }
 function xparams(): O.ExistingParams {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(xcid)) throw new Error('collection id must be the bytes32 cid of the live V1 drop');
+  if (!/^0x[0-9a-fA-F]{64}$/.test(xcid)) throw new Error('Collection id must be the bytes32 id of the live drop.');
   const eids = String(xf.eids).split(',').map((x: string) => +x.trim()).filter(Boolean); if (!eids.includes(SL.eid)) eids.push(SL.eid);
   return { name: xf.name, collectionUri: xf.collectionUri, baseUri: xf.baseUri, payout: new PublicKey(xf.payout), royaltyBps: +xf.royaltyBps, maxSupply: +xf.maxSupply, eids };
 }
-async function registerExisting() { const p = xparams(); lg(`register_existing ${xcid}: ${p.name}, ${p.maxSupply} ids, royalty ${p.royaltyBps} bps to ${p.payout.toBase58()}, eids ${p.eids.join(',')}`);
-  lg('  ✓ ' + await sendSol([O.registerExistingIx({ admin: solWallet.pubkey!, cid: xcid, params: p }, pid())], 400_000)); }
-async function existingCopies() { const max = +xf.maxSupply;
-  for (let s = 1; s <= max; s += O.MAX_COPIES_TX) { const q = Math.min(O.MAX_COPIES_TX, max - s + 1);
-    const have = (await solConn.getMultipleAccountsInfo(Array.from({ length: q }, (_, i) => O.assetPda(xcid, s + i, pid())))).every(Boolean); if (have) continue;
-    lg(`existing_copies #${s}-#${s + q - 1}`); lg('  ✓ ' + await sendSol([O.existingCopiesIx(solWallet.pubkey!, xcid, s, q, pid())], 1_400_000)); } }
-async function sendEvm(k: string, i: number) {
-  const t = plan.chains[k].txs[i]; if (!wallet.address) { openConnect(); throw new Error('Connect your EVM wallet.'); }
-  if (t.from.toLowerCase() !== wallet.address.toLowerCase()) throw new Error(`Step ${t.step} must be sent from ${t.from}.`);
-  await ensureChain(k); const wc = createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) });
-  const h = await wc.sendTransaction({ account: wallet.address as Hex, to: (t.to || undefined) as Hex | undefined, data: t.data as Hex, value: BigInt(t.value) } as any);
-  lg(`${k} step ${t.step}: ${h}`); const rc = await readClient(k).waitForTransactionReceipt({ hash: h, timeout: 300_000 });
-  if (rc.status !== 'success') throw new Error(`${k} step ${t.step} reverted.`); done[`evm:${k}:${i}`] = true; lg('  ✓ confirmed');
+async function xRegister() { const { sendSol } = await import('./solwallet'); await sendSol([O.registerExistingIx({ admin: solSigner().publicKey, cid: xcid, params: xparams() }, pid())], 400_000); say('<span class="ok">Registered on Solana.</span>'); await xRefresh(); }
+async function xCopies() { const { sendSol } = await import('./solwallet'); const max = +xf.maxSupply;
+  for (let st = 1; st <= max; st += O.MAX_COPIES_TX) { const q = Math.min(O.MAX_COPIES_TX, max - st + 1);
+    if ((await solConn.getMultipleAccountsInfo(Array.from({ length: q }, (_, i) => O.assetPda(xcid, st + i, pid())))).every(Boolean)) continue;
+    say(`Creating copies #${st}–#${st + q - 1}…`); await sendSol([O.existingCopiesIx(solSigner().publicKey, xcid, st, q, pid())], 1_400_000); }
+  say('<span class="ok">All copies created.</span>'); await xRefresh(); }
+function existingHtml() {
+  const xin = (k: string, label: string, ph = '') => `<label>${label}<input class="sdin" data-xf="${k}" value="${esc(String(xf[k] ?? ''))}" placeholder="${esc(ph)}"></label>`;
+  return `<details class="sddet sdx" data-det="x" ${openDet.has('x') ? 'open' : ''}><summary>Existing collections on Solana (optional)</summary><div class="sdpre">
+    <p>For a live multichain drop, after its chains show ✓. Registers the collection on the Solana program (no minting there) and creates every id as a locked copy (about 0.0032 SOL each, paid by the connected Solana wallet).</p>
+    <label>Collection id (bytes32)<input class="sdin" data-xcid value="${esc(xcid)}" placeholder="0x…"></label>${xin('name', 'Name')}${xin('collectionUri', 'Collection metadata URI', 'ipfs://…/collection.json')}${xin('baseUri', 'Base URI', 'ipfs://…/')}
+    ${xin('payout', 'Royalty payout (Solana address)')}${xin('royaltyBps', 'Royalty bps')}${xin('maxSupply', 'Max supply')}${xin('eids', 'EVM LayerZero ids of the drop (comma separated)', '30184,30101')}
+    <p>${xreg ? '<b class="ok">✓ registered</b>' : btn('xreg', 'Register', setupDone() && !!solWallet.pubkey, 'obtn')}
+     ${xreg ? `copies ${xminted}/${esc(String(xf.maxSupply))} ${xminted >= +xf.maxSupply ? '<b class="ok">✓</b>' : btn('xcopies', 'Create copies', true, 'obtn')}` : ''}</p></div></details>`;
 }
-const run = (key: string, f: () => Promise<void>) => { busy = key; render(); f().catch(e => lg('✗ ' + (e?.shortMessage || e?.message || e))).finally(() => { busy = ''; refresh(); }); };
+const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); f().catch(e => say(`<span class="err">${esc(errText(e))}</span>`)).finally(() => { busy = ''; render(); }); };
 
+// ------------------------------------------------------------------ render
+const det = (id: string, body: string) => `<details class="sddet" data-det="${id}" ${openDet.has(id) ? 'open' : ''}><summary>Details</summary><div class="sdpre">${body}</div></details>`;
+const btn = (act: string, label: string, on: boolean, cls = 'sdbig') => `<button class="${cls}" data-act="${act}" ${on && !busy ? '' : 'disabled'}>${busy === act ? '<span class="spin"></span> ' : ''}${label}</button>`;
+const hms = (s: number) => { s = Math.max(0, Math.floor(s)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const left = (k: string, readyAt: number) => readyAt - (Math.floor(Date.now() / 1000) + (clockSkew[k] || 0));
+const fmtNative = (wei: bigint, k: string) => { const v = Number(formatUnits(wei, 18)); return `${v < 0.0001 ? v.toPrecision(2) : v.toLocaleString(undefined, { maximumSignificantDigits: 3 })} ${esc(M.chains[k].native || 'ETH')}`; };
+const logo = (k: string) => `<img src="/logos/${esc(chainsCfg[k]?.logo || k)}.svg" alt="">`;
+
+function chainRow(k: string) {
+  const p = plans[k]; const name = esc(NAMES[k]);
+  if (!p) return `<div class="sdch"><div>${logo(k)}<b>${name}</b></div><div><div class="sdbar"><i style="width:0"></i></div><div class="lbl">${chainErr[k] ? `<span class="err">Could not read ${name}: ${esc(chainErr[k])}</span>` : '<span class="spin"></span> reading the chain…'}</div></div><button class="sdbig sm" disabled>Sign step 1</button></div>`;
+  const N = p.steps.length, pct = Math.round(p.doneCount / N * 100); const gas = gasPrice[k] !== undefined && p.remainingGas > 0n ? ` · about ${fmtNative(p.remainingGas * gasPrice[k]!, k)} in gas left` : '';
+  let lbl: string, b: string;
+  if (p.firstOpen === -1) { lbl = `<span class="ok">All ${N} steps done ✓</span>`; b = '<button class="sdbig sm" disabled>Done ✓</button>'; }
+  else if (p.next >= 0) { const s = p.steps[p.next]; const w = p.steps.find(x => !x.done && x.readyAt && left(k, x.readyAt) > 0);
+    lbl = `${p.doneCount ? `${p.doneCount} of ${N} done · ` : ''}Next: ${esc(s.title)}${w ? ` · 48-hour wait: <span class="sdcd" data-cd="${k}:${w.readyAt}">${hms(left(k, w.readyAt!))}</span> left` : ''}${gas}`; b = btn('step:' + k, `Sign step ${p.next + 1}`, true, 'sdbig sm'); }
+  else { const w = p.steps[p.firstOpen];
+    if (w.readyAt) { const t = left(k, w.readyAt); lbl = `${p.doneCount} of ${N} done · 48-hour safety wait on the old contracts: <span class="sdcd" data-cd="${k}:${w.readyAt}">${hms(t)}</span> left${gas}`; b = `<button class="sdbig sm" disabled>Sign step ${p.firstOpen + 1} in ${Math.ceil(t / 3600)} h</button>`; }
+    else { lbl = `${p.doneCount} of ${N} done · ${esc(w.blocked || 'waiting')}`; b = `<button class="sdbig sm" disabled>Sign step ${p.firstOpen + 1}</button>`; } }
+  return `<div class="sdch"><div>${logo(k)}<b>${name}</b></div><div><div class="sdbar"><i style="width:${pct}%"></i></div><div class="lbl">${lbl}</div></div>${b}</div>`;
+}
+function chainDetails() {
+  return KEYS.map(k => { const p = plans[k]; if (!p) return `<b>${esc(NAMES[k])}</b>: not read yet`;
+    const nx = p.next >= 0 ? p.steps[p.next] : null;
+    return `<b>${esc(NAMES[k])}</b>${gasPrice[k] !== undefined ? ` · gas price ${Number(formatUnits(gasPrice[k]!, 9)).toLocaleString(undefined, { maximumSignificantDigits: 3 })} gwei` : ''}${nx ? `<br>next: step ${p.next + 1}, ${esc(nx.detail)}<br>to <span class="mono">${esc(nx.to)}</span> · ${(nx.data.length - 2) / 2} bytes of data` : ''}
+      <ol>${p.steps.map(s => `<li class="${s.done ? 'ok' : ''}">${s.done ? '✓ ' : ''}${esc(s.title)}${!s.done && s.blocked ? ` <span class="mut">(${esc(s.blocked)})</span>` : ''}${!s.done && s.readyAt ? ` <span class="mut">(ready ${esc(new Date(s.readyAt * 1000).toLocaleString())})</span>` : ''}</li>`).join('')}</ol>`; }).join('') +
+    `<p>Each ✓ is an on-chain read: code at the contract's fixed (CREATE2) address, peers(), LayerZero getConfig, owner(), the timelock operation state. Gas figures = remaining gas units (measured on a mainnet fork) × the chain's current gas price.</p>`;
+}
 function render() {
-  const sw = solWallet.pubkey?.toBase58();
-  const evm = plan ? Object.entries(plan.chains).map(([k, c]: any) => `<div class="fcard"><div class="gh">${esc(chains[k]?.name || k)} <span class="mut small">EVM · ${c.txs.length} txs · V2 escrow ${esc(c.predicted.omniEscrowV2)}</span></div>
-     <ol class="small">${c.txs.map((t: any, i: number) => `<li>${esc(t.note)} ${done[`evm:${k}:${i}`] ? '<b class="ok">✓</b>' : `<button class="obtn sm" data-evm="${k}:${i}" ${busy ? 'disabled' : ''}>Send</button>`}</li>`).join('')}</ol></div>`).join('') : '';
-  const solRows = plan ? Object.keys(plan.chains).map(k => `<li>${esc(chains[k]?.name || k)} (eid ${plan.chains[k].eid}): peer + LayerZero config ${done['sol:' + k] ? '<b class="ok">✓ peer set</b>' : `<button class="obtn sm" data-sol="${k}" ${busy || !done.store ? 'disabled' : ''}>Sign</button>`}
-     · existing collections mover ${done['mover:' + k] ? '<b class="ok">✓</b>' : `<button class="obtn sm" data-mover="${k}" ${busy || !done['sol:' + k] ? 'disabled' : ''}>Sign</button>`}</li>`).join('') : '<li class="mut">Load the plan first.</li>';
-  const xin = (k: string, label: string, ph = '') => `<label>${label}<input data-xf="${k}" value="${esc(String(xf[k] ?? ''))}" placeholder="${esc(ph)}"></label>`;
-  const xcard = `<div class="fcard small"><div class="gh">5 · Existing collection (live V1 drop)</div>
-    <p>After the chain's mover is set (above) and its V1 escrow Solana peer step (plan) is sent. Registers the collection on Solana (no minting there) and creates every id as a locked copy (~0.0032 SOL each, from this wallet).</p>
-    <label>Collection id (bytes32)<input data-xcid value="${esc(xcid)}" placeholder="0x…"></label>${xin('name', 'Name')}${xin('collectionUri', 'Collection metadata URI', 'ipfs://…/collection.json')}${xin('baseUri', 'Base URI', 'ipfs://…/')}
-    ${xin('payout', 'Royalty payout (Solana address)')}${xin('royaltyBps', 'Royalty bps')}${xin('maxSupply', 'Max supply')}${xin('eids', 'EVM eids of the drop (comma)', '30184,30101')}
-    <p>${done.xreg ? '<b class="ok">✓ registered</b>' : `<button class="obtn sm" data-act="xreg" ${busy || !done.store || !sw ? 'disabled' : ''}>Register</button>`}
-     ${done.xreg ? `copies ${xminted}/${esc(String(xf.maxSupply))} ${xminted >= +xf.maxSupply ? '<b class="ok">✓</b>' : `<button class="obtn sm" data-act="xcopies" ${busy ? 'disabled' : ''}>Create copies</button>`}` : ''}</p></div>`;
-  app.innerHTML = `${navHtml('admin')}<section class="page"><h2>Deploy Solana (new multichain drops)</h2>
-   <p class="mut">You sign everything with your own wallets. Live drops are not touched: only drops created after <span class="mono">factory.setOmni</span> use the V2 escrows. The new contracts stay owned by your wallet (no timelock); the live factory and V1 escrow need one 48 h timelock wait (plan step 1, see <span class="mono">--timelock-exit</span>). Solana stays hidden on the site until the program id is put in <span class="mono">config/launchpad.json</span> at the very end.</p>
-   <div class="fcard"><div class="gh">1 · Program</div><p class="small">Deploy with <span class="mono">solana/deploy/deploy-program.sh</span> (your keypair; ~0.49 SOL rent, ~1.03 SOL needed during the deploy), then paste the program id.</p>
-    <label>Program id<input data-pid value="${esc(programId)}" placeholder="from deploy-program.sh"></label><p class="mut small">RPC ${esc(SOL_RPC)}</p></div>
-   <div class="fcard"><div class="gh">2 · EVM plan</div><p class="small">Run <span class="mono">node scripts/lp-solana-plan.mjs --i-will-sign-myself --deployer ${esc(M.approver)} --solana-program ${esc(programId || '&lt;id&gt;')}</span> and load the JSON.</p>
-    <input type="file" accept=".json,application/json" data-plan>${plan ? `<p class="small ok">Plan loaded: ${Object.keys(plan.chains).length} chains, Store PDA ${esc(plan.solanaStore)}${plan.solanaProgram !== programId ? ' <b class="err">(plan was made for a different program id)</b>' : ''}</p>` : ''}
-    <p class="small">EVM wallet: ${wallet.address ? `<span class="mono">${esc(wallet.address)}</span>` : '<button class="bbtn sm" data-act="connect">Connect</button>'}</p></div>
-   ${evm}
-   <div class="fcard"><div class="gh">3 · Solana</div><p class="small">Solana wallet (becomes the program admin and LayerZero delegate): ${sw ? `<span class="mono">${esc(sw)}</span>` : '<button class="obtn sm" data-solw="phantom">Phantom</button> <button class="obtn sm" data-solw="solflare">Solflare</button>'}</p>
-    <ol class="small"><li>init_store: fee recipient <span class="mono">${esc(FEE_RECIPIENT)}</span>, 0.5%, approver <span class="mono">${esc(M.approver)}</span> ${done.store ? '<b class="ok">✓ done</b>' : `<button class="obtn sm" data-act="store" ${busy || !sw || !programId ? 'disabled' : ''}>Sign</button>`}</li>${solRows}</ol></div>
-   <div class="fcard small"><div class="gh">4 · Go live</div><ol><li>48 h after each chain's step 1 (timelock exit), send its executeBatch step and the remaining steps above (acceptOwnership, V1 escrow Solana peer, setOmni).</li><li>Tell MultiSea the program id and the V2 escrows: they go into <span class="mono">config/launchpad.json</span> (solana.programId, omniEscrows) and the Worker; that publishes the Solana option.</li></ol></div>
-   ${xcard}
-   ${log ? `<pre class="small">${esc(log)}</pre>` : ''}</section>`;
+  const sw = solWallet.pubkey?.toBase58(); const N = KEYS.length;
+  const chainsDone = KEYS.filter(chainDone).length; const chainFrac = KEYS.reduce((s, k) => s + (plans[k] ? plans[k]!.doneCount / plans[k]!.steps.length : 0), 0) / N;
+  const setupFrac = setup ? setup.filter(i => i.done).length / setup.length : deployed() ? 0 : 0;
+  const s1 = !!sw || deployed(), s2 = deployed(), s3 = setupDone(), s4 = chainsDone === N, s5 = isOn();
+  const pct = Math.round(((s1 ? 1 : 0) + (s2 ? 1 : (dst && dst.total ? (up ? up.written : dst.written) / dst.total * 0.9 : 0)) + (s3 ? 1 : setupFrac) + chainFrac + (s5 ? 1 : 0)) / 5 * 100);
+  const nowStep = !s1 ? 0 : !s2 ? 1 : !s3 ? 2 : !s4 ? 3 : !s5 ? 4 : -1;
+  const wrongSol = s2 && sw && dst?.authority && dst.authority !== sw;
+  const steps = [
+    { t: 'Connect Phantom', done: !!sw, p: 'Your Solana wallet. It pays the Solana costs and becomes the owner of the MultiSea Solana program.',
+      body: sw ? `<div class="sdst"><span class="okc">✓ Connected</span> <span class="mono">${esc(short(sw))}</span>${solBal !== null ? ` · ${sol(solBal)} SOL` : ''}${wrongSol ? ` · <span class="err">the program belongs to <span class="mono">${esc(short(dst!.authority!))}</span>: connect that wallet</span>` : ''}</div>`
+        : `${btn('solw:phantom', 'Connect Phantom', true)} ${btn('solw:solflare', 'Solflare', true, 'obtn')}`,
+      d: 'The wallet becomes the program\'s upgrade authority, its MultiSea admin and its LayerZero delegate.' },
+    { t: 'Deploy the Solana program', done: s2, cost: costs ? `≈ ${sol(costs.need)} SOL needed · ≈ ${sol(costs.locked)} SOL stays locked` : '',
+      p: `One button. Your wallet asks you to approve 2 times; the upload in between runs by itself (${dst ? dst.total : '~100'} small transactions, keep this tab open). The upload deposit comes back automatically at the end.`,
+      body: s2 ? `<div class="sdst"><span class="okc">✓ Deployed</span> program <span class="mono">${esc(programId)}</span> · ${costs ? sol(costs.locked) : ''} SOL locked (refundable if ever closed)</div>`
+        : `${btn('deploy', dst && dst.phase !== 'new' ? 'Resume deploy' : 'Deploy program', !!sw && !!dst)}${dst && dst.phase !== 'new' ? ` ${btn('cancel', 'Cancel and refund', !!sw, 'obtn')}` : ''}
+          ${up || (dst && dst.phase !== 'new') ? `<div class="sdbar wide"><i style="width:${Math.round(((up?.written ?? dst!.written) / (up?.total || dst!.total || 1)) * 100)}%"></i></div><div class="sdst mut">Uploaded ${up?.written ?? dst!.written} of ${up?.total ?? dst!.total} parts</div>` : ''}
+          ${!sw ? '<div class="sdst mut">Connect Phantom first.</div>' : ''}`,
+      d: `Program file <span class="mono">multisea_omni.so</span> · ${SO.size.toLocaleString()} bytes · sha256 <span class="mono">${SO.sha256}</span>
+        <br>Approval 1: create a temporary upload account${costs ? ` (${sol(costs.buffer)} SOL deposit)` : ''} + fund a throwaway upload key (${sol(PD.UPLOAD_FUND)} SOL for the upload fees). The throwaway keys stay in this browser so an interrupted upload resumes; they control nothing after the deploy.
+        <br>Upload: ${dst ? dst.total : '~100'} transactions of ${PD.CHUNK} bytes signed by the throwaway key in this tab (no wallet prompts), 4 at a time.
+        <br>Approval 2: create the program from the upload (upgrade authority = your wallet); the upload account is closed, its deposit refunded, and the throwaway key returns what is left.
+        <br>RPC <span class="mono">${esc(SOL_RPC)}</span>
+        <br><br>Prefer the terminal? Same result with your keypair file (the script builds the program from source):<br><span class="mono">git clone https://github.com/mcontwitter-glitch/OverSea && OverSea/solana/deploy/deploy-program.sh --keypair &lt;your-wallet.json&gt; --go</span>
+        <br>Already deployed elsewhere? Program id: <input class="sdin" data-pid value="${esc(programId)}" placeholder="program id">` },
+    { t: 'Set up the program', done: s3, cost: setup && !s3 ? `${setup.filter(i => !i.done).length} transactions · one approval` : '',
+      p: `Saves the MultiSea settings (${(SL.feeBps ?? 50) / 100}% fee to ${esc(short(SL.feeRecipient))}, the MultiSea approver) and links the program to the ${N} chains. One "Approve all" in your wallet.`,
+      body: s3 ? `<div class="sdst"><span class="okc">✓ Done</span> settings saved · ${N} of ${N} chains linked</div>` : `${btn('setup', 'Set up program', s2 && !!sw && !wrongSol)}${!s2 ? '<div class="sdst mut">After step 2.</div>' : ''}`,
+      d: setup ? `<ol>${setup.map(i => `<li class="${i.done ? 'ok' : ''}">${i.done ? '✓ ' : ''}${esc(i.label)}</li>`).join('')}</ol>` : `init_store (fee recipient ${esc(SL.feeRecipient)}, ${SL.feeBps ?? 50} bps, move fee ${(SL.moveFeeLamports ?? 1_000_000) / 1e9} SOL); per chain: set_peer + LayerZero libraries, nonce and config (2-of-2 DVNs), set_mover (existing collections).` },
+    { t: 'Connect your EVM wallet and sign each chain', done: s4, cost: `${N} chains`,
+      p: 'Each chain has one button that always knows the next step. Start every chain today: step 1 starts a 48-hour safety wait on the old contracts, and the rest can be signed while it runs. You can stop and come back anytime; the page reads the chain to see where you are.',
+      body: `${wallet.address ? `<div class="sdst"><span class="okc">✓ Connected</span> <span class="mono">${esc(short(wallet.address, 6, 5))}</span>${isMcWallet() ? '' : ` · <span class="err">sign with ${esc(short(MC, 6, 5))}</span>`}</div>` : btn('connect', 'Connect EVM wallet', true)}<div class="sdchains">${KEYS.map(chainRow).join('')}</div>`,
+      d: chainDetails() },
+    { t: 'Turn Solana on', done: s5,
+      p: 'When every step shows ✓, this button shows Solana to creators and collectors on multisea.io. Until then Solana stays visible but greyed out.',
+      body: s5 ? `<div class="sdst"><span class="okc">✓ Solana is on</span>${flag?.enabledAt ? ` since ${esc(new Date(flag.enabledAt).toLocaleString())}` : ''}</div>`
+        : `${btn('on', 'Turn Solana on', s2 && s3 && s4)}${!(s2 && s3 && s4) ? `<div class="sdst mut">Waiting for: ${[!s2 && 'the program (step 2)', s2 && !s3 && 'program setup (step 3)', ...KEYS.filter(k => !chainDone(k)).map(k => NAMES[k] + (plans[k]?.steps.some(s => !s.done && s.readyAt) ? ' (48 h wait)' : ''))].filter(Boolean).join(', ')}</div>` : ''}`,
+      d: 'Signs a short message with your EVM wallet (no gas). The MultiSea server checks the program, its settings and links, and every chain\'s escrow, factory and Solana link on-chain, then switches Solana on for the site and the minting server.' },
+  ];
+  app.innerHTML = `${navHtml('admin')}<section class="page sdp"><h1>Turn on Solana</h1>
+   <p class="sdlead">5 steps. You sign everything with your own wallets; MultiSea never holds a key. Each step shows ✓ when it is done, and the page picks up where you left off.</p>
+   <div class="sdprog"><i style="width:${pct}%"></i></div>
+   ${msg ? `<div class="sdmsg">${msg}</div>` : ''}
+   ${steps.map((s, i) => `<div class="sdstep ${s.done ? 'done' : i === nowStep ? 'now' : ''}"><div class="sdnum">${s.done ? '✓' : i + 1}</div><div class="sdbody"><h3>${s.t}${s.cost ? `<span class="sdcost">${s.cost}</span>` : ''}</h3><p>${s.p}</p>${s.body}${det('s' + i, s.d)}</div></div>`).join('')}
+   ${existingHtml()}
+  </section>`;
   bindNav();
 }
-app.addEventListener('click', e => { const t = e.target as HTMLElement; const b = t.closest('[data-act],[data-evm],[data-sol],[data-solw],[data-mover]') as HTMLElement | null; if (!b) return;
-  if (b.dataset.act === 'connect') openConnect();
-  if (b.dataset.solw) import('./solwallet').then(m => m.connectSol(b.dataset.solw!)).then(() => refresh()).catch(x => lg('✗ ' + (x?.message || x)));
-  if (b.dataset.act === 'store') run('store', initStore);
-  if (b.dataset.sol) run('sol', () => wireChain(b.dataset.sol!));
-  if (b.dataset.mover) run('mover', () => wireMover(b.dataset.mover!));
-  if (b.dataset.act === 'xreg') run('xreg', registerExisting);
-  if (b.dataset.act === 'xcopies') run('xcopies', existingCopies);
-  if (b.dataset.evm) { const [k, i] = b.dataset.evm.split(':'); run('evm', () => sendEvm(k, +i)); } });
+setInterval(() => { document.querySelectorAll<HTMLElement>('[data-cd]').forEach(el => { const [k, t] = el.dataset.cd!.split(':'); const s = left(k, +t); el.textContent = hms(s); if (s <= 0) readChain(k).then(render); }); }, 1000);
+app.addEventListener('toggle', e => { const d = e.target as HTMLElement; if (d.dataset?.det) (d as HTMLDetailsElement).open ? openDet.add(d.dataset.det) : openDet.delete(d.dataset.det); }, true);
+app.addEventListener('click', e => { const b = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null; if (!b || (b as HTMLButtonElement).disabled) return; const a = b.dataset.act!;
+  if (a === 'connect') return openConnect();
+  if (a.startsWith('solw:')) return run(a, () => connectSol(a.slice(5)).then(() => refresh('sol')));
+  if (a === 'deploy') return run(a, doDeploy);
+  if (a === 'cancel') return run(a, doCancel);
+  if (a === 'setup') return run(a, doSetup);
+  if (a.startsWith('step:')) return run(a, () => doStep(a.slice(5)));
+  if (a === 'on') return run(a, doTurnOn);
+  if (a === 'xreg') return run(a, xRegister);
+  if (a === 'xcopies') return run(a, xCopies); });
 app.addEventListener('change', e => { const t = e.target as HTMLInputElement;
-  if (t.dataset.xf) { xf[t.dataset.xf] = t.value.trim(); return; }
-  if (t.dataset.xcid !== undefined) { xcid = t.value.trim(); refresh(); return; }
-  if (t.dataset.pid !== undefined) { try { new PublicKey(t.value.trim()); programId = t.value.trim(); refresh(); } catch { lg('✗ not a Solana program id'); } }
-  if (t.dataset.plan !== undefined && t.files?.[0]) t.files[0].text().then(x => { plan = JSON.parse(x); refresh(); }).catch(er => lg('✗ plan: ' + er.message)); });
-onWallet(render); render(); refresh();
+  if (t.dataset.xf) { xf[t.dataset.xf] = t.value.trim(); if (t.dataset.xf === 'maxSupply') xRefresh(); return; }
+  if (t.dataset.xcid !== undefined) { xcid = t.value.trim(); xRefresh(); return; }
+  if (t.dataset.pid !== undefined) { const v = t.value.trim(); try { if (v) new PublicKey(v); programId = v; v ? localStorage.setItem('msea-solprog-id', v) : localStorage.removeItem('msea-solprog-id'); refresh('all'); } catch { say('<span class="err">That is not a Solana program id.</span>'); } } });
+onWallet(render); onSolWallet(() => refresh('sol'));
+render(); refresh('all');

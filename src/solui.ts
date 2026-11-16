@@ -1,7 +1,7 @@
 // Solana for launchpad multichain drops: deploy (create_drop with MultiSea's approval), mint (REQUEST to the Base hub),
 import './btc/polyfill';
-// and bridge to / from Solana. Everything here is HIDDEN until the mainnet program exists: SOLANA_ON needs
-// config/launchpad.json solana.programId (or VITE_SOLANA_OMNI_ID for a local / devnet build).
+// and bridge to / from Solana. Everything here stays disabled until Solana is switched on (src/solflag.ts: the Worker's
+// verified "Turn Solana on", or VITE_SOLANA_OMNI_ID for a local / devnet build).
 import { PublicKey } from '@solana/web3.js';
 import { keccak256, encodeAbiParameters, parseAbi, createPublicClient, http, type Address } from 'viem';
 import CFG from '../config/collections.json';
@@ -26,7 +26,8 @@ export const lamportsOfUsd = (usd: string, solUsd: number | null | undefined) =>
 export const fmtSol = (lamports: string | bigint) => (Number(BigInt(lamports || 0)) / 1e9).toLocaleString(undefined, { maximumFractionDigits: 6 });
 const pubEvm = (k: string) => createPublicClient({ transport: http(chains[k].rpc) });
 const lzEid = (k: string) => (LP as any).eids[k] as number;
-const escrowOn = (k: string) => (LP as any).omniEscrows[k] as Address;
+// Solana drops are V2 drops: their escrow on every EVM chain is the V2 escrow (config/launchpad.json solana.v2, CREATE2).
+const escrowOn = (k: string) => (LP as any).solana.v2.escrows[k] as Address;
 const hub = () => (LP as any).hubChain as string;
 
 async function sendAccounts(payer: PublicKey, dstEid: number, receiver: string) {

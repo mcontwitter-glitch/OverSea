@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, custom, http, parseAbi, formatE
 import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 import { chainPicker } from './chainpick';
-import { SOLANA_ON, SOL_SOON } from './solflag';
+import { SOLANA_ON, SOL_SOON, onSolanaFlag } from './solflag';
 export type BCfg = { network: string; mode: string; feeWallet: string; supportedChains: number; lzGas: number; tiers?: { min: number; max: number; eth: string; label?: string }[];
   chains: Record<string, { name: string; chainId: number; eid: number; rpc: string; explorer: string; factory: string | null; logo: string; native?: string; lzScan?: string }>;
   collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number>; kind?: 'omni'; cid?: `0x${string}`; supply?: number }[] };
@@ -150,5 +150,6 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (a.dataset.act === 'bridge') doBridge(); };
   el.oninput = e => e.stopPropagation();
   onWallet(() => { if (el.isConnected) { loadIds(); quote(); } });
+  onSolanaFlag(() => { if (el.isConnected) draw(); });
   draw(); loadIds(); quote();
 }

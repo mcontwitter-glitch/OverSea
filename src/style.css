@@ -715,3 +715,27 @@ body:has(.gate[data-gate=open] .holderchat){overflow:hidden}.gate[data-gate=open
 /* Solana shown but disabled until the program id is set */
 .solsoon{opacity:.55;cursor:not-allowed}
 img.cl.solsoon{filter:grayscale(.4)}
+/* /deploy-solana ("Turn on Solana", src/soldeploy.ts) */
+.sdp{max-width:780px;margin:0 auto}.sdp h1{font-size:26px;margin:8px 0 6px}.sdlead{color:#9aa;margin:0 0 16px;font-size:14px;line-height:1.5}
+.sdprog{height:8px;background:#1b1f26;border-radius:9px;overflow:hidden;margin:6px 0 18px}.sdprog i{display:block;height:100%;background:linear-gradient(90deg,#45bdfa,#3fd68f);transition:width .4s}
+.sdmsg{background:#0f1620;border:1px solid #1d2b3a;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:13.5px;word-break:break-word}
+.sdstep{display:grid;grid-template-columns:44px 1fr;gap:14px;background:#141414;border:1px solid #222;border-radius:16px;padding:18px;margin-bottom:12px}
+.sdstep.done{border-color:#1f5e43}.sdstep.now{border-color:#45bdfa;box-shadow:0 0 22px #45bdfa22}
+.sdnum{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;background:#1d2530;color:#9fd8ff}
+.sdstep.done .sdnum{background:#17402f;color:#3fd68f}
+.sdbody{min-width:0}.sdbody h3{margin:0 0 4px;font-size:17px}.sdbody>p{margin:0 0 10px;color:#9aa;font-size:13.5px;line-height:1.45}
+.sdbig{display:inline-block;background:#45bdfa;color:#001421;border:0;border-radius:12px;padding:13px 26px;font-weight:800;font-size:15px;cursor:pointer}
+.sdbig:disabled{background:#1f2a35;color:#6f8597;cursor:default}.sdbig.sm{padding:9px 16px;font-size:13.5px;white-space:nowrap}
+.sdst{display:block;font-size:13px;margin-top:8px;word-break:break-word}.okc{color:#3fd68f;font-weight:700}
+.sddet{margin-top:10px;font-size:12px}.sddet summary{color:#45bdfa;cursor:pointer}
+.sdpre{background:#0b0e12;border:1px solid #1d2733;border-radius:10px;padding:10px;color:#9fb4c6;font-size:11.5px;line-height:1.55;margin:8px 0 0;word-break:break-word}
+.sdpre ol{margin:4px 0 8px;padding-left:20px}.sdpre li.ok{color:#3fd68f}.sdpre label{display:block;margin:6px 0}
+.sdin{display:block;width:100%;box-sizing:border-box;background:#0f1216;border:1px solid #2a3440;border-radius:8px;color:#dfe8ef;padding:7px 9px;font:12px ui-monospace,Menlo,monospace;margin-top:3px}
+.sdchains{display:grid;gap:8px;margin-top:12px}
+.sdch{display:grid;grid-template-columns:140px 1fr auto;align-items:center;gap:12px;background:#0f1216;border:1px solid #1d232b;border-radius:12px;padding:10px 12px}
+.sdch img{width:20px;height:20px;vertical-align:-5px;margin-right:6px}.sdch .lbl{font-size:12px;color:#9aa;margin-top:4px}
+.sdbar{height:6px;background:#1b1f26;border-radius:6px;overflow:hidden}.sdbar i{display:block;height:100%;background:#45bdfa;transition:width .3s}.sdbar.wide{margin-top:12px;max-width:420px}
+.sdcd{font-variant-numeric:tabular-nums;color:#ffcf5c;font-weight:700}
+.sdcost{display:inline-block;font-size:12px;background:#1a2230;color:#cfe9ff;border-radius:999px;padding:3px 10px;margin-left:6px;font-weight:600;vertical-align:2px}
+.sdx{margin:6px 0 30px;font-size:13px}
+@media (max-width:640px){.sdch{grid-template-columns:1fr}.sdstep{grid-template-columns:32px 1fr;padding:14px}.sdnum{width:30px;height:30px;font-size:14px}}

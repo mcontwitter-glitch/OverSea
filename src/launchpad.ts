@@ -7,7 +7,7 @@ import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wal
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
 import { LP_LIVE, factoryOn } from './lpchain';
-import { SOLANA_ON, SOL_SOON, solSoonChip } from './solflag';
+import { SOLANA_ON, SOL_SOON, solSoonChip, onSolanaFlag } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
@@ -589,7 +589,7 @@ async function loadOnchain() {
 async function refreshRemote() { if (!apiFeatures.includes('launchpad')) return; try { const j = await fetch(API + '/launchpad/drops').then(r => r.json()); remote = (j.drops || []).map(fromApi); render(); } catch {} }
 if (path === '/launchpad/create') import('./launchcreate');
 else {
-  bindNav(); render(); setInterval(tick, 1000); onWallet(render); checkApi().then(refreshRemote).then(loadMine).then(render).then(loadOnchain); setInterval(() => { if (!document.hidden) loadOnchain().catch(() => {}); }, 20000); onWallet(() => loadMine().then(render));
+  bindNav(); render(); setInterval(tick, 1000); onWallet(render); onSolanaFlag(render); checkApi().then(refreshRemote).then(loadMine).then(render).then(loadOnchain); setInterval(() => { if (!document.hidden) loadOnchain().catch(() => {}); }, 20000); onWallet(() => loadMine().then(render));
   usdRates().then(r => { rates = r; render(); });
   const d = slug ? findDrop(slug) : null; if (d) loadGas(d).then(render);
 }

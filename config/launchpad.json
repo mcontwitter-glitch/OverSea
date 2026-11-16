@@ -113,7 +113,7 @@
     "shareBufferBps": 2000
   },
   "mainnet": {
-    "_note": "MAINNET deployment (live). Factory owner = deployer 0xb19f\u202696b1 until step 24 (timelock acceptOwnership, 48 h delay) runs on each chain; pendingOwner = that chain's timelock. Drop approvals are EIP-712 signatures from `approver` (no transaction).",
+    "_note": "MAINNET deployment (live). Factory owner = deployer 0xb19f…96b1 until step 24 (timelock acceptOwnership, 48 h delay) runs on each chain; pendingOwner = that chain's timelock. Drop approvals are EIP-712 signatures from `approver` (no transaction).",
     "approver": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockProposer": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockExecutor": "0xb19f00e095b1387061d73751c772bba848d196b1",
@@ -237,7 +237,7 @@
     }
   },
   "solana": {
-    "_note": "Solana (MultiSea omni program, multichain drops only, last chain). programId stays null until MC deploys the mainnet program and wires it up (/deploy-solana); while null the Solana option is hidden and the Worker refuses Solana drops.",
+    "_note": "Solana (MultiSea omni program, multichain drops only, last chain). programId stays null here: Solana is switched on at RUNTIME when MC signs \"Turn Solana on\" on /deploy-solana and the Worker verifies the program + every chain on-chain (KV lp:solana). Until then Solana is shown greyed out and the Worker refuses Solana drops. v2 = the CREATE2 addresses of the new contracts (scripts/gen-sol-artifacts.mjs).",
     "programId": null,
     "eid": 30168,
     "feeRecipient": "85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS",
@@ -245,6 +245,33 @@
     "moveFeeLamports": 1000000,
     "rpc": "https://api.mainnet-beta.solana.com",
     "sendLib": "7a4WjyR8VZ7yZz5XJAKm39BUGn5iT9CKcv2pmG9tdXVH",
-    "maxLzFeeLamports": 50000000
+    "maxLzFeeLamports": 50000000,
+    "v2": {
+      "deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+      "salt": "0x54a53c6e67f7c8ba2da6704cf947232f1c704f6594cc07aba8b38602b42f0b4c",
+      "owner": "0xb19F00e095B1387061d73751C772bbA848D196b1",
+      "escrows": {
+        "base": "0xc1ad3776d1D5B30CAd8261A21195AE032620b456",
+        "ethereum": "0xc1ad3776d1D5B30CAd8261A21195AE032620b456",
+        "apechain": "0xD99ab83c1547e1b941cdD8eD663A3F2997737Cba",
+        "bnb": "0xF40B1D60Bd1904Dd78c0cFCf08BAEA5a2A9Ef9FA",
+        "robinhood": "0xFc3604fd8fD65b838d6ED01A50B067805A217464"
+      },
+      "dropImpls": {
+        "base": "0xfc9Fe5a893Fd83a26519D2b9Cc7842efa05142f6",
+        "ethereum": "0xfc9Fe5a893Fd83a26519D2b9Cc7842efa05142f6",
+        "apechain": "0xfc9Fe5a893Fd83a26519D2b9Cc7842efa05142f6",
+        "bnb": "0xfc9Fe5a893Fd83a26519D2b9Cc7842efa05142f6",
+        "robinhood": "0xfc9Fe5a893Fd83a26519D2b9Cc7842efa05142f6"
+      },
+      "movers": {
+        "base": "0xf37dddc094A6f46E05d7197345C732B34c3280d3",
+        "ethereum": "0x3899c830105f95058697Bf679Ab12dA46BA41f5d",
+        "apechain": "0x0df4E69E7B6c3cfA0e2862c4236d29A86BEedf3b",
+        "bnb": "0x0a02e684596A7Cd9CF1Ab7Dc4EE6f7F7d137a7F6",
+        "robinhood": "0x9054ad054e03c1AC8B5cc900568Ac1473d5aAed5"
+      }
+    },
+    "switchSigner": "0xb19F00e095B1387061d73751C772bbA848D196b1"
   }
 }

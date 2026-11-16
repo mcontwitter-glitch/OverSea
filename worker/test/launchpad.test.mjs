@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { verifyTypedData, keccak256, concat, decodeAbiParameters } from 'viem';
-import { makeLaunchpad, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES, agentKit, KIT_T, GROWTH_T } from '../src/launchpad.js';
+import { makeLaunchpad, solSwitchMessage, configHash, omniConfigHash, collectionIdOf, merkle, proofFor, leafOf, APPROVAL_TYPES, OMNI_APPROVAL_TYPES, agentConfigHash, AGENT_APPROVAL_TYPES, agentKit, KIT_T, GROWTH_T } from '../src/launchpad.js';
 const CFG = JSON.parse(fs.readFileSync(new URL('../../config/collections.json', import.meta.url)));
 const LP0 = JSON.parse(fs.readFileSync(new URL('../../config/launchpad.json', import.meta.url)));
 const lc = s => String(s || '').toLowerCase();
@@ -19,7 +19,7 @@ function setup(over = {}) {
   const LP = { ...LP0, factories: { ...LP0.factories, base: FACTORY, bnb: FACTORY }, omniEscrows: { ...LP0.omniEscrows, base: ESC, bnb: ESC }, ...over.LP };
   const env = { COLLECTIONS: kv(), ADMIN_ADDRESSES: ADMIN, ...over.env };
   let who = lc(creator.address);
-  const L = makeLaunchpad({ LP, chains: CFG.chains, lc, bad, ADDR, admins: e => [ADMIN], requireSession: async () => ({ address: who }), isDropOnChain: async (k, f, a) => over.isDrop ?? true, now: () => 1_800_000_000_000 });
+  const L = makeLaunchpad({ LP, chains: CFG.chains, lc, bad, ADDR, admins: e => [ADMIN], requireSession: async () => ({ address: who }), isDropOnChain: async (k, f, a) => over.isDrop ?? true, verifySolana: over.verifySolana, now: () => 1_800_000_000_000 });
   const call = (M, path, b) => L.handle({ json: async () => b ?? {} }, env, null, path.split('/').filter(Boolean), M, async () => b);
   return { env, call, as: a => { who = lc(a); } };
 }
@@ -125,7 +125,7 @@ test('multichain drop: validation, shared supply via the Base hub, omni approval
   await call('POST', '/launchpad/deployed/omni-foots', { chain: 'base', address: '0x' + '44'.repeat(20) });
   await call('POST', '/launchpad/deployed/omni-foots', { chain: 'bnb', address: '0x' + '44'.repeat(20) });
   const col = await env.COLLECTIONS.get('col:omni-foots', 'json');
-  assert.equal(col.deployments.length, 2); assert.deepEqual(col.escrow.map(e => e.chain), ['base', 'bnb']); assert.equal(col.escrow[0].address, ESC);
+  assert.equal(col.deployments.length, 2); assert.deepEqual(col.escrow.map(e => e.chain), ['base', 'base', 'bnb', 'bnb'], 'V1 + V2 escrow per chain'); assert.equal(col.escrow[0].address, ESC);
 });
 
 
@@ -356,4 +356,50 @@ test('agent drop: Infect off leaves zero limits in the signed AgentInit', async 
   as(creator.address); env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
   const a = await call('POST', '/launchpad/approval/agents-one', { chain: 'base' });
   assert.equal(a.params.infect, false); assert.equal(a.params.infectLimits.skillBps, 0); assert.equal(String(a.params.infectLimits.maxPrice), '0');
+});
+
+test('Solana switch: off until MC signs "turn Solana on" AND the on-chain check passes; then on for submit + approvals', async () => {
+  const SOLC = '85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS', PID = 'AHAsUmr3inyXdQZCrPjGcCshUE1xYTMgRg62q6fvf1tG';
+  const mc = privateKeyToAccount(generatePrivateKey()); const rando = privateKeyToAccount(generatePrivateKey());
+  let ready = { ok: false, problems: ['base: escrow not linked to this Solana program'] }; const checked = [];
+  const { call, env, as } = setup({ LP: { solana: { ...LP0.solana, programId: null, switchSigner: mc.address } }, verifySolana: async pid => { checked.push(pid); return { ...ready, store: 'CHwuUxTTekChVii58cNEvpfkCSbXoyWUYsafJ4EArACa' }; } });
+  const md = o => drop({ slug: 'sol-on', mode: 'multichain', chains: ['base', 'bnb'], maxSupply: 4404, creatorReserve: 0, solana: true, solanaCreator: SOLC,
+    phases: [{ name: 'Public', kind: 'public', start: 1800000000, end: 0, price: '3000000000000000', prices: { bnb: '1', solana: '50000000' }, maxPerWallet: 5 }], ...o });
+  assert.deepEqual(await call('GET', '/launchpad/solana'), { on: false, programId: null, store: null, escrows: null, enabledAt: null, signer: mc.address });
+  await assert.rejects(call('POST', '/launchpad/submit', md()), /Solana is not available yet/);
+  const iso = ms => new Date(ms).toISOString(); const NOW = 1_800_000_000_000;
+  const msg = solSwitchMessage(PID, iso(NOW - 60_000));
+  assert.equal(msg, `MultiSea: turn Solana on\nProgram: ${PID}\nIssued: ${iso(NOW - 60_000)}`);
+  await assert.rejects(call('POST', '/launchpad/solana/enable', { message: msg, signature: await rando.signMessage({ message: msg }) }), e => e.status === 403 && /owner wallet/.test(e.message));
+  const stale = solSwitchMessage(PID, iso(NOW - 16 * 60_000));
+  await assert.rejects(call('POST', '/launchpad/solana/enable', { message: stale, signature: await mc.signMessage({ message: stale }) }), e => e.status === 401);
+  const forged = msg + '\nextra';
+  await assert.rejects(call('POST', '/launchpad/solana/enable', { message: forged, signature: await mc.signMessage({ message: forged }) }), /not a "turn Solana on" message/);
+  const wrongSig = await mc.signMessage({ message: solSwitchMessage(PID, iso(NOW - 120_000)) });
+  await assert.rejects(call('POST', '/launchpad/solana/enable', { message: msg, signature: wrongSig }), e => e.status === 403, 'signature over another message');
+  // MC signs but the chains are not ready: refused, still off
+  const sig = await mc.signMessage({ message: msg });
+  await assert.rejects(call('POST', '/launchpad/solana/enable', { message: msg, signature: sig }), e => e.status === 409 && /escrow not linked/.test(e.message));
+  assert.deepEqual(checked, [PID]); assert.equal((await call('GET', '/launchpad/solana')).on, false); assert.equal(env.COLLECTIONS.m.has('lp:solana'), false);
+  await assert.rejects(call('POST', '/launchpad/submit', md()), /Solana is not available yet/);
+  // everything verified: on
+  ready = { ok: true, problems: [] };
+  const r = await call('POST', '/launchpad/solana/enable', { message: msg, signature: sig }); assert.equal(r.on, true); assert.equal(r.programId, PID);
+  const g = await call('GET', '/launchpad/solana'); assert.equal(g.on, true); assert.equal(g.programId, PID); assert.deepEqual(g.escrows, LP0.solana.v2.escrows); assert.equal(g.store, 'CHwuUxTTekChVii58cNEvpfkCSbXoyWUYsafJ4EArACa');
+  const rec = JSON.parse(env.COLLECTIONS.m.get('lp:solana')); assert.equal(lc(rec.signedBy), lc(mc.address)); assert.equal(rec.message, msg);
+  await call('POST', '/launchpad/submit', md()); as(ADMIN); await call('POST', '/admin/launchpad/approve/sol-on'); as(creator.address);
+  env.LAUNCHPAD_APPROVER_KEY = generatePrivateKey();
+  const s = await call('POST', '/launchpad/approval/sol-on', { chain: 'solana' }); assert.equal(s.programId, PID, 'approvals use the switched-on program id');
+  // a fresh Worker isolate reads the switch from KV
+  const L2 = makeLaunchpad({ LP: { ...LP0, solana: { ...LP0.solana, switchSigner: mc.address } }, chains: CFG.chains, lc, bad, ADDR, admins: () => [ADMIN], requireSession: async () => ({ address: lc(creator.address) }), isDropOnChain: async () => true, now: () => NOW });
+  assert.equal((await L2.handle({}, env, null, ['launchpad', 'solana'], 'GET', async () => ({}))).programId, PID);
+});
+
+test('multichain listing excludes both the existing (V1) and the new (V2) escrow from holder counts', async () => {
+  const { call, env, as } = setup();
+  await call('POST', '/launchpad/submit', drop({ slug: 'omni-esc', mode: 'multichain', creatorReserve: 0, chains: ['base', 'bnb'], allocations: { base: 3404, bnb: 1000 }, phases: drop().phases.map(x => ({ ...x, prices: { base: x.price, bnb: x.price } })) }));
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/omni-esc'); as(creator.address);
+  await call('POST', '/launchpad/deployed/omni-esc', { chain: 'base', address: '0x' + '44'.repeat(20) });
+  const col = JSON.parse(env.COLLECTIONS.m.get('col:omni-esc'));
+  assert.deepEqual(col.escrow, [{ chain: 'base', address: ESC }, { chain: 'base', address: lc(LP0.solana.v2.escrows.base) }]);
 });

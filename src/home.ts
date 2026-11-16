@@ -2,7 +2,7 @@ import AV from './assetv.json';
 import CFG from '../config/collections.json';
 import { checkApi, onApiUp, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
-import { SOLANA_ON, SOL_SOON } from './solflag';
+import { SOLANA_ON, SOL_SOON, onSolanaFlag } from './solflag';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
 type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
@@ -118,7 +118,7 @@ function bindHome() {
 }
 bindNav();
 cards = await staticCards(); render(); liveStatic().catch(() => {});
-onWallet(render);
+onWallet(render); onSolanaFlag(render);
 let homeLoaded = false;
 const homeLoad = async () => {
   if (homeLoaded) return;
