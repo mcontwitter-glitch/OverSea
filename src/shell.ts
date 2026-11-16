@@ -3,6 +3,7 @@ import AV from './assetv.json';
 import APP from '../config/app.json';
 // Shared MultiSea chrome: top bar, wallet button, helpers.
 import { wallet, openConnect, openWalletMenu, walletLabel, API, apiReady, onWallet } from './wallet';
+import { solNavHtml } from './solmenu';
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const media = (u?: string | null) => (!u ? '' : u.startsWith('/media/') ? API + u : u);
 // Admin nav: shown only to the admin wallets / fee wallet (mirrors worker ADMIN_ADDRESSES + FEE_WALLET). UI hint only:
@@ -26,7 +27,7 @@ export function navHtml(active = '') {
    <a href="/referrals" class="${active === 'referrals' ? 'on' : ''}"><b>Referrals</b><span>Earn from friends' buys</span></a>
    <a href="/revenue-share" class="${active === 'revshare' ? 'on' : ''}"><b>Revenue share</b><span>Holder rewards</span></a>
    <a href="/admin" class="${active === 'admin' ? 'on' : ''}" data-admin-nav ${isAdminWallet(wallet.address) ? '' : 'hidden'}><b>Admin</b><span>Review submissions &amp; fees</span></a></div></details></div>
-  <div class="navr"><a class="cartbtn" href="/cart" title="Cart" aria-label="Cart"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg><span data-cartn ${cartCount() ? '' : 'hidden'}>${cartCount()}</span></a><button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button></div></nav>`;
+  <div class="navr"><a class="cartbtn" href="/cart" title="Cart" aria-label="Cart"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg><span data-cartn ${cartCount() ? '' : 'hidden'}>${cartCount()}</span></a>${solNavHtml()}<button class="wbtn ${wallet.address ? 'on' : ''}" data-act="wallet">${wallet.address ? '<span class="wdot on"></span>' : ''}${walletLabel()}</button></div></nav>`;
 }
 let bound = false;
 // First-touch referral: after /r/<code>, ask the connected wallet to link (one free SIWE signature). Permanent server-side.

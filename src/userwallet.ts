@@ -9,6 +9,8 @@ import { FW_CHAINS, chainBalances, chainUsd, NATIVE, TOKENS, fmtUsd, rateOf, par
 import { usdRates, type UsdRates } from './shell';
 import CFG from '../config/collections.json';
 import { ownedNfts, insightOn, walletTransfers, collectionTransfers, type OwnedNft } from './insight';
+import { sol, onSol, shortSol, signSolMessage } from './solconnect';
+import { openSolConnect, linkedSol } from './solmenu';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
 const ERC1155 = parseAbi(['function safeTransferFrom(address,address,uint256,uint256,bytes)', 'function balanceOf(address,uint256) view returns (uint256)']);
@@ -22,18 +24,20 @@ const imageUrl = (s: string | null) => !s ? '' : s.startsWith('ipfs://') ? 'http
 const OWN = new Map(CFG.collections.flatMap(c => c.deployments.map(d => [d.chain + ':' + d.address.toLowerCase(), c] as const)));
 const ownCol = (n: Nft) => { const c = OWN.get(n.chain + ':' + String(n.contract).toLowerCase()); const id = Number(n.id); return c && Number.isInteger(id) && id >= c.idStart && id <= c.idEnd ? { c, id } : null; };
 const own = (n: Nft): Nft => { const x = ownCol(n); return x ? { ...n, image: `/img/${x.c.slug}/s/${x.id}.webp` } : n; };
-const itemHref = (n: Nft) => { const x = ownCol(n); return x ? `/c/${x.c.slug}?item=${x.id}` : ''; };
+const itemHref = (n: Nft) => { const x = ownCol(n); return x ? `/c/${x.c.slug}?item=${x.id}` : (n as any).href || ''; };
+const chainName = (k: string) => chains[k]?.name || (k === 'solana' ? 'Solana' : k);
 const nftKey = (n: Nft) => `${n.chain}|${n.contract.toLowerCase()}|${n.id}`;
 const nftCard = (n: Nft, me: boolean) => {
   const href = itemHref(n);
   const send = me && /^(erc721|erc1155)$/.test(n.standard || '') ? `<button type="button" class="obtn sm" data-send="${esc(nftKey(n))}">Send</button>` : '';
-  const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chains[n.chain]?.name || n.chain)}${send}</div>`;
+  const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chainName(n.chain))}${send}</div>`;
   return href ? `<a class="nftc" href="${esc(href)}">${inner}</a>` : `<div class="nftc">${inner}</div>`;
 };
 const NFT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb', 'robinhood'] as const;
 function colInfo(n: Nft): { key: string; label: string } {
   const x = ownCol(n);
   if (x) return { key: 'ms:' + x.c.slug, label: x.c.name };
+  const ms = (n as any).msSlug && CFG.collections.find(c => c.slug === (n as any).msSlug); if (ms) return { key: 'ms:' + ms.slug, label: ms.name };
   const slug = (n.collection || '').trim();
   const key = slug ? 'col:' + slug.toLowerCase() : 'ct:' + n.chain + ':' + String(n.contract).toLowerCase();
   const fromName = (n.name || '').replace(/\s*#\s*\d+\s*$/, '').trim();
@@ -110,7 +114,8 @@ async function attachTimes(list: Nft[], owner: string) {
 }
 export function mountUserWallet(root: HTMLElement, address: Hex) {
   const allChains = [...FW_CHAINS, 'abstract'];
-  const S = { balances: [] as Bal[], rates: null as UsdRates | null, nfts: null as Nft[] | null, note: '', cursors: {} as Record<string, string>, insightPage: {} as Record<string, number>, busy: false, receive: false, chain: '', col: '', sort: 'recent' as 'recent' | 'minted' | 'az' };
+  const S = { balances: [] as Bal[], rates: null as UsdRates | null, nfts: null as Nft[] | null, note: '', cursors: {} as Record<string, string>, insightPage: {} as Record<string, number>, busy: false, receive: false, chain: '', col: '', sort: 'recent' as 'recent' | 'minted' | 'az',
+    sol: undefined as string | null | undefined, solAdd: location.hash === '#add-solana', solMsg: '', solErr: '', solBusy: '' };
   const isMe = () => !!wallet.address && wallet.address.toLowerCase() === address.toLowerCase();
   const assets = (): Asset[] => {
     const out: Asset[] = [];
@@ -133,9 +138,61 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     S.note = [...(j.notes || []), failures.size ? `Couldn't load all NFTs on ${[...failures].map(k => chains[k]?.name || k).join(', ')}; refresh to retry.` : '', unsupported.length ? `NFT indexing unavailable on ${unsupported.map(k => chains[k]?.name || k).join(', ')}.` : ''].filter(Boolean).join(' ');
     await attachTimes(S.nfts || [], address);
   }
+  // Linked Solana wallet (worker KV) and its NFTs (src/solnfts.ts, public RPC, free).
+  let linkTask: Promise<void> | null = null;
+  const fetchLink = () => (linkTask ??= linkedSol(address).then(s => { S.sol = s; draw(); }).finally(() => { linkTask = null; }));
+  async function loadSol(fresh = false) {
+    await (linkTask ?? (S.sol === undefined ? fetchLink() : null)); if (!S.sol) return;
+    const r = await (await import('./solnfts')).solanaNfts(S.sol, fresh).catch(() => ({ nfts: [], note: 'Couldn’t load Solana NFTs; refresh to retry.' }));
+    S.nfts = [...(S.nfts || []).filter(n => n.chain !== 'solana'), ...(r.nfts as unknown as Nft[])]; if (r.note) S.note = [S.note, r.note].filter(Boolean).join(' ');
+  }
+  const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
+  async function evmSign(message: string) {
+    if (!wallet.provider || !isMe()) throw Error('Connect this profile’s EVM wallet first.');
+    return createWalletClient({ transport: custom(wallet.provider) }).signMessage({ account: wallet.address as Hex, message });
+  }
+  async function post(path: string, body: any) {
+    const r = await fetch(API + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw Error(j.error || `API ${r.status}`); return j;
+  }
+  async function solLink() {
+    if (!sol.address) throw Error('Connect a Solana wallet first.');
+    S.solErr = ''; S.solBusy = 'Getting a one-time code…'; draw();
+    const r = await fetch(`${API}/profile/solana-link/nonce?address=${address}&sol=${sol.address}`, { cache: 'no-store' });
+    const n = await r.json().catch(() => ({})); if (!r.ok) throw Error(n.error || `API ${r.status}`);
+    S.solMsg = n.message; S.solBusy = `Approve the message in ${sol.name}…`; draw();
+    const solSignature = b64(await signSolMessage(n.message));
+    S.solBusy = `Confirm with your EVM wallet (${short(address)})…`; draw();
+    const evmSignature = await evmSign(n.confirm);
+    S.solBusy = 'Linking…'; draw();
+    const j = await post('/profile/solana-link', { nonce: n.nonce, solSignature, evmSignature });
+    S.sol = j.sol; S.solAdd = false; S.solBusy = ''; S.solMsg = ''; if (location.hash === '#add-solana') history.replaceState(null, '', location.pathname);
+    await loadSol(true);
+  }
+  async function solUnlink() {
+    S.solErr = ''; S.solBusy = 'Confirm unlink with your EVM wallet…'; draw();
+    const r = await fetch(`${API}/profile/solana-link/nonce?address=${address}&unlink=1`, { cache: 'no-store' });
+    const n = await r.json().catch(() => ({})); if (!r.ok) throw Error(n.error || `API ${r.status}`);
+    await post('/profile/solana-unlink', { nonce: n.nonce, evmSignature: await evmSign(n.confirm) });
+    S.sol = null; S.solBusy = ''; S.nfts = (S.nfts || []).filter(x => x.chain !== 'solana'); if (S.chain === 'solana') S.chain = '';
+  }
+  const solChips = (me: boolean) => `<div class="uwsol"><span class="chipw"><img src="/logos/ethereum.svg" alt="">${esc(short(address))}</span>${S.sol
+    ? `<a class="chipw sol" href="https://solscan.io/account/${esc(S.sol)}" target="_blank" rel="noopener" title="${esc(S.sol)}"><img src="/logos/solana.svg" alt="">${esc(shortSol(S.sol))} <span class="ok">✓</span></a>${me ? '<button class="lnk small" data-uwsol="unlink">Unlink</button>' : ''}`
+    : me && S.sol === null ? `<button class="chipw sol add" data-uwsol="add">＋ Add Solana wallet</button>` : ''}</div>`;
+  const solCard = () => {
+    const c = !!sol.address; const msg = S.solMsg || `MultiSea: link Solana wallet\nProfile: ${address.toLowerCase()}\nSolana: ${sol.address || '…'}\nNonce: (one-time code from MultiSea)`;
+    return `<div class="solcard"><h4><img src="/logos/solana.svg" alt="">Add a Solana wallet to your profile<button class="x sm" data-uwsol="close" aria-label="Close">✕</button></h4>
+      <div class="mut small">Your Solana NFTs then show on this profile next to your EVM ones. Free: you only sign messages, no transaction.</div>
+      <ul class="steps"><li><span class="n ${c ? 'd' : 'c'}">${c ? '✓' : '1'}</span><div><b>Connect Solana wallet</b><div class="mut small">${c ? `${esc(sol.name)} · <span class="mono">${esc(shortSol(sol.address))}</span> · <button class="lnk small" data-uwsol="connect">change</button>` : '<button class="obtn sm" data-uwsol="connect">Connect Phantom, Solflare…</button>'}</div></div></li>
+      <li><span class="n ${c ? 'c' : ''}">2</span><div style="min-width:0;flex:1"><b>Sign to prove it's yours</b><div class="msg">${esc(msg)}</div></div></li>
+      <li><span class="n">3</span><div><b>Confirm with your EVM wallet</b><div class="mut small">One signature from ${esc(short(address))} so nobody can attach a wallet to your profile.</div></div></li></ul>
+      ${S.solBusy ? `<p class="mut small"><span class="spin"></span> ${esc(S.solBusy)}</p>` : `<button class="bbtn solb" data-uwsol="go" ${c ? '' : 'disabled'}>Sign &amp; link</button>`}${S.solErr ? `<p class="err small">${esc(S.solErr)}</p>` : ''}</div>`;
+  };
   async function load(fresh = false) {
     if (S.busy) return; S.busy = true; draw();
+    fetchLink();
     const nftTask = nfts(fresh).catch(e => { S.note = friendly(e); }).then(draw);
+    const solTask = nftTask.then(() => loadSol(fresh)).catch(() => {}).then(draw);
     const rates = await usdRates().catch(() => ({ ETH: null, APE: null, BNB: null } as UsdRates)); S.rates = rates;
     S.balances = await Promise.all(allChains.map(async k => {
       const bal: ChainBal = k === 'abstract' ? await readClient(k).getBalance({ address }).then((native: bigint) => ({ native, tokens: [], ok: true })).catch(() => ({ native: null, tokens: [], ok: false })) : (await chainBalances(k as FwChain, [address]))[0];
@@ -144,7 +201,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
       const missingPrice = k !== 'abstract' && (TOKENS[k as FwChain] || []).some((t, i) => bal.tokens[i] && t.px !== 'USD' && rates[t.px] == null);
       return { k, bal, usd: missingPrice || bal.tokens.some(v => v == null) ? null : usd };
     }));
-    await nftTask; S.busy = false; draw();
+    await nftTask; await solTask; S.busy = false; draw();
   }
   function collections() {
     const seen = new Map<string, string>();
@@ -169,6 +226,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     const total = S.balances.length && S.balances.every(c => c.usd != null) ? S.balances.reduce((n, c) => n + c.usd!, 0) : null;
     root.innerHTML = `<div class="fw uw"><section class="fwcard fwid glow"><div class="fwtop"><div class="fwnftw">${avatar ? `<img class="fwnft" src="${esc(avatar)}" alt="Profile picture">` : `<div class="fwnft uwletter">${esc(name[0].toUpperCase())}</div>`}</div><div style="min-width:0"><span class="fwtag">MultiSea profile</span><h1>${esc(name)}</h1></div></div>
       <div class="fwaddr"><span class="mono fwfull">${address}</span><button class="fwcopy" data-uw="copy" aria-label="Copy address">⧉</button></div>
+      ${solChips(me)}${me && S.solAdd ? solCard() : ''}
       <div class="fwacts">${me ? '<button class="fwbtn pri" data-uw="send">↗ Send</button>' : ''}<button class="fwbtn on" data-uw="receive">↙ Receive</button>${me ? `<a class="fwbtn" href="/me/profile">Edit profile</a><a class="fwbtn" href="/me">My activity</a><button class="fwbtn" data-uw="copy">Copy address</button>${wallet.provider?.isMultiSeaEmbedded ? '<button class="fwbtn" data-uw="export">🔑 Export private key</button>' : ''}` : ''}</div>
       ${!me ? `<div class="fwnote">View only.${!wallet.address ? ' <button class="lnk" data-uw="connect">Connect</button> your wallet to send from your own profile.' : ' Only the connected owner can send.'}</div>` : ''}
       ${S.receive ? `<div class="fwrecv"><div class="fwqr">${renderSVG(address, { border: 1, ecc: 'M' })}</div><div><h4>Receive NFTs and crypto</h4><div class="hint">Use this address on the supported chain. Transfers stay on the chain used by the sender.</div></div></div>` : ''}
@@ -181,7 +239,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
         return `<div class="fwch" data-chain="${k}"><div class="chh"><span class="chn">${logo(k)}${esc(chains[k].name)}</span><span class="chv">${c ? fmtUsd(c.usd) : '…'}</span></div>${rows.join('') || `<div class="mut small">${!c ? 'Loading…' : !c.bal.ok ? 'Couldn’t read this chain' : 'Empty'}</div>`}${c && c.bal.tokens.some(v => v == null) ? '<div class="mut small">Some token balances unavailable</div>' : ''}${k === 'abstract' ? '<div class="mut small">Native coin only</div>' : ''}</div>`;
       }).join('')}</div></section>
       <section class="fwcard fwsec"><div class="sechd"><h3>NFTs${S.nfts ? ' · ' + visible().length + (visible().length !== S.nfts.length ? ' of ' + S.nfts.length : '') : ''}</h3><div class="nfttools"><select class="sort" data-uw-sort aria-label="Sort NFTs">${[['recent', 'Most recent'], ['minted', 'Recently minted'], ['az', 'A–Z']].map(([v, n]) => `<option value="${v}" ${S.sort === v ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="fwrbtn" data-uw="refresh" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Checking…' : 'Refresh'}</button></div></div>
-      ${S.nfts?.length ? `<div class="chips">${[['','All', (S.nfts || []).filter(n => !S.col || colInfo(n).key === S.col).length] as [string, string, number], ...NFT_CHAINS.map(k => [k, chains[k].name, (S.nfts || []).filter(n => n.chain === k && (!S.col || colInfo(n).key === S.col)).length] as [string, string, number])].map(([k, n, c]) => `<button type="button" class="chip ${S.chain === k ? 'on' : ''}" data-nft-chain="${esc(k)}">${k ? logo(k) : ''}${esc(n)} <em>${c}</em></button>`).join('')}</div>
+      ${S.nfts?.length ? `<div class="chips">${[['','All', (S.nfts || []).filter(n => !S.col || colInfo(n).key === S.col).length] as [string, string, number], ...[...NFT_CHAINS, ...(S.sol || S.nfts.some(n => n.chain === 'solana') ? ['solana'] : [])].map(k => [k, chainName(k), (S.nfts || []).filter(n => n.chain === k && (!S.col || colInfo(n).key === S.col)).length] as [string, string, number])].map(([k, n, c]) => `<button type="button" class="chip ${S.chain === k ? 'on' : ''}" data-nft-chain="${esc(k)}">${k ? logo(k) : ''}${esc(n)} <em>${c}</em></button>`).join('')}</div>
       <div class="chips">${[['','All', (S.nfts || []).filter(n => !S.chain || n.chain === S.chain).length] as [string, string, number], ...collections().map(([k, n]) => [k, n, (S.nfts || []).filter(x => colInfo(x).key === k && (!S.chain || x.chain === S.chain)).length] as [string, string, number])].map(([k, n, c]) => `<button type="button" class="chip ${S.col === k ? 'on' : ''}" data-nft-col="${esc(k)}">${esc(n)} <em>${c}</em></button>`).join('')}</div>
       ${visible().length ? `<div class="fwnftg">${visible().map(n => nftCard(n, me)).join('')}</div>` : `<p class="mut small">${S.chain || S.col ? 'No NFTs match these filters.' : 'No NFTs found.'}</p>`}` : `<p class="mut small">${S.nfts == null ? S.busy ? 'Loading NFTs…' : 'NFT list unavailable.' : 'No NFTs found.'}</p>`}
       ${Object.keys(S.cursors).map(k => `<button class="obtn sm" data-more="${k}">More on ${esc(chains[k].name)}</button>`).join('')}${Object.keys(S.insightPage).map(k => `<button class="obtn sm" data-insight="${k}">More on ${esc(chains[k].name)}</button>`).join('')}
@@ -338,6 +396,13 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     const s = e.target as HTMLSelectElement; if (s.hasAttribute('data-uw-sort')) { S.sort = s.value as typeof S.sort; draw(); }
   });
   root.addEventListener('click', async e => {
+    const sb = (e.target as HTMLElement).closest<HTMLElement>('[data-uwsol]');
+    if (sb) { e.preventDefault(); const a = sb.dataset.uwsol;
+      if (a === 'add') { S.solAdd = true; S.solErr = ''; draw(); return; }
+      if (a === 'close') { S.solAdd = false; draw(); return; }
+      if (a === 'connect') { openSolConnect(); return; }
+      if (a === 'go' || a === 'unlink') { if (S.solBusy) return; (a === 'go' ? solLink() : solUnlink()).catch(x => { S.solBusy = ''; S.solErr = x?.code === 4001 || /reject|denied|cancel/i.test(x?.message || '') ? 'Signature cancelled in wallet.' : friendly(x); if (a === 'unlink') S.note = S.solErr; }).then(draw); return; }
+    }
     const chainBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-nft-chain]');
     if (chainBtn) { S.chain = chainBtn.dataset.nftChain || ''; draw(); return; }
     const colBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-nft-col]');
@@ -359,5 +424,5 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
       await attachTimes(S.nfts || [], address);
     } catch (e) { S.note = `Couldn't load more NFTs on ${chains[k].name}: ${friendly(e)}`; } draw(); }
   });
-  onWallet(() => draw()); loadProfile(address).then(draw); draw(); load();
+  onWallet(() => draw()); onSol(() => draw()); loadProfile(address).then(draw); draw(); load();
 }

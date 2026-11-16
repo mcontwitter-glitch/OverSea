@@ -4,11 +4,13 @@ import { Connection, PublicKey, Transaction, ComputeBudgetProgram, type Transact
 import LP from '../config/launchpad.json';
 import { addBroadcast } from './soltx';
 
-type Prov = { publicKey?: { toBase58(): string } | null; connect(): Promise<unknown>; disconnect?(): Promise<void>; signTransaction(tx: Transaction): Promise<Transaction>; signAllTransactions?(txs: Transaction[]): Promise<Transaction[]> };
-const W = window as any;
+import { sol, onSol, connectSolWallet, disconnectSolWallet, solWalletOptions, type SolProv } from './solconnect';
+type Prov = SolProv;
+// Wallet choice and connection live in src/solconnect.ts (shared with the connect window, nav and profile); this mirrors it
+// as a web3.js PublicKey for the transaction code.
 export const SOL_WALLETS = [
-  { id: 'phantom', name: 'Phantom', get: (): Prov | undefined => W.phantom?.solana, url: 'https://phantom.app/' },
-  { id: 'solflare', name: 'Solflare', get: (): Prov | undefined => W.solflare, url: 'https://solflare.com/' },
+  { id: 'phantom', name: 'Phantom', url: 'https://phantom.app/' },
+  { id: 'solflare', name: 'Solflare', url: 'https://solflare.com/' },
 ];
 export const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || (LP as any).solana?.rpc || 'https://api.mainnet-beta.solana.com';
 /** The public RPC (publicnode) answers at most 10 accounts per getMultipleAccounts ("403: A maximum of 10 accounts is allowed"):
@@ -30,18 +32,15 @@ if (SOL_SEND_RPC) addBroadcast(new Connection(SOL_SEND_RPC, 'confirmed'));
 export const solWallet: { id: string; name: string; pubkey: PublicKey | null; prov: Prov | null } = { id: '', name: '', pubkey: null, prov: null };
 const subs: (() => void)[] = [];
 export const onSolWallet = (f: () => void) => { subs.push(f); };
+const sync = () => { Object.assign(solWallet, sol.address ? { id: sol.id, name: sol.name, pubkey: new PublicKey(sol.address), prov: sol.prov } : { id: '', name: '', pubkey: null, prov: null }); subs.forEach(f => f()); };
+onSol(sync); if (sol.address) sync();
 
-export async function connectSol(id: string) {
-  const w = SOL_WALLETS.find(x => x.id === id); const p = w?.get();
-  if (!w || !p) { window.open(w?.url || 'https://phantom.app/', '_blank', 'noopener'); throw new Error(`${w?.name || 'A Solana wallet'} is not installed in this browser.`); }
-  await p.connect(); if (!p.publicKey) throw new Error('Wallet did not share an address.');
-  Object.assign(solWallet, { id, name: w.name, pubkey: new PublicKey(p.publicKey.toBase58()), prov: p }); subs.forEach(f => f());
-  return solWallet.pubkey!;
-}
-export async function disconnectSol() { await solWallet.prov?.disconnect?.().catch(() => {}); Object.assign(solWallet, { id: '', name: '', pubkey: null, prov: null }); subs.forEach(f => f()); }
+export async function connectSol(id: string) { await connectSolWallet(id); return solWallet.pubkey!; }
+export async function disconnectSol() { await disconnectSolWallet(); }
+const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 export const solConnectHtml = () => solWallet.pubkey
-  ? `<span class="mono small">${solWallet.name}: ${solWallet.pubkey.toBase58().slice(0, 4)}…${solWallet.pubkey.toBase58().slice(-4)}</span> <button type="button" class="obtn sm" data-solact="disconnect">Disconnect</button>`
-  : SOL_WALLETS.map(w => `<button type="button" class="obtn sm" data-solact="connect" data-solw="${w.id}" style="margin:2px 4px 2px 0">${w.name}</button>`).join('');
+  ? `<span class="mono small">${solWallet.name}: ${short(solWallet.pubkey.toBase58())}</span> <button type="button" class="obtn sm" data-solact="disconnect">Disconnect</button>`
+  : solWalletOptions().map(w => `<button type="button" class="obtn sm" data-solact="connect" data-solw="${w.id.replace(/"/g, '&quot;')}" style="margin:2px 4px 2px 0">${w.name.replace(/</g, '&lt;')}</button>`).join('');
 /** Wire [data-solact] buttons inside `root` (connect / disconnect), then call `after`. */
 export function bindSolConnect(root: HTMLElement, after: () => void, onErr: (m: string) => void) {
   root.addEventListener('click', e => { const b = (e.target as HTMLElement).closest('[data-solact]') as HTMLElement | null; if (!b) return; e.preventDefault();

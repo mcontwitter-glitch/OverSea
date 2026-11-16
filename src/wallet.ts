@@ -3,6 +3,8 @@ import { createWalletClient, createPublicClient, custom, http, fallback, defineC
 import CFG from '../config/collections.json';
 import APP from '../config/app.json';
 import { embeddedConfigured } from './embedded';
+import { sol } from './solconnect';
+import { solConnectSection, bindSolConnectSection, solMenuBlock, openSolMenu, initSol } from './solmenu';
 
 type P6963 = { info: { uuid: string; name: string; icon: string; rdns: string }; provider: any };
 type ChainCfg = { rpcs?: string[]; name: string; chainId: number; rpc: string; native: string; openseaSlug: string | null; explorer: string };
@@ -102,7 +104,9 @@ export function openConnect() {
       ${embeddedConfigured ? '<p class="mut small">Creates a free embedded wallet for you. No seed phrase, works on every MultiSea chain.</p>' : '<p class="setup small"><b>Setup needed (admin):</b> add a thirdweb Client ID as <code>VITE_THIRDWEB_CLIENT_ID</code> to enable social sign-in.</p>'}
       <div class="gh">Or connect a wallet</div>
       ${list.length ? list.map(p => `<button class="wopt" data-uuid="${esc(p.info.uuid)}">${p.info.icon ? `<img src="${esc(p.info.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(p.info.name)}</button>`).join('') : `<p class="mut">No browser wallet detected${isMobile() ? '. Open this page in your wallet app:' : '. Install MetaMask, Rabby, Coinbase Wallet or OKX.'}</p>`}
-      ${isMobile() || !list.length ? deep : ''}`);
+      ${isMobile() || !list.length ? deep : ''}
+      ${solConnectSection()}`);
+    bindSolConnectSection(m);
     if (embeddedConfigured) import('./embedded').then(x => x.preloadSocial());
     m.querySelectorAll('[data-social]').forEach(b => b.addEventListener('click', async () => {
       const s = (b as HTMLElement).dataset.social as 'x' | 'google'; m.querySelector('.err')?.remove();
@@ -125,7 +129,7 @@ export function openConnect() {
 }
 /** Compact connected-wallet menu; wallet actions live on the owner profile. */
 export function openWalletMenu(onDisconnect?: () => void) {
-  if (!wallet.address) return openConnect();
+  if (!wallet.address) return sol.address ? openSolMenu() : openConnect();
   const m = overlay(`<h3>${esc(wallet.name || 'Wallet')}</h3><p class="mut" style="word-break:break-all"><span data-addr="${esc(wallet.address)}">${esc(wallet.address)}</span></p>
     <div data-wm="bal" class="wbalbox"><span class="mut small"><span class="spin"></span> Loading balance…</span></div>
     <div style="display:grid;gap:10px;margin-top:14px">
@@ -135,7 +139,9 @@ export function openWalletMenu(onDisconnect?: () => void) {
   const addr = wallet.address, box = m.querySelector('[data-wm=bal]') as HTMLElement;
   import('./walletbal').then(b => b.balancesHtml(addr)).then(h => { if (wallet.address === addr) box.innerHTML = h; })
     .catch(() => { box.innerHTML = '<p class="err small">Couldn’t read balances right now. Close and reopen to retry.</p>'; });
+  solMenuBlock(m);
 }
+initSol(); // Solana (add-only): restore the last Solana wallet, nav button, Google/X Solana return
 export function openKeyExport() {
   if (!wallet.provider?.isMultiSeaEmbedded) return;
   const m = overlay(`<h3>Export private key</h3>

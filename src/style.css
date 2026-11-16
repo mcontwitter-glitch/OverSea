@@ -739,3 +739,22 @@ img.cl.solsoon{filter:grayscale(.4)}
 .sdcost{display:inline-block;font-size:12px;background:#1a2230;color:#cfe9ff;border-radius:999px;padding:3px 10px;margin-left:6px;font-weight:600;vertical-align:2px}
 .sdx{margin:6px 0 30px;font-size:13px}
 @media (max-width:640px){.sdch{grid-template-columns:1fr}.sdstep{grid-template-columns:32px 1fr;padding:14px}.sdnum{width:30px;height:30px;font-size:14px}}
+/* Solana wallet (add-only next to the EVM wallet UI) */
+.solsec{margin-top:6px;border-top:1px solid #222;padding-top:4px}.solgh{display:flex;align-items:center;gap:8px}.solgh img{width:16px;height:16px}
+.solgh em{font-style:normal;font-size:11px;font-weight:600;color:#b48cff;background:#9945ff1c;border:1px solid #9945ff55;border-radius:999px;padding:1px 8px}
+.wopt.sol{border-color:#9945ff44}.wopt .r{margin-left:auto;font-size:11px;font-weight:600;color:#3ddc97}.wopt .r.m{color:#8a8a93}
+.solsoc .wopt.soc{border-color:#9945ff66}.solnote{margin:6px 0 2px}.wopt.solmini{margin-top:12px;padding:10px 12px}.wopt.solmini img{width:22px;height:22px}
+.acct{background:#171717;border:1px solid #262626;border-radius:14px;padding:12px;margin:12px 0 0}.acct.solacct{border-color:#9945ff55}
+.acct .h{display:flex;align-items:center;gap:8px;font-weight:700}.acct .h img{width:18px;height:18px}.acct .h .b{margin-left:auto;font-size:11px;color:#3ddc97;font-weight:600}.acct .h .b a{color:#b48cff}
+.acct .a{margin:6px 0 4px;word-break:break-all;font-size:12px}.acct .bal{display:flex;gap:12px;font-size:13px}.acct .bal b{color:#fff}
+.wbtn.wsol{background:#141414!important;border:1px solid #9945ff88!important;box-shadow:none!important;font-family:ui-monospace,Menlo,monospace;font-size:12px}.wbtn.wsol:hover{box-shadow:0 0 14px #9945ff55!important}.wbtn.wsol[hidden]{display:none}
+@media (max-width:480px){.wbtn.wsol{font-size:0!important;padding:6px 8px!important;gap:0!important}}
+.uwsol{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}.chipw{display:inline-flex;align-items:center;gap:6px;background:#141414;border:1px solid #262626;border-radius:999px;padding:5px 10px;font-size:12px;color:#ddd;font-family:ui-monospace,Menlo,monospace;text-decoration:none}
+.chipw img{width:14px;height:14px}.chipw.sol{border-color:#9945ff66}.chipw.sol.add{border-style:dashed;color:#cbb6ff;cursor:pointer;font-family:inherit;font-weight:600}
+.solcard{margin-top:12px;border:1px solid #9945ff55;background:linear-gradient(180deg,#140f1f,#0d0d10);border-radius:16px;padding:14px}
+.solcard h4{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center}.solcard h4 img{width:18px;height:18px}.solcard h4 .x{margin-left:auto;position:static;background:none;border:0;color:#888;cursor:pointer}
+.solcard .steps{margin:10px 0 0;padding:0;list-style:none}.solcard .steps li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #1d1d24}
+.solcard .steps .n{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800;background:#1d1d24;color:#bbb}
+.solcard .steps .n.d{background:#3ddc97;color:#022}.solcard .steps .n.c{background:#9945ff;color:#fff}
+.solcard .msg{background:#0a0a0f;border:1px solid #2a2440;border-radius:10px;padding:9px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#cfc8ff;white-space:pre-wrap;word-break:break-all;margin-top:6px}
+.bbtn.solb{width:100%;margin-top:10px;background:linear-gradient(135deg,#9945ff,#7a5cff 50%,#14f195)!important;border-color:#9945ff66!important}.bbtn.solb:disabled{opacity:.5}

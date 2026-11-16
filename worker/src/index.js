@@ -15,6 +15,7 @@ import { makeBridgeAuto } from './bridgeauto.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
+import { makeSolanaLink } from './solanalink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
 import { makeIslandNfts } from './islandnfts.js';
@@ -254,6 +255,13 @@ const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr) }));
 let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto());
+// EVM message check shared with SIWE: EOA first, then ERC-1271 smart wallets on each chain.
+async function verifyEvmMessage(address, message, signature) {
+  if (await verifyMessage({ address, message, signature }).catch(() => false)) return true;
+  for (const k of ['base', 'ethereum', 'apechain', 'bnb', 'robinhood']) if (chains[k] && await createPublicClient({ transport: http(chains[k].rpc) }).verifyMessage({ address, message, signature }).catch(() => false)) return true;
+  return false;
+}
+let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage }));
 let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
@@ -271,6 +279,7 @@ async function handle(req, env, url, ctx) {
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
+  { const sl = await solanaLink().handle(req, env, url, p, M, body); if (sl !== undefined) return sl; }
   { const pr = await profiles().handle(req, env, url, p, M, body); if (pr !== undefined) return pr; }
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }
   { const h = await holderChat().handle(req, env, url, p, M, body); if (h !== undefined) return h; }

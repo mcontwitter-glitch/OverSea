@@ -22,6 +22,7 @@
   "dependencies": {
     "@bitcoinerlab/secp256k1": "^2.0.0",
     "@layerzerolabs/lz-solana-sdk-v2": "^3.0.168",
+    "@privy-io/js-sdk-core": "^0.79.5",
     "@solana/web3.js": "^1.95.8",
     "bitcoinjs-lib": "^6.1.10",
     "buffer": "^6.0.3",
