@@ -25,13 +25,27 @@ export async function priorityFee(conn: Connection, accounts: PublicKey[] = [], 
 export const budget = (units: number, microLamports: number) => [ComputeBudgetProgram.setComputeUnitLimit({ units }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports })];
 export const feeOf = (units: number, microLamports: number, sigs = 1) => 5000 * sigs + Math.ceil(units * microLamports / 1e6);
 
+/** Is this blockhash really expired? With our own lastValidBlockHeight (wallet kept our blockhash): current block height >
+ *  lastValidBlockHeight. Wallet swapped in its own blockhash: ask isBlockhashValid ('processed', the most permissive) on
+ *  the main RPC and every broadcast RPC, 3 rounds 1.5 s apart, and call it expired only if every answer is "not valid":
+ *  a load-balanced public RPC can answer from a node a few slots behind (or one that never saw a 'processed' blockhash a
+ *  wallet picked) and say "not valid" for a perfectly fresh blockhash. Unknown (RPC errors) = not expired: sending an
+ *  expired transaction is harmless, the network just drops it. */
+export async function blockhashExpired(conn: Connection, bh: string, lastValidBlockHeight?: number): Promise<boolean> {
+  if (lastValidBlockHeight) { const h = await conn.getBlockHeight('confirmed').catch(() => 0); return h > lastValidBlockHeight; }
+  for (let round = 0; round < 3; round++) {
+    if (round) await sleep(1500);
+    const answers = await Promise.all([conn, ...extra].map(c => c.isBlockhashValid(bh, { commitment: 'processed' }).then(r => r.value, () => null)));
+    if (answers.some(a => a !== false)) return false;
+  }
+  return true;
+}
 /** Sends signed bytes, re-sending until confirmed. Returns the signature, or throws TxExpired once its blockhash is dead. */
 export async function sendUntilConfirmed(conn: Connection, tx: Transaction, o: { lastValidBlockHeight?: number; onWait?: Notify; maxMs?: number } = {}): Promise<string> {
   const raw = tx.serialize(); const sig = b58(tx.signature!); const bh = tx.recentBlockhash!; const t0 = Date.now();
   const status = async (hist = false) => (await conn.getSignatureStatuses([sig], { searchTransactionHistory: hist }).catch(() => ({ value: [null] }))).value[0];
   let first = true; let lastErr = '';
-  const dead = async () => (o.lastValidBlockHeight ? (await conn.getBlockHeight('confirmed').catch(() => 0)) > o.lastValidBlockHeight
-    : !(await conn.isBlockhashValid(bh, { commitment: 'confirmed' }).then(r => r.value).catch(() => true)));
+  const dead = () => blockhashExpired(conn, bh, o.lastValidBlockHeight);
   for (let i = 0; ; i++) {
     if (i % 2 === 0) {
       for (const x of extra) x.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
@@ -79,8 +93,8 @@ export type BatchSigner = { publicKey: PublicKey; signAllTransactions(txs: Trans
 /** Many wallet transactions with few approvals (used by program setup and existing-collection copies):
  *  - a dry run of the first one (its inputs exist already) so a real program error shows before anything is signed
  *  - batches of `batch` per approval, each with a fresh blockhash fetched right before it (a slow approval on a phone
- *    cannot outlive the ~1 minute a blockhash is valid); after signing, the blockhash is checked and nothing is sent if
- *    it is already dead
+ *    rarely outlives the ~150 blocks a blockhash is valid); after signing, the signed blockhash is checked against the chain
+ *    (block height vs lastValidBlockHeight, or isBlockhashValid on every RPC) and nothing is sent only if it is really dead
  *  - strictly in order: each one is re-broadcast (also to the extra RPCs) until confirmed before the next is sent
  *  - errors name the transaction, the approval time and the RPC's answer; the caller re-plans from the chain on retry */
 export async function sendBatched(conn: Connection, w: BatchSigner, items: BatchItem[], on: Notify, o: { batch: number; again: string; priceCap?: number }): Promise<string[]> {
@@ -97,8 +111,11 @@ export async function sendBatched(conn: Connection, w: BatchSigner, items: Batch
     on(`Approve ${txs.length} transaction${txs.length > 1 ? 's' : ''} in your wallet${txs.length > 1 ? ' ("Approve all")' : ''}${nb > 1 ? ` · approval ${b + 1} of ${nb}` : ''}`);
     const t0 = Date.now(); const signed = await w.signAllTransactions(txs); const secs = Math.round((Date.now() - t0) / 1000);
     const changed = signed[0].recentBlockhash !== blockhash;
-    if (!(await conn.isBlockhashValid(signed[0].recentBlockhash!, { commitment: 'confirmed' }).then(r => r.value).catch(() => true)))
-      throw new Error(`The approval took ${secs} s and Solana only accepts a signature for about a minute, so nothing was sent. Tap "${o.again}" again and approve right away.`);
+    // Real check, not a timer: the signed blockhash against the chain (block height vs lastValidBlockHeight when the wallet
+    // kept ours; every RPC's isBlockhashValid when it swapped in its own). Refuse only if it is actually expired.
+    const dead = await Promise.all([...new Set(signed.map(t => t.recentBlockhash!))].map(h => blockhashExpired(conn, h, h === blockhash ? lastValidBlockHeight : undefined)));
+    if (dead.some(Boolean))
+      throw new Error(`The signed transaction${signed.length > 1 ? 's' : ''} expired before ${signed.length > 1 ? 'they' : 'it'} could be sent (the blockhash is past its last valid block on Solana; approval took ${secs} s; wallet ${changed ? 'changed' : 'kept'} the blockhash), so nothing was sent. Tap "${o.again}" again.`);
     for (const [i, tx] of signed.entries()) {
       const n = b * o.batch + i + 1, label = part[i].label;
       on(`Sending ${n} of ${items.length}: ${label}`);
