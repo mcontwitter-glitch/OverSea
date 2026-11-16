@@ -1,1 +1,0 @@
-import{t as e}from"./launchpad-Bkp6tgZT.js";var t=e.solana?.programId||``,n=!!t,r=`Solana: available after program deploy`,i=(e=`ldch`)=>`<button type="button" class="${e} solsoon" disabled title="${r}"><img class="cl" src="/logos/solana.svg" alt=""><span><b>Solana</b><em>available after program deploy</em></span></button>`;export{i,n,r,t};
