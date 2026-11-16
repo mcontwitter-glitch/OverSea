@@ -216,6 +216,56 @@ async function main() {
   const allIn = await Promise.all([6, 7, 8, 9, 10, 11, 12, 13].map(async (i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(cid, i)))!.data)!.equals(store)));
   check("COPY of 8 ids (the max) in one LayerZero delivery fits Solana limits", allIn.every(Boolean), `${cuFor8} compute units of 1,400,000`);
 
+  // ---------------- 9) EXISTING collection (V1 drop + V1 escrow, EVM chains only) gets a Solana side
+  // V1 contracts as deployed today: escrow + factory + drop on the hub, with a second EVM chain (40999, never delivered here).
+  const OTHER_EID = 40999;
+  for (const t of [() => epEvm.setDefaultSendLibrary(OTHER_EID, lib), () => epEvm.setDefaultReceiveLibrary(OTHER_EID, lib, 0)]) await (await t()).wait();
+  const escV1 = await deploy("MultiSeaOmniEscrow.sol", "MultiSeaOmniEscrow", await epEvm.getAddress(), await deployer.getAddress(), FEE_EVM, ethers.parseEther("0.0001"));
+  const facV1 = await deploy("MultiSeaLaunchpadFactory.sol", "MultiSeaLaunchpadFactory", await deployer.getAddress(), await (await deploy("MultiSeaDrop.sol", "MultiSeaDrop")).getAddress(), FEE_EVM, ethers.computeAddress(approverKey), 50);
+  const implV1 = await deploy("MultiSeaOmniDrop.sol", "MultiSeaOmniDrop");
+  const escV1A = await escV1.getAddress();
+  for (const t of [() => escV1.setFactory(facV1.getAddress()), () => facV1.setOmni(implV1.getAddress(), escV1A), () => escV1.setPeer(OTHER_EID, ethers.zeroPadValue(FEE_EVM, 32))]) await (await t()).wait();
+  const xcid = ethers.keccak256(ethers.toUtf8Bytes("multi-islands-e2e-" + Date.now()));
+  const xp = { ...p, name: "MULTI ISLANDS", symbol: "ISL", maxSupply: 10, baseURI: "ipfs://bafyISLANDS/", eids: [EVM_EID, OTHER_EID], prices: [ethers.parseEther("0.001"), 0n], copyMode: 1 };
+  const xdl = BigInt((await evm.getBlock("latest"))!.timestamp) + 86400n;
+  await (await facV1.createOmniDrop(xp, xcid, xdl, approverKey.sign(await facV1.omniDigest(xp.owner, await facV1.omniConfigHash(xp), xcid, xdl)).serialized)).wait();
+  const dropV1 = new ethers.Contract(await escV1.dropOf(xcid), art("MultiSeaOmniDrop.sol", "MultiSeaOmniDrop").abi, deployer);
+  const [, xlz] = await dropV1.quoteMint(0, 3, aliceAddr, 0);
+  await (await dropV1.connect(alice).mint(aliceAddr, 0, 3, [], 0, { value: ethers.parseEther("0.003") + xlz })).wait(); // #1-#3 Active on the hub
+  // the new pieces: mover (owner = MultiSea), the existing escrow's Solana peer (timelock on mainnet), Solana registration
+  const mover = await deploy("MultiSeaSolanaMover.sol", "MultiSeaSolanaMover", await epEvm.getAddress(), await deployer.getAddress(), escV1A, SOL_EID);
+  const moverA = await mover.getAddress();
+  for (const t of [() => mover.setPeer(SOL_EID, b32(store)), () => escV1.setPeer(SOL_EID, b32(store))]) await (await t()).wait();
+  const xparams: O.ExistingParams = { name: "MULTI ISLANDS", collectionUri: "ipfs://bafyISLANDS/collection.json", baseUri: "ipfs://bafyISLANDS/", payout: creator.publicKey,
+    royaltyBps: 500, maxSupply: 10, eids: [EVM_EID, OTHER_EID, SOL_EID] };
+  let strangerRegistered = true;
+  try { await sol([O.registerExistingIx({ admin: stranger.publicKey, cid: xcid, params: xparams })], [stranger]); } catch { strangerRegistered = false; }
+  check("register_existing is admin-only", !strangerRegistered);
+  await sol([O.registerExistingIx({ admin: admin.publicKey, cid: xcid, params: xparams })], [admin]);
+  const xb0 = await conn.getBalance(admin.publicKey);
+  const copySig = await sol([O.existingCopiesIx(admin.publicKey, xcid, 1, 10)], [admin], 1_400_000);
+  const copyCu = (await conn.getTransaction(copySig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }))?.meta?.computeUnitsConsumed;
+  const xcost = (xb0 - await conn.getBalance(admin.publicKey)) / LAMPORTS_PER_SOL;
+  const xowners = await Promise.all(Array.from({ length: 10 }, async (_, i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)!));
+  const xd = O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data);
+  check("existing collection registered on Solana + all 10 ids created as locked copies in one tx", xd.existing && xowners.every((o) => o.equals(store))
+    && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${copyCu} CU, ${xcost.toFixed(4)} SOL for 10 copies`);
+  const moverB = ethers.getBytes(ethers.zeroPadValue(moverA, 32)), escV1B = ethers.getBytes(ethers.zeroPadValue(escV1A, 32));
+  await sol([O.setMoverIx(admin.publicKey, EVM_EID, moverB, escV1B), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, moverB), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, escV1B)], [admin]);
+  await (await mover.setCollection(xcid, true)).wait();
+  // move in: alice's #2 goes into the EXISTING V1 escrow and its locked Solana copy is released to her Solana wallet
+  await (await dropV1.connect(alice).approve(moverA, 2)).wait();
+  const [xpf, xlz2] = await mover.quoteToSolana(xcid, 2, b32(solMinter.publicKey));
+  await evmToSol(await (await mover.connect(alice).toSolana(xcid, 2, b32(solMinter.publicKey), { value: xpf + xlz2 })).wait());
+  check("existing collection: move in via the mover, #2 locked in the existing V1 escrow, Active on Solana", (await dropV1.ownerOf(2)) === escV1A
+    && O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, 2)))!.data)!.equals(solMinter.publicKey) && Number(await dropV1.balanceOf(moverA)) === 0);
+  // move out: back through the existing V1 escrow, which releases its copy to bob
+  const xsa = await endpoint.getSendIXAccountMetaForCPI(conn, solMinter.publicKey, { sender: store.toBytes(), dstEid: EVM_EID, receiver: escV1A }, simple as any);
+  const xmv = await sol([O.moveOutIx({ holder: solMinter.publicKey, cid: xcid, tokenId: 2, dstEid: EVM_EID, to: O.evmTo32(bobAddr), nativeFee: 5000n, feeRecipient: solFee.publicKey, sendAccounts: xsa })], [solMinter]);
+  await solToEvm(xmv);
+  check("existing collection: move out from Solana released by the existing V1 escrow (#2 Active for bob, Solana copy locked)", (await dropV1.ownerOf(2)) === bobAddr
+    && O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, 2)))!.data)!.equals(store));
+
   const failed = results.filter((r) => !r[1]).length;
   console.log(`\n${results.length - failed}/${results.length} passed`);
   process.exit(failed ? 1 : 0);

@@ -3,7 +3,7 @@
 # Default is a dry run (build + cost estimate). Add --go to actually deploy (the solana CLI asks nothing more after that).
 #   solana/deploy/deploy-program.sh --keypair /path/to/mc-wallet.json [--program-keypair solana/deploy/program-mainnet-keypair.json] [--go]
 # - The program keypair is created on first run (keep it; it only decides the program id, it holds no funds).
-# - The program is built with MULTISEA_OMNI_ID=<that id> (declare_id! must match).
+# - The program is native (no Anchor) and does not compile its id in: the same .so works at any id.
 # - Upgrade authority = MC's wallet (move it to a multisig later with `solana program set-upgrade-authority`).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,14 +16,9 @@ export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH" RUSTUP_
 [ -f "$PKP" ] || solana-keygen new --no-bip39-passphrase --silent -o "$PKP"
 PID=$(solana-keygen pubkey "$PKP"); PAYER=$(solana-keygen pubkey "$KP")
 echo "program id : $PID"; echo "payer/upgrade authority : $PAYER"; echo "cluster    : $URL"
-touch programs/multisea_omni/src/lib.rs # the id comes from a proc macro reading the env, which cargo does not track: force a rebuild
-MULTISEA_OMNI_ID="$PID" cargo build-sbf > /tmp/multisea-build.log 2>&1 || { tail -20 /tmp/multisea-build.log; exit 1; }
+cargo build-sbf > /tmp/multisea-build.log 2>&1 || { tail -20 /tmp/multisea-build.log; exit 1; }
 SO=target/deploy/multisea_omni.so; LEN=$(stat -c %s "$SO")
-if ! python3 -c 'import sys
-A="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; n=0
-for c in sys.argv[2]: n=n*58+A.index(c)
-sys.exit(0 if n.to_bytes(32,"big") in open(sys.argv[1],"rb").read() else 1)' "$SO" "$PID"; then echo "ABORT: the built program does not embed $PID"; exit 1; fi
-echo "build      : declare_id = $PID (checked in the .so)"
+echo "build      : $SO ($(sha256sum "$SO" | cut -c1-16)...)"
 RENT=$(solana rent --url "$URL" $((LEN + 45)) --lamports | awk '/Rent-exempt minimum/{print $3}')
 sol() { awk -v l="$1" 'BEGIN{printf "%.4f", l/1e9}'; }
 BAL=$(solana balance --url "$URL" "$PAYER" --lamports | awk '{print $1}')
