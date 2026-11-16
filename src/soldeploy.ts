@@ -2,7 +2,9 @@
 // Order: (1) CLI: solana/deploy/deploy-program.sh (program deploy, MC's keypair) -> program id.
 // (2) node scripts/lp-solana-plan.mjs --i-will-sign-myself --deployer <MC> --solana-program <id> -> plan JSON.
 // (3) This page: load the plan, send the EVM txs (EVM wallet, chain by chain) and the Solana steps (Phantom / Solflare).
-// (4) After the timelock delay: send each chain's timelock.execute(setOmni) from the plan here.
+// (4) The new contracts (V2 escrow/drop impl, mover) stay owned by MC's wallet (direct calls). The live factory + V1 escrow are
+//     owned by the existing 48 h timelock: the plan's step 1 schedules the timelock exit (default: ownership back to MC); 48 h later
+//     send the executeBatch step and the rest of the chain (acceptOwnership, V1 escrow Solana peer, setOmni) here.
 // (5) Only then put the program id + V2 escrows into config/launchpad.json (that is what un-hides Solana on the site).
 // Existing V1 collections (Option A): per chain set_mover (the plan's MultiSeaSolanaMover + the chain's V1 escrow), then per
 // collection register_existing + existing_copies (all ids created as locked copies, ~0.0032 SOL each, paid by the admin wallet).
@@ -93,13 +95,13 @@ function render() {
      · existing collections mover ${done['mover:' + k] ? '<b class="ok">✓</b>' : `<button class="obtn sm" data-mover="${k}" ${busy || !done['sol:' + k] ? 'disabled' : ''}>Sign</button>`}</li>`).join('') : '<li class="mut">Load the plan first.</li>';
   const xin = (k: string, label: string, ph = '') => `<label>${label}<input data-xf="${k}" value="${esc(String(xf[k] ?? ''))}" placeholder="${esc(ph)}"></label>`;
   const xcard = `<div class="fcard small"><div class="gh">5 · Existing collection (live V1 drop)</div>
-    <p>After the chain's mover is set (above) and its V1 escrow peer is executed through the timelock. Registers the collection on Solana (no minting there) and creates every id as a locked copy (~0.0032 SOL each, from this wallet).</p>
+    <p>After the chain's mover is set (above) and its V1 escrow Solana peer step (plan) is sent. Registers the collection on Solana (no minting there) and creates every id as a locked copy (~0.0032 SOL each, from this wallet).</p>
     <label>Collection id (bytes32)<input data-xcid value="${esc(xcid)}" placeholder="0x…"></label>${xin('name', 'Name')}${xin('collectionUri', 'Collection metadata URI', 'ipfs://…/collection.json')}${xin('baseUri', 'Base URI', 'ipfs://…/')}
     ${xin('payout', 'Royalty payout (Solana address)')}${xin('royaltyBps', 'Royalty bps')}${xin('maxSupply', 'Max supply')}${xin('eids', 'EVM eids of the drop (comma)', '30184,30101')}
     <p>${done.xreg ? '<b class="ok">✓ registered</b>' : `<button class="obtn sm" data-act="xreg" ${busy || !done.store || !sw ? 'disabled' : ''}>Register</button>`}
      ${done.xreg ? `copies ${xminted}/${esc(String(xf.maxSupply))} ${xminted >= +xf.maxSupply ? '<b class="ok">✓</b>' : `<button class="obtn sm" data-act="xcopies" ${busy ? 'disabled' : ''}>Create copies</button>`}` : ''}</p></div>`;
   app.innerHTML = `${navHtml('admin')}<section class="page"><h2>Deploy Solana (new multichain drops)</h2>
-   <p class="mut">You sign everything with your own wallets. Live drops are not touched: only drops created after <span class="mono">factory.setOmni</span> use the V2 escrows. Solana stays hidden on the site until the program id is put in <span class="mono">config/launchpad.json</span> at the very end.</p>
+   <p class="mut">You sign everything with your own wallets. Live drops are not touched: only drops created after <span class="mono">factory.setOmni</span> use the V2 escrows. The new contracts stay owned by your wallet (no timelock); the live factory and V1 escrow need one 48 h timelock wait (plan step 1, see <span class="mono">--timelock-exit</span>). Solana stays hidden on the site until the program id is put in <span class="mono">config/launchpad.json</span> at the very end.</p>
    <div class="fcard"><div class="gh">1 · Program</div><p class="small">Deploy with <span class="mono">solana/deploy/deploy-program.sh</span> (your keypair; ~0.49 SOL rent, ~1.03 SOL needed during the deploy), then paste the program id.</p>
     <label>Program id<input data-pid value="${esc(programId)}" placeholder="from deploy-program.sh"></label><p class="mut small">RPC ${esc(SOL_RPC)}</p></div>
    <div class="fcard"><div class="gh">2 · EVM plan</div><p class="small">Run <span class="mono">node scripts/lp-solana-plan.mjs --i-will-sign-myself --deployer ${esc(M.approver)} --solana-program ${esc(programId || '&lt;id&gt;')}</span> and load the JSON.</p>
@@ -108,7 +110,7 @@ function render() {
    ${evm}
    <div class="fcard"><div class="gh">3 · Solana</div><p class="small">Solana wallet (becomes the program admin and LayerZero delegate): ${sw ? `<span class="mono">${esc(sw)}</span>` : '<button class="obtn sm" data-solw="phantom">Phantom</button> <button class="obtn sm" data-solw="solflare">Solflare</button>'}</p>
     <ol class="small"><li>init_store: fee recipient <span class="mono">${esc(FEE_RECIPIENT)}</span>, 0.5%, approver <span class="mono">${esc(M.approver)}</span> ${done.store ? '<b class="ok">✓ done</b>' : `<button class="obtn sm" data-act="store" ${busy || !sw || !programId ? 'disabled' : ''}>Sign</button>`}</li>${solRows}</ol></div>
-   <div class="fcard small"><div class="gh">4 · Go live</div><ol><li>After the timelock delay, send each chain's last step (timelock.execute setOmni) above.</li><li>Tell MultiSea the program id and the V2 escrows: they go into <span class="mono">config/launchpad.json</span> (solana.programId, omniEscrows) and the Worker; that publishes the Solana option.</li></ol></div>
+   <div class="fcard small"><div class="gh">4 · Go live</div><ol><li>48 h after each chain's step 1 (timelock exit), send its executeBatch step and the remaining steps above (acceptOwnership, V1 escrow Solana peer, setOmni).</li><li>Tell MultiSea the program id and the V2 escrows: they go into <span class="mono">config/launchpad.json</span> (solana.programId, omniEscrows) and the Worker; that publishes the Solana option.</li></ol></div>
    ${xcard}
    ${log ? `<pre class="small">${esc(log)}</pre>` : ''}</section>`;
   bindNav();
