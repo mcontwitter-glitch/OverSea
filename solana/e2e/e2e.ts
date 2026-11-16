@@ -8,6 +8,8 @@ import { EndpointProgram, SimpleMessageLibProgram, lzReceive, extractSentPacketE
 import { PacketV1Codec } from "@layerzerolabs/lz-v2-utilities";
 import { ethers } from "ethers";
 import { readFileSync } from "node:fs";
+import * as X from "../../src/solexisting";
+import { sendBatched } from "../../src/soltx";
 import * as O from "../../src/solanaomni.ts";
 
 const OUT = new URL("../../contracts/out/", import.meta.url).pathname;
@@ -237,19 +239,26 @@ async function main() {
   const moverA = await mover.getAddress();
   for (const t of [() => mover.setPeer(SOL_EID, b32(store)), () => escV1.setPeer(SOL_EID, b32(store))]) await (await t()).wait();
   const xparams: O.ExistingParams = { name: "MULTI ISLANDS", collectionUri: "ipfs://bafyISLANDS/collection.json", baseUri: "ipfs://bafyISLANDS/", payout: creator.publicKey,
-    royaltyBps: 500, maxSupply: 10, eids: [EVM_EID, OTHER_EID, SOL_EID] };
+    royaltyBps: 500, maxSupply: 100, eids: [EVM_EID, OTHER_EID, SOL_EID] };
   let strangerRegistered = true;
   try { await sol([O.registerExistingIx({ admin: stranger.publicKey, cid: xcid, params: xparams })], [stranger]); } catch { strangerRegistered = false; }
   check("register_existing is admin-only", !strangerRegistered);
-  await sol([O.registerExistingIx({ admin: admin.publicKey, cid: xcid, params: xparams })], [admin]);
+  // the page's flow (src/solexisting.ts) with a Phantom-like wallet (hands back re-built transactions, counts approvals)
+  const pw = { publicKey: admin.publicKey, approvals: 0, async signAllTransactions(txs: Transaction[]) { pw.approvals++; txs.forEach((t) => t.partialSign(admin));
+    return txs.map((t) => Transaction.from(t.serialize({ requireAllSignatures: false, verifySignatures: false }))); } };
+  const xc = { pid: O.OMNI_PROGRAM_ID, admin: admin.publicKey, cid: xcid, params: xparams };
   const xb0 = await conn.getBalance(admin.publicKey);
-  const copySig = await sol([O.existingCopiesIx(admin.publicKey, xcid, 1, 10)], [admin], 1_400_000);
-  const copyCu = (await conn.getTransaction(copySig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }))?.meta?.computeUnitsConsumed;
+  const plan0 = await X.existingPlan(conn, xc);
+  check("existing plan: register + 7 copy transactions (16 each) = ONE approval", !plan0.registered && plan0.items.length === 8 && X.approvalsFor(plan0.items.length) === 1, `${plan0.items.length} transactions`);
+  await sendBatched(conn, pw, plan0.items.slice(0, 3), () => {}, { batch: 8, again: "x" }); // a run interrupted after 3 transactions
+  const plan1 = await X.existingPlan(conn, xc);
+  check("resume after a partial run: only the missing copies are planned", plan1.registered && plan1.created === 32 && plan1.items.length === 5, `${plan1.created}/100 created, ${plan1.items.length} left`);
+  const a0 = pw.approvals; await X.runExisting(conn, pw, xc); const plan2 = await X.existingPlan(conn, xc);
   const xcost = (xb0 - await conn.getBalance(admin.publicKey)) / LAMPORTS_PER_SOL;
-  const xowners = await Promise.all(Array.from({ length: 10 }, async (_, i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)!));
+  const xowners = await Promise.all(Array.from({ length: 100 }, async (_, i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)!));
   const xd = O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data);
-  check("existing collection registered on Solana + all 10 ids created as locked copies in one tx", xd.existing && xowners.every((o) => o.equals(store))
-    && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${copyCu} CU, ${xcost.toFixed(4)} SOL for 10 copies`);
+  check("existing collection registered + all 100 ids created as locked copies held by the Store (escrow)", xd.existing && xowners.every((o) => o.equals(store)) && plan2.items.length === 0 && pw.approvals - a0 === 1
+    && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${xcost.toFixed(4)} SOL for register + 100 copies (local Core: no protocol fee), resume = ${pw.approvals - a0} approval`);
   const moverB = ethers.getBytes(ethers.zeroPadValue(moverA, 32)), escV1B = ethers.getBytes(ethers.zeroPadValue(escV1A, 32));
   await sol([O.setMoverIx(admin.publicKey, EVM_EID, moverB, escV1B), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, moverB), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, escV1B)], [admin]);
   await (await mover.setCollection(xcid, true)).wait();
@@ -257,7 +266,7 @@ async function main() {
   await (await dropV1.connect(alice).approve(moverA, 2)).wait();
   const [xpf, xlz2] = await mover.quoteToSolana(xcid, 2, b32(solMinter.publicKey));
   await evmToSol(await (await mover.connect(alice).toSolana(xcid, 2, b32(solMinter.publicKey), { value: xpf + xlz2 })).wait());
-  check("existing collection: move in via the mover, #2 locked in the existing V1 escrow, Active on Solana", (await dropV1.ownerOf(2)) === escV1A
+  check("existing collection: move in via the mover, #2 locked in the existing V1 escrow, its Solana copy RELEASED from escrow (no mint)", xowners[1].equals(store) && (await dropV1.ownerOf(2)) === escV1A
     && O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, 2)))!.data)!.equals(solMinter.publicKey) && Number(await dropV1.balanceOf(moverA)) === 0);
   // move out: back through the existing V1 escrow, which releases its copy to bob
   const xsa = await endpoint.getSendIXAccountMetaForCPI(conn, solMinter.publicKey, { sender: store.toBytes(), dstEid: EVM_EID, receiver: escV1A }, simple as any);

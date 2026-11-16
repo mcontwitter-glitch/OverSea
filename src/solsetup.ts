@@ -7,7 +7,7 @@
 //   per chain: set_mover (existing collections: the chain's MultiSeaSolanaMover + V1 escrow) + their nonces
 // Pure module (no DOM): the page and the local-validator test both use it.
 import { Connection, PublicKey, Transaction, type TransactionInstruction } from '@solana/web3.js';
-import { priorityFee, budget, sendUntilConfirmed, TxExpired } from './soltx';
+import { sendBatched } from './soltx';
 import { Buffer } from 'buffer';
 import { EndpointProgram, EndpointPDADeriver, UlnProgram, SimpleMessageLibProgram, SetConfigType } from '@layerzerolabs/lz-solana-sdk-v2';
 import * as O from './solanaomni';
@@ -61,37 +61,10 @@ export async function setupPlan(conn: Connection, c: SetupCfg): Promise<SetupIte
   return items;
 }
 
-/** Signs the missing transactions in small batches (one wallet approval each, fresh blockhash right before it, so a slow
- *  approval on a phone cannot outlive the ~1 minute a blockhash is valid), then sends them strictly in order: each one is
- *  re-broadcast until confirmed before the next is sent (later ones need the settings account from the first). */
+/** Signs the missing transactions in small batches and sends them strictly in order (soltx.sendBatched). */
 export const SETUP_BATCH = 6;
 export async function runSetup(conn: Connection, w: Signer, items: SetupItem[], on: (m: string) => void = () => {}) {
   const todo = items.filter(i => !i.done && i.ixs); if (!todo.length) return [];
-  const price = await priorityFee(conn, [w.publicKey], 20_000);
-  const ixs = await Promise.all(todo.map(it => it.ixs!()));
-  // dry run of the first one (its inputs exist already) so a real program error shows before anything is signed
-  { const { blockhash } = await conn.getLatestBlockhash('confirmed');
-    const sim = await conn.simulateTransaction(new Transaction({ feePayer: w.publicKey, recentBlockhash: blockhash }).add(...budget(400_000, price), ...ixs[0])).catch(() => null);
-    if (sim?.value.err) throw new Error(`${todo[0].label}: the network rejected it in a dry run: ${JSON.stringify(sim.value.err)} ${(sim.value.logs || []).filter(l => /rror|failed/i.test(l)).slice(-2).join(' ')}`); }
-  const nb = Math.ceil(todo.length / SETUP_BATCH); const sigs: string[] = [];
-  for (let b = 0; b < nb; b++) {
-    const part = ixs.slice(b * SETUP_BATCH, (b + 1) * SETUP_BATCH), labels = todo.slice(b * SETUP_BATCH, (b + 1) * SETUP_BATCH).map(i => i.label);
-    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed'); // fresh, right before the approval
-    const txs = part.map(x => new Transaction({ feePayer: w.publicKey, blockhash, lastValidBlockHeight }).add(...budget(400_000, price), ...x));
-    on(`Approve ${txs.length} transaction${txs.length > 1 ? 's' : ''} in your wallet ("Approve all")${nb > 1 ? ` · approval ${b + 1} of ${nb}` : ''}`);
-    const t0 = Date.now(); const signed = await w.signAllTransactions(txs); const secs = Math.round((Date.now() - t0) / 1000);
-    const changed = signed[0].recentBlockhash !== blockhash;
-    if (!(await conn.isBlockhashValid(signed[0].recentBlockhash!, { commitment: 'confirmed' }).then(r => r.value).catch(() => true)))
-      throw new Error(`The approval took ${secs} s and Solana only accepts a signature for about a minute, so nothing was sent. Tap "Set up program" again and approve right away.`);
-    for (const [i, tx] of signed.entries()) {
-      const n = b * SETUP_BATCH + i + 1;
-      on(`Sending ${n} of ${todo.length}: ${labels[i]}`);
-      try { sigs.push(await sendUntilConfirmed(conn, tx, { lastValidBlockHeight: tx.recentBlockhash === blockhash ? lastValidBlockHeight : undefined, onWait: m => on(`${n} of ${todo.length}: ${m}`) })); }
-      catch (e) { const m = String((e as any)?.message || e);
-        if (e instanceof TxExpired) throw new Error(`Transaction ${n} of ${todo.length} (${labels[i]}) was not confirmed: ${m} [approval took ${secs} s; wallet ${changed ? 'changed' : 'kept'} the blockhash]. Tap "Set up program" again: only the missing ones are signed.`);
-        throw new Error(`Transaction ${n} of ${todo.length} (${labels[i]}): ${m}`); }
-      on(`✓ ${labels[i]}`);
-    }
-  }
-  return sigs;
+  const list = await Promise.all(todo.map(async it => ({ label: it.label, ixs: await it.ixs!(), cu: 400_000 })));
+  return sendBatched(conn, w, list, on, { batch: SETUP_BATCH, again: 'Set up program', priceCap: 20_000 });
 }

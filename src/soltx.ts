@@ -73,3 +73,41 @@ export async function sendWallet(conn: Connection, w: WalletSigner, ixs: Transac
   // a wallet may hand back a re-built transaction (own blockhash, no lastValidBlockHeight): then the blockhash check decides
   return sendUntilConfirmed(conn, signed, { lastValidBlockHeight: signed.recentBlockhash === blockhash ? lastValidBlockHeight : undefined, onWait: o.onWait });
 }
+
+export type BatchItem = { label: string; ixs: TransactionInstruction[]; cu: number };
+export type BatchSigner = { publicKey: PublicKey; signAllTransactions(txs: Transaction[]): Promise<Transaction[]> };
+/** Many wallet transactions with few approvals (used by program setup and existing-collection copies):
+ *  - a dry run of the first one (its inputs exist already) so a real program error shows before anything is signed
+ *  - batches of `batch` per approval, each with a fresh blockhash fetched right before it (a slow approval on a phone
+ *    cannot outlive the ~1 minute a blockhash is valid); after signing, the blockhash is checked and nothing is sent if
+ *    it is already dead
+ *  - strictly in order: each one is re-broadcast (also to the extra RPCs) until confirmed before the next is sent
+ *  - errors name the transaction, the approval time and the RPC's answer; the caller re-plans from the chain on retry */
+export async function sendBatched(conn: Connection, w: BatchSigner, items: BatchItem[], on: Notify, o: { batch: number; again: string; priceCap?: number }): Promise<string[]> {
+  if (!items.length) return [];
+  const price = await priorityFee(conn, [w.publicKey], o.priceCap ?? 20_000);
+  { const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    const sim = await conn.simulateTransaction(new Transaction({ feePayer: w.publicKey, recentBlockhash: blockhash }).add(...budget(items[0].cu, price), ...items[0].ixs)).catch(() => null);
+    if (sim?.value.err) throw new Error(`${items[0].label}: the network rejected it in a dry run: ${JSON.stringify(sim.value.err)} ${(sim.value.logs || []).filter(l => /rror|failed/i.test(l)).slice(-2).join(' ')}`); }
+  const nb = Math.ceil(items.length / o.batch); const sigs: string[] = [];
+  for (let b = 0; b < nb; b++) {
+    const part = items.slice(b * o.batch, (b + 1) * o.batch);
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed'); // fresh, right before the approval
+    const txs = part.map(it => new Transaction({ feePayer: w.publicKey, blockhash, lastValidBlockHeight }).add(...budget(it.cu, price), ...it.ixs));
+    on(`Approve ${txs.length} transaction${txs.length > 1 ? 's' : ''} in your wallet${txs.length > 1 ? ' ("Approve all")' : ''}${nb > 1 ? ` · approval ${b + 1} of ${nb}` : ''}`);
+    const t0 = Date.now(); const signed = await w.signAllTransactions(txs); const secs = Math.round((Date.now() - t0) / 1000);
+    const changed = signed[0].recentBlockhash !== blockhash;
+    if (!(await conn.isBlockhashValid(signed[0].recentBlockhash!, { commitment: 'confirmed' }).then(r => r.value).catch(() => true)))
+      throw new Error(`The approval took ${secs} s and Solana only accepts a signature for about a minute, so nothing was sent. Tap "${o.again}" again and approve right away.`);
+    for (const [i, tx] of signed.entries()) {
+      const n = b * o.batch + i + 1, label = part[i].label;
+      on(`Sending ${n} of ${items.length}: ${label}`);
+      try { sigs.push(await sendUntilConfirmed(conn, tx, { lastValidBlockHeight: tx.recentBlockhash === blockhash ? lastValidBlockHeight : undefined, onWait: m => on(`${n} of ${items.length}: ${m}`) })); }
+      catch (e) { const m = String((e as any)?.message || e);
+        if (e instanceof TxExpired) throw new Error(`Transaction ${n} of ${items.length} (${label}) was not confirmed: ${m} [approval took ${secs} s; wallet ${changed ? 'changed' : 'kept'} the blockhash]. Tap "${o.again}" again: only the missing ones are signed.`);
+        throw new Error(`Transaction ${n} of ${items.length} (${label}): ${m}`); }
+      on(`✓ ${label}`);
+    }
+  }
+  return sigs;
+}
