@@ -34,8 +34,10 @@ export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.sol
   const keys = Object.keys(V2.escrows); const eidOf = k => LP.mainnet?.chains?.[k]?.eid ?? LP.eids?.[k];
   const store = storePdaOf(programId), store32 = hex(solKey(store));
   const accs = [programId, store, ...keys.map(k => peerPdaOf(programId, eidOf(k)))];
-  const r = await fetchFn(solRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getMultipleAccounts', params: [accs, { encoding: 'base64', commitment: 'confirmed' }] }) }).then(x => x.json());
-  const vals = r?.result?.value; if (!Array.isArray(vals)) return { ok: false, problems: ['Solana RPC did not answer'], store, store32 };
+  // batches of 10: the public RPC (publicnode) refuses getMultipleAccounts with more than 10 accounts
+  const parts = []; for (let i = 0; i < accs.length; i += 10) parts.push(accs.slice(i, i + 10));
+  const rs = await Promise.all(parts.map(p => fetchFn(solRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getMultipleAccounts', params: [p, { encoding: 'base64', commitment: 'confirmed' }] }) }).then(x => x.json()).catch(() => null)));
+  const vals = rs.every(r => Array.isArray(r?.result?.value)) ? rs.flatMap(r => r.result.value) : null; if (!vals) return { ok: false, problems: ['Solana RPC did not answer'], store, store32 };
   const data = v => (v ? Uint8Array.from(atob(v.data[0]), c => c.charCodeAt(0)) : null);
   const [prog, st, ...peers] = vals;
   if (!prog || prog.owner !== LOADER || !prog.executable) problems.push('Solana: the program is not deployed');
