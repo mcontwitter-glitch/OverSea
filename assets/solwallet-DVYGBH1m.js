@@ -1,0 +1,1 @@
+export{a as connectSol}from"./solwallet-khdXnzrs.js";

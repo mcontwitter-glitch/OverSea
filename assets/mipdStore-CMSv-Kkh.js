@@ -1,1 +1,0 @@
-export{o as injectedProvider}from"./injected-CBNecuWf.js";
