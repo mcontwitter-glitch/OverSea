@@ -1,0 +1,1 @@
+import{t as e}from"./launchpad-Bkp6tgZT.js";var t=e.solana?.programId||``,n=!!t;export{n,t};

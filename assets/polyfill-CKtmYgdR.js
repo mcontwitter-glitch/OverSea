@@ -1,0 +1,1 @@
+import{n as e}from"./safe-buffer-DX6CccDz.js";var t=e();globalThis.Buffer??=t.Buffer;
