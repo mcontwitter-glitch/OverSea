@@ -2,10 +2,16 @@
 members = ["programs/*"]
 resolver = "2"
 
+# Size matters on Solana (program rent is paid per byte): optimise for size, no unwinding, no symbols.
 [profile.release]
+opt-level = "z"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+panic = "abort"
+# The deployed target/deploy/*.so is always stripped by cargo-build-sbf (no symbol table: checked). rustc-level
+# `strip = true` on top of that measured 528 bytes LARGER here (96,896 vs 96,368), so it stays off.
+strip = false
 [profile.release.build-override]
 opt-level = 3
 incremental = false

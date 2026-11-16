@@ -1,22 +1,16 @@
 [package]
 name = "multisea_omni"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "MultiSea omni drop + escrow on Solana (LayerZero V2 OApp, Metaplex Core)"
+description = "MultiSea omni drop + escrow on Solana (LayerZero V2 OApp, Metaplex Core). Native, no Anchor: hand-encoded CPIs."
 
 [lib]
-crate-type = ["cdylib", "lib"]
+crate-type = ["cdylib"]
 name = "multisea_omni"
 
 [features]
 no-entrypoint = []
-no-idl = []
-no-log-ix-name = []
-cpi = ["no-entrypoint"]
 default = []
 
 [dependencies]
-anchor-lang = { version = "0.29.0", features = ["event-cpi", "init-if-needed"] }
-oapp = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", rev = "9c741e7f9790639537b1710a203bcdfd73b0b9ac" }
-mpl-core = "0.7.2"
-solana-helper = "0.1.0"
+solana-program = "=1.17.31"

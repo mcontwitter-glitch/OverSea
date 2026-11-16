@@ -1,6 +1,6 @@
-// Client for the MultiSea Solana program (solana/programs/multisea_omni). Instruction + account layouts mirror the Rust
-// (Anchor 0.29: 8-byte discriminators, Borsh). Used by the launchpad, bridge and deploy pages (lazy-loaded) and by the
-// local end-to-end harness in solana/e2e.
+// Client for the MultiSea Solana program (solana/programs/multisea_omni, native). Instructions: 8-byte discriminators
+// (sha256("global:<name>")[..8]) + Borsh params. Accounts: fixed little-endian layouts (see the Rust offsets).
+// Used by the launchpad, bridge and deploy pages (lazy-loaded) and by the local end-to-end harness in solana/e2e.
 import { Buffer } from "buffer";
 import { PublicKey, TransactionInstruction, SystemProgram, type AccountMeta } from "@solana/web3.js";
 import { keccak256, getBytes, concat, hashMessage, hexlify, SigningKey } from "ethers";
@@ -24,8 +24,10 @@ const D = {
   claim_refund: [15, 16, 30, 161, 255, 228, 97, 60], move_out: [70, 225, 254, 16, 221, 233, 233, 59],
   withdraw: [183, 18, 70, 156, 148, 109, 161, 34], set_paused: [91, 60, 125, 192, 176, 225, 166, 218],
   reveal: [9, 35, 59, 190, 167, 249, 76, 115], refresh_uris: [190, 184, 138, 150, 61, 0, 175, 157],
+  set_mover: [10, 202, 182, 143, 171, 208, 63, 204], register_existing: [2, 5, 61, 110, 9, 247, 100, 5], existing_copies: [40, 198, 111, 251, 244, 232, 14, 97],
 };
-const ACC = { Store: [130, 48, 247, 244, 182, 191, 30, 26], DropState: [78, 227, 64, 204, 83, 238, 174, 159], Request: [125, 172, 150, 161, 162, 115, 39, 71] };
+/** Locked copies per existing_copies transaction (the program's MAX_COPIES_TX). */
+export const MAX_COPIES_TX = 20;
 
 // ------------------------------------------------------------------ borsh
 class W {
@@ -161,24 +163,51 @@ export function setPausedIx(owner: PublicKey, cid: string, paused: boolean, pid 
   return ix([meta(owner, false, true), meta(dropPda(cid, pid), true)], disc("set_paused").u8(paused ? 1 : 0).out(), pid);
 }
 
-// ------------------------------------------------------------------ accounts
+/** Admin, existing V1 collections on chain `eid`: its MultiSeaSolanaMover (accepted as a sender of MOVE only) and its
+ *  existing V1 escrow (where move_out sends them back). The peer (set_peer) must exist. */
+export function setMoverIx(admin: PublicKey, eid: number, mover32: Uint8Array, v1Escrow32: Uint8Array, pid = OMNI_PROGRAM_ID) {
+  return ix([meta(admin, false, true), meta(storePda(pid)), meta(peerPda(eid, pid), true)], disc("set_mover").u32(eid).bytes(mover32).bytes(v1Escrow32).out(), pid);
+}
+export type ExistingParams = { name: string; collectionUri: string; baseUri: string; payout: PublicKey; royaltyBps: number; maxSupply: number; eids: number[] };
+/** Admin: give an existing V1 collection (same collection id) a Solana side: Core collection with enforced royalties, no mint. */
+export function registerExistingIx(a: { admin: PublicKey; cid: string; params: ExistingParams }, pid = OMNI_PROGRAM_ID) {
+  const p = a.params;
+  const w = disc("register_existing").bytes(hex32(a.cid)).str(p.name).str(p.collectionUri).str(p.baseUri).pk(p.payout).u16(p.royaltyBps).u32(p.maxSupply).u32(p.eids.length);
+  p.eids.forEach((e) => w.u32(e));
+  return ix([meta(a.admin, true, true), meta(storePda(pid)), meta(dropPda(a.cid, pid), true), meta(collectionPda(a.cid, pid), true), meta(MPL_CORE_ID), meta(SystemProgram.programId)], w.out(), pid);
+}
+/** Admin: create ids [start, start+qty) of an existing collection as locked copies owned by the Store (qty <= MAX_COPIES_TX). */
+export function existingCopiesIx(admin: PublicKey, cid: string, start: number, qty: number, pid = OMNI_PROGRAM_ID) {
+  const assets = Array.from({ length: qty }, (_, k) => meta(assetPda(cid, start + k, pid), true));
+  return ix([meta(admin, true, true), meta(storePda(pid)), meta(dropPda(cid, pid)), meta(collectionPda(cid, pid), true), meta(MPL_CORE_ID), meta(SystemProgram.programId), ...assets],
+    disc("existing_copies").u32(start).u32(qty).out(), pid);
+}
+
+// ------------------------------------------------------------------ accounts (fixed layouts, byte 0 = kind)
 export function decodeStore(d: Uint8Array) {
-  const r = new R(d); r.bytes(8);
-  return { admin: r.pk(), endpoint: r.pk(), localEid: r.u32(), approver: hexlify(r.bytes(20)), feeRecipient: r.pk(), feeBps: r.u16(), moveFee: r.u64(),
+  const r = new R(d); r.bytes(2);
+  const feeBps = r.u16(), localEid = r.u32();
+  return { feeBps, localEid, admin: r.pk(), endpoint: r.pk(), approver: hexlify(r.bytes(20)), feeRecipient: r.pk(), moveFee: r.u64(),
     gas: { requestBase: r.u64(), requestPerId: r.u64(), moveGas: r.u64() } as Gas };
 }
+export function decodePeer(d: Uint8Array) { return { eid: new R(d.slice(4)).u32(), address: d.slice(8, 40), mover: d.slice(40, 72), v1Escrow: d.slice(72, 104) }; }
 export function decodeDrop(d: Uint8Array) {
-  const r = new R(d); r.bytes(8);
-  const x = { cid: "0x" + Buffer.from(r.bytes(32)).toString("hex"), owner: r.pk(), payout: r.pk(), collection: r.pk(), feeRecipient: r.pk(), feeBps: r.u16(), hubEid: r.u32(),
-    maxSupply: r.u32(), royaltyBps: r.u16(), mintedHere: r.u32(), pendingQty: r.u32(), held: r.u64(), nextRid: r.u64(), paused: r.bool(), revealed: r.bool(),
-    name: r.str(), baseUri: r.str(), preRevealUri: r.str(), eids: [] as number[], phases: [] as Phase[] };
-  for (let n = r.u32(); n > 0; n--) x.eids.push(r.u32());
-  for (let n = r.u32(); n > 0; n--) x.phases.push({ start: r.i64(), end: r.i64(), maxPerWallet: r.u32(), maxSupply: r.u32(), merkleRoot: r.bytes(32), price: r.u64() });
+  const r = new R(d); r.bytes(3);
+  const flags = r.u8();
+  const x = { paused: !!(flags & 1), revealed: !!(flags & 2), existing: !!(flags & 4), feeBps: r.u16(), royaltyBps: r.u16(), hubEid: r.u32(), maxSupply: r.u32(),
+    mintedHere: r.u32(), pendingQty: r.u32(), held: r.u64(), nextRid: r.u64(), cid: "0x" + Buffer.from(r.bytes(32)).toString("hex"),
+    owner: r.pk(), payout: r.pk(), collection: r.pk(), feeRecipient: r.pk(), name: "", baseUri: "", preRevealUri: "", eids: [] as number[], phases: [] as Phase[] };
+  const [ne, np, nl, bl, pl] = [d[200], d[201], d[202], d[203], d[204]];
+  const e = new R(d.slice(208)); for (let i = 0; i < ne; i++) x.eids.push(e.u32());
+  const p = new R(d.slice(240)); for (let i = 0; i < np; i++) x.phases.push({ start: p.i64(), end: p.i64(), maxPerWallet: p.u32(), maxSupply: p.u32(), merkleRoot: p.bytes(32), price: p.u64() });
+  const t = new TextDecoder();
+  x.name = t.decode(d.slice(752, 752 + nl)); x.baseUri = t.decode(d.slice(784, 784 + bl)); x.preRevealUri = t.decode(d.slice(984, 984 + pl));
   return x;
 }
 export function decodeRequest(d: Uint8Array) {
-  const r = new R(d); r.bytes(8);
-  return { to: r.pk(), payer: r.pk(), qty: r.u32(), start: r.u32(), paid: r.u64(), status: r.u8() };
+  const r = new R(d.slice(4));
+  const status = d[2], qty = r.u32(), start = r.u32(); r.bytes(4);
+  return { status, qty, start, paid: r.u64(), to: r.pk(), payer: r.pk() };
 }
 /** Metaplex Core AssetV1: key (1) | owner (32) | update authority (enum) ... */
 export const coreAssetOwner = (d: Uint8Array) => (d[0] === 1 ? new PublicKey(d.slice(1, 33)) : null);
