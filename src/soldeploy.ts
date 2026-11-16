@@ -262,7 +262,7 @@ function render() {
         <br>RPC <span class="mono">${esc(SOL_RPC)}</span>
         <br><br>Prefer the terminal? Same result with your keypair file (the script builds the program from source):<br><span class="mono">git clone https://github.com/mcontwitter-glitch/OverSea && OverSea/solana/deploy/deploy-program.sh --keypair &lt;your-wallet.json&gt; --go</span>
         <br>Already deployed elsewhere? Program id: <input class="sdin" data-pid value="${esc(programId)}" placeholder="program id">` },
-    { t: 'Set up the program', done: s3, cost: setup && !s3 ? `${setup.filter(i => !i.done).length} transactions · one approval` : '',
+    { t: 'Set up the program', done: s3, cost: setup && !s3 ? `${setup.filter(i => !i.done).length} transactions · ${Math.ceil(setup.filter(i => !i.done).length / 6)} approval${setup.filter(i => !i.done).length > 6 ? 's' : ''}` : '',
       p: `Saves the MultiSea settings (${(SL.feeBps ?? 50) / 100}% fee to ${esc(short(SL.feeRecipient))}, the MultiSea approver) and links the program to the ${N} chains. One "Approve all" in your wallet.`,
       body: s3 ? `<div class="sdst"><span class="okc">✓ Done</span> settings saved · ${N} of ${N} chains linked</div>` : `${btn('setup', 'Set up program', s2 && !!sw && !wrongSol)}${!s2 ? '<div class="sdst mut">After step 2.</div>' : ''}`,
       d: setup ? `<ol>${setup.map(i => `<li class="${i.done ? 'ok' : ''}">${i.done ? '✓ ' : ''}${esc(i.label)}</li>`).join('')}</ol>` : `init_store (fee recipient ${esc(SL.feeRecipient)}, ${SL.feeBps ?? 50} bps, move fee ${(SL.moveFeeLamports ?? 1_000_000) / 1e9} SOL); per chain: set_peer + LayerZero libraries, nonce and config (2-of-2 DVNs), set_mover (existing collections).` },

@@ -23,7 +23,7 @@ function phantom(kp: Keypair, mode: 'same' | 'rebuild' | 'newhash' = 'same') { c
   async signTransaction(tx: Transaction) { w.approvals++;
     if (w.mode === 'newhash') tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
     tx.partialSign(kp); return w.mode === 'same' ? tx : Transaction.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })); },
-  async signAllTransactions(txs: Transaction[]) { w.approvals++; txs.forEach(t => t.partialSign(kp)); return txs; } }; return w; }
+  async signAllTransactions(txs: Transaction[]) { w.approvals++; txs.forEach(t => t.partialSign(kp)); return w.mode === 'same' ? txs : txs.map(t => Transaction.from(t.serialize({ requireAllSignatures: false, verifySignatures: false }))); } }; return w; }
 const phantomSame = (w: ReturnType<typeof phantom>, mode: 'same' | 'rebuild' | 'newhash') => { w.mode = mode; return w; };
 // A connection that misbehaves like busy mainnet / a suspended phone tab: drops the first N upload txs (they never land, so
 // they expire), reports a short lastValidBlockHeight (fast expiry), can hide signature statuses, or "dies" after N upload sends.
@@ -99,9 +99,15 @@ async function main() {
   for (const k of keys) { const eid = L.mainnet.chains[k].eid; await tx(await ep.setDefaultSendLibrary(conn, lz.publicKey, SIMPLE, eid), await ep.setDefaultReceiveLibrary(conn, lz.publicKey, SIMPLE, eid)); }
   const links: S.Link[] = keys.map(k => ({ k, name: k, eid: L.mainnet.chains[k].eid, escrow: L.solana.v2.escrows[k], mover: L.solana.v2.movers[k], v1: L.mainnet.chains[k].omniEscrow, confirmations: L.mainnet.chains[k].confirmations }));
   const cfg = (ls: S.Link[]): S.SetupCfg => ({ pid: new PublicKey(pid), admin: admin.publicKey, localEid: SOL_EID, approver: L.mainnet.approver, feeRecipient: new PublicKey(L.solana.feeRecipient), feeBps: L.solana.feeBps, moveFee: BigInt(L.solana.moveFeeLamports), links: ls, msgLib: SIMPLE, dvnConfig: false });
-  const ws = phantom(admin);
+  const ws = phantom(admin, 'rebuild');
   let items = await S.setupPlan(conn, cfg(links.slice(0, 2)));
   check('fresh program: setup lists store + links + movers', items.length === 1 + 2 * 2 && items.every(i => !i.done), `${items.length} transactions`);
+  // MC's case: the wallet hands back the signed batch only after its blockhash expired (slow approval on a phone)
+  { const slow = { publicKey: admin.publicKey, async signAllTransactions(txs: Transaction[]) { const bh = txs[0].recentBlockhash!;
+      while ((await conn.isBlockhashValid(bh, { commitment: 'confirmed' })).value) await new Promise(r => setTimeout(r, 2000));
+      txs.forEach(t => t.partialSign(admin)); return txs.map(t => Transaction.from(t.serialize({ requireAllSignatures: false }))); } };
+    const t0 = Date.now(); const e = await S.runSetup(conn, slow, items).catch(e => e); const st = await conn.getAccountInfo(O.storePda(new PublicKey(pid)));
+    check('slow approval (blockhash expired before sending): clear message, nothing sent', /approval took \d+ s/.test(String(e?.message)) && !st, `${Math.round((Date.now() - t0) / 1000)} s: ${String(e?.message).slice(0, 110)}`); }
   await S.runSetup(conn, ws, items);
   items = await S.setupPlan(conn, cfg(links));
   const left = items.filter(i => !i.done);

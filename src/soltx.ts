@@ -10,7 +10,10 @@ import { Connection, Keypair, PublicKey, Transaction, ComputeBudgetProgram, type
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = (u: Uint8Array) => { let n = 0n; for (const x of u) n = n * 256n + BigInt(x); let s = ''; while (n > 0n) { s = B58[Number(n % 58n)] + s; n /= 58n; } for (const x of u) { if (x) break; s = '1' + s; } return s; };
-export class TxExpired extends Error { constructor(m = 'The network did not confirm the transaction in time.') { super(m); this.name = 'TxExpired'; } }
+export class TxExpired extends Error { constructor(m = 'The network did not confirm the transaction in time.', public stale = false) { super(m); this.name = 'TxExpired'; } }
+/** Extra RPCs that every signed transaction is also broadcast to (errors ignored), in case the main RPC drops or refuses sends. */
+const extra: Connection[] = [];
+export const addBroadcast = (c: Connection) => { extra.push(c); };
 export type Notify = (m: string) => void;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -26,22 +29,27 @@ export const feeOf = (units: number, microLamports: number, sigs = 1) => 5000 * 
 export async function sendUntilConfirmed(conn: Connection, tx: Transaction, o: { lastValidBlockHeight?: number; onWait?: Notify; maxMs?: number } = {}): Promise<string> {
   const raw = tx.serialize(); const sig = b58(tx.signature!); const bh = tx.recentBlockhash!; const t0 = Date.now();
   const status = async (hist = false) => (await conn.getSignatureStatuses([sig], { searchTransactionHistory: hist }).catch(() => ({ value: [null] }))).value[0];
-  let first = true;
+  let first = true; let lastErr = '';
+  const dead = async () => (o.lastValidBlockHeight ? (await conn.getBlockHeight('confirmed').catch(() => 0)) > o.lastValidBlockHeight
+    : !(await conn.isBlockhashValid(bh, { commitment: 'confirmed' }).then(r => r.value).catch(() => true)));
   for (let i = 0; ; i++) {
-    if (i % 2 === 0) { try { await conn.sendRawTransaction(raw, { skipPreflight: !first, maxRetries: 0 }); }
-      catch (e: any) { const m = String(e?.message || e); if (first && !/already been processed|AlreadyProcessed|Blockhash not found/i.test(m)) throw e; } first = false; }
+    if (i % 2 === 0) {
+      for (const x of extra) x.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
+      try { await conn.sendRawTransaction(raw, { skipPreflight: !first, maxRetries: 0 }); lastErr = ''; }
+      catch (e: any) { const m = String(e?.message || e); lastErr = m.slice(0, 200);
+        if (first && /Blockhash not found/i.test(m) && await dead()) throw new TxExpired('The signed transaction was already too old when it was sent (its blockhash expired).', true);
+        if (first && !/already been processed|AlreadyProcessed|Blockhash not found/i.test(m)) throw e; }
+      first = false; }
     await sleep(1500);
     const s = await status();
     if (s?.err) throw new Error('Solana transaction failed: ' + JSON.stringify(s.err));
     if (s && (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized')) return sig;
     if (i > 0 && i % 4 === 0) {
-      const dead = o.lastValidBlockHeight && tx.recentBlockhash === bh ? (await conn.getBlockHeight('confirmed').catch(() => 0)) > o.lastValidBlockHeight
-        : !(await conn.isBlockhashValid(bh, { commitment: 'confirmed' }).then(r => r.value).catch(() => true));
-      if (dead || Date.now() - t0 > (o.maxMs ?? 150_000)) {
+      if (await dead() || Date.now() - t0 > (o.maxMs ?? 150_000)) {
         await sleep(1500); const f = await status(true); // last look: it may have landed just before the blockhash died
         if (f?.err) throw new Error('Solana transaction failed: ' + JSON.stringify(f.err));
         if (f) return sig;
-        throw new TxExpired();
+        throw new TxExpired(`The network did not confirm the transaction in time${lastErr ? ` (last RPC answer: ${lastErr})` : ''}.`);
       }
       if (i >= 8) o.onWait?.('The network is busy: still sending…');
     }

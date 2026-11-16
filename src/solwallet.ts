@@ -2,6 +2,7 @@
 // hidden until the mainnet program exists (config/launchpad.json solana.programId).
 import { Connection, PublicKey, Transaction, ComputeBudgetProgram, type TransactionInstruction } from '@solana/web3.js';
 import LP from '../config/launchpad.json';
+import { addBroadcast } from './soltx';
 
 type Prov = { publicKey?: { toBase58(): string } | null; connect(): Promise<unknown>; disconnect?(): Promise<void>; signTransaction(tx: Transaction): Promise<Transaction>; signAllTransactions?(txs: Transaction[]): Promise<Transaction[]> };
 const W = window as any;
@@ -23,6 +24,9 @@ export function chunkMulti<T extends Connection>(c: T, max = 10): T {
   return c;
 }
 export const solConn = chunkMulti(new Connection(SOL_RPC, 'confirmed'));
+// Second broadcast RPC for signed transactions (public, browser-friendly); not used for reads or on a test validator.
+export const SOL_SEND_RPC = (import.meta as any).env?.VITE_SOLANA_RPC ? '' : 'https://solana.leorpc.com/?api_key=FREE';
+if (SOL_SEND_RPC) addBroadcast(new Connection(SOL_SEND_RPC, 'confirmed'));
 export const solWallet: { id: string; name: string; pubkey: PublicKey | null; prov: Prov | null } = { id: '', name: '', pubkey: null, prov: null };
 const subs: (() => void)[] = [];
 export const onSolWallet = (f: () => void) => { subs.push(f); };
