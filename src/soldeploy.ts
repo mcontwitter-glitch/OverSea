@@ -212,8 +212,9 @@ async function xAdd() {
   say(`<span class="ok">${esc(xf.name)}: all ${xf.maxSupply} pieces exist on Solana, held in escrow.</span>`); await xRefresh();
 }
 function existingHtml() {
-  const missing = xst ? xst.total - xst.created : 0; const n = xst?.items.length || 0; const appr = Math.ceil(n / 8);
-  const cost = xst ? missing * SOL_PER_COPY + (xst.registered ? 0 : SOL_REGISTER) : 0;
+  const missing = xst ? xst.total - xst.created : 0; const n = xst?.items.length || 0; const copiesTx = n - (xst && !xst.registered ? 1 : 0);
+  const appr = (xst && !xst.registered ? 1 : 0) + Math.ceil(Math.max(0, copiesTx) / 16); // register alone first, then the copies (src/solexisting.ts)
+  const cost = xst ? missing * SOL_PER_COPY + (xst.registered ? 0 : SOL_REGISTER) + n * 0.00002 : 0; // + network/priority fees
   return `<details class="sddet sdx" data-det="x" ${openDet.has('x') ? 'open' : ''}><summary>Existing collections on Solana</summary><div class="sdpre">
     <p>Gives a live multichain collection its full set on Solana, like the other chains: registers it (royalties enforced, paid to ${esc(short(SL.feeRecipient))}) and creates every piece as a locked copy held by the Solana escrow. Bridging to Solana then releases the copy from escrow; leaving locks it again. About ${SOL_PER_COPY.toFixed(4)} SOL per piece (account rent + Metaplex fee, not refundable), paid by the program admin wallet. After step 3.</p>
     <label>Collection <select class="sdin" data-xslug><option value="">Choose…</option>${XCOLS.map(c => `<option value="${esc(c.slug)}" ${c.slug === xslug ? 'selected' : ''}>${esc(c.name)} (${c.supply})</option>`).join('')}</select></label>

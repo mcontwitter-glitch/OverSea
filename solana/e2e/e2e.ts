@@ -249,10 +249,10 @@ async function main() {
   const xc = { pid: O.OMNI_PROGRAM_ID, admin: admin.publicKey, cid: xcid, params: xparams };
   const xb0 = await conn.getBalance(admin.publicKey);
   const plan0 = await X.existingPlan(conn, xc);
-  check("existing plan: register + 7 copy transactions (16 each) = ONE approval", !plan0.registered && plan0.items.length === 8 && X.approvalsFor(plan0.items.length) === 1, `${plan0.items.length} transactions`);
+  check("existing plan: register alone (approval 1), then 13 copy transactions of 8 (approval 2)", !plan0.registered && plan0.items.length === 14 && X.approvalsFor(plan0) === 2, `${plan0.items.length} transactions, ${X.approvalsFor(plan0)} approvals`);
   await sendBatched(conn, pw, plan0.items.slice(0, 3), () => {}, { batch: 8, again: "x" }); // a run interrupted after 3 transactions
   const plan1 = await X.existingPlan(conn, xc);
-  check("resume after a partial run: only the missing copies are planned", plan1.registered && plan1.created === 32 && plan1.items.length === 5, `${plan1.created}/100 created, ${plan1.items.length} left`);
+  check("resume after a partial run: only the missing copies are planned", plan1.registered && plan1.created === 16 && plan1.items.length === 11 && X.approvalsFor(plan1) === 1, `${plan1.created}/100 created, ${plan1.items.length} left`);
   const a0 = pw.approvals; await X.runExisting(conn, pw, xc); const plan2 = await X.existingPlan(conn, xc);
   const xcost = (xb0 - await conn.getBalance(admin.publicKey)) / LAMPORTS_PER_SOL;
   const xowners = await Promise.all(Array.from({ length: 100 }, async (_, i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)!));
