@@ -243,7 +243,7 @@
     "feeRecipient": "85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS",
     "feeBps": 50,
     "moveFeeLamports": 1000000,
-    "rpc": "https://api.mainnet-beta.solana.com",
+    "rpc": "https://solana-rpc.publicnode.com",
     "sendLib": "7a4WjyR8VZ7yZz5XJAKm39BUGn5iT9CKcv2pmG9tdXVH",
     "maxLzFeeLamports": 50000000,
     "v2": {
