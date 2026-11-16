@@ -711,3 +711,7 @@ body:has(.gate[data-gate=open] .holderchat){overflow:hidden}.gate[data-gate=open
 .fndpick .chk{align-items:center}
 .fndmsg{margin:12px 0 0}
 .ag-records{border-top:1px solid var(--line);padding:8px 0;font-size:13px}.ag-records summary{font-weight:600}.ag-rec{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid var(--line)}.ag-rec span{display:flex;flex-direction:column}.ag-rec i{font-style:normal;font-size:11px}.ag-rec b{text-align:right;overflow-wrap:anywhere;font-weight:500}
+
+/* Solana shown but disabled until the program id is set */
+.solsoon{opacity:.55;cursor:not-allowed}
+img.cl.solsoon{filter:grayscale(.4)}

@@ -7,7 +7,7 @@ import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wal
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
 import { LP_LIVE, factoryOn } from './lpchain';
-import { SOLANA_ON } from './solflag';
+import { SOLANA_ON, SOL_SOON, solSoonChip } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
@@ -20,7 +20,9 @@ const slug = path.split('/')[2] || '';
 const fmt = (n: number, d = 6) => (+n.toFixed(d)).toLocaleString(undefined, { maximumFractionDigits: d });
 const usdTxt = (v: number | null) => (v == null || !isFinite(v) ? '' : v > 0 && v < 0.01 ? '< $0.01' : '≈ $' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const rateOf = (r: UsdRates, k: string) => (chains[k]?.native === 'APE' ? r.APE : chains[k]?.native === 'BNB' ? r.BNB : r.ETH);
-const chainLogos = (d: Drop) => d.chains.map(c => `<img class="cl" src="/logos/${c.chain}.svg" title="${esc(chains[c.chain]?.name)}" alt="">`).join('');
+const chainLogos = (d: Drop) => d.chains.map(c => `<img class="cl" src="/logos/${c.chain}.svg" title="${esc(chains[c.chain]?.name)}" alt="">`).join('') + (solSoon(d) ? `<img class="cl solsoon" src="/logos/solana.svg" title="${SOL_SOON}" alt="">` : '');
+// multichain drops show Solana (disabled) until the program id is set
+const solSoon = (d: Drop) => !SOLANA_ON && (d as any).mode === 'multichain';
 const demoTag = (d: Drop) => (d.demo ? '<span class="ldtag demo">Demo</span>' : d.local ? '<span class="ldtag demo">Local preview</span>' : '');
 const mcTag = (d: Drop) => (isMulti(d) ? '<span class="ldtag mc" title="One shared supply across chains; NFTs can move between chains">Multichain</span>' : '');
 const CH_COL: Record<string, string> = { base: '#3b82f6', ethereum: '#a3a3ff', apechain: '#1d4ed8', bnb: '#f0b90b', robinhood: '#c3f53c' };
@@ -147,7 +149,7 @@ function mintBox(d: Drop) {
     : real ? (wallet.address ? `<button class="bbtn ldmint" data-act="mint" ${realBusy ? 'disabled' : ''}>${realBusy ? '<span class="spin"></span> Minting…' : `Mint ${qty} on ${esc(chains[c.chain].name)}`}</button>` : '<button class="bbtn ldmint" data-act="connect">Connect wallet to mint</button>')
     : `<button class="bbtn ldmint" data-act="mint">Mint ${qty} on ${esc(chains[c.chain].name)} · demo (no transaction)</button>`;
   return `<div class="fcard ldmintbox">
-   ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}"><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${isMulti(d) ? (x.chain === HUB ? (isBatched(d) ? 'Instant · cheapest' : 'Instant · supply hub') : 'Confirms via Base') : `${(x.supply - x.minted).toLocaleString()} left`}</em></span></button>`).join('')}</div>` : ''}
+   ${d.chains.length > 1 ? `<div class="gh">${isMulti(d) ? 'Mint on <span class="mut small">you pay on this chain · your NFT is Active here</span>' : 'Mint on'}</div><div class="ldchsel">${d.chains.map(x => `<button class="ldch ${x.chain === c.chain ? 'on' : ''}" data-ch="${x.chain}"><img class="cl" src="/logos/${x.chain}.svg" alt=""><span><b>${esc(chains[x.chain].name)}</b><em>${isMulti(d) ? (x.chain === HUB ? (isBatched(d) ? 'Instant · cheapest' : 'Instant · supply hub') : 'Confirms via Base') : `${(x.supply - x.minted).toLocaleString()} left`}</em></span></button>`).join('')}${solSoon(d) ? solSoonChip() : ''}</div>` : ''}
    ${isMulti(d) ? mcExplainer(d, c.chain) : ''}
    ${st === 'live' ? `<div class="ldqty"><span class="gh">Quantity</span><div class="qpick"><button data-q="-1" ${qty <= 1 ? 'disabled' : ''} aria-label="Less">−</button><input data-qin type="number" min="1" max="${max}" value="${qty}" aria-label="Quantity"><button data-q="1" ${qty >= max ? 'disabled' : ''} aria-label="More">+</button></div><button class="pill" data-q="max">Max ${max}</button></div>
    <div class="ldpay"><label class="${pay === 'direct' ? 'on' : ''}"><input type="radio" name="pay" value="direct" ${pay === 'direct' ? 'checked' : ''}><span><b>${esc(chains[c.chain].native)} on ${esc(chains[c.chain].name)}</b><em>Direct mint</em></span></label><label class="${pay === 'relay' ? 'on' : ''}"><input type="radio" name="pay" value="relay" ${pay === 'relay' ? 'checked' : ''}><span><b>Pay from another chain</b><em>Routed by Relay</em></span></label></div>
@@ -194,6 +196,7 @@ function deployBox(d: Drop, todo: string[]) {
    <p class="mut small">MultiSea approved this drop. Deploying creates your contract through the MultiSea factory with MultiSea's signed approval; you pay the gas and own the contract.${isMulti(d) ? ' Deploy on every chain (Base, the supply hub, first).' : ''}</p>
    ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(cn(depBusy))}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(cn(ok[0]))}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(cn(k))).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : '')}
    ${ok.includes('solana') && getSession() ? `<p class="small" style="margin-top:8px">Solana wallet (the one you entered when creating the drop): ${solAddr ? `<span class="mono">${esc(solAddr.slice(0, 4))}…${esc(solAddr.slice(-4))}</span>` : '<button type="button" class="obtn sm" data-solact="connect" data-solw="phantom">Phantom</button> <button type="button" class="obtn sm" data-solact="connect" data-solw="solflare">Solflare</button>'}</p>` : ''}
+   ${solSoon(d) ? `<p class="mut small" style="margin-top:6px"><img class="cl" src="/logos/solana.svg" alt=""> ${SOL_SOON} (deploys last)</p>` : ''}
    ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
 }
 let solAddr = '';
@@ -265,7 +268,7 @@ function moveModal(d: Drop) {
   return `<div class="ldmodal" role="dialog" aria-modal="true" aria-label="Move to chain"><div class="ldmodalin fcard">
    <div class="ldmh"><b>Move ${esc(d.symbol)} #${h.id}</b><button class="x" data-act="mclose" aria-label="Close">✕</button></div>
    <div class="ldmflow"><span><img class="cl" src="/logos/${src}.svg" alt=""> ${esc(chains[src].name)}<em>Active now → locked in escrow</em></span><b>→</b><span><img class="cl" src="/logos/${moveDst}.svg" alt=""> ${esc(chains[moveDst].name)}<em>released from escrow → Active</em></span></div>
-   <div class="gh">Destination</div><div class="ldchsel">${dsts.map(k => `<button class="ldch ${k === moveDst ? 'on' : ''}" data-dst="${k}"><img class="cl" src="/logos/${k}.svg" alt=""><span><b>${esc(chains[k].name)}</b><em>${lzEta(src, k)}</em></span></button>`).join('')}</div>
+   <div class="gh">Destination</div><div class="ldchsel">${dsts.map(k => `<button class="ldch ${k === moveDst ? 'on' : ''}" data-dst="${k}"><img class="cl" src="/logos/${k}.svg" alt=""><span><b>${esc(chains[k].name)}</b><em>${lzEta(src, k)}</em></span></button>`).join('')}${solSoon(d) ? solSoonChip() : ''}</div>
    <div class="kv bkv ldkv"><span>LayerZero fee (est.)</span><b>≈ $${lz.toFixed(2)} <i class="usd">paid in ${esc(nat)} on ${esc(chains[src].name)}; exact quote from escrow.quoteMove()</i></b>
     <span>MultiSea move fee</span><b>$${MOVE_FEE_USD.toFixed(2)} <i class="usd">flat, in ${esc(nat)}</i></b>
     <span>Source gas (est.)</span><b>${gasNat == null ? '<span class="spin"></span>' : `${fmt(gasNat, 7)} ${esc(nat)} <i class="usd">${usdTxt(gasUsd)}</i>`}</b>

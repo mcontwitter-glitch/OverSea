@@ -3,6 +3,7 @@ import { createPublicClient, createWalletClient, custom, http, parseAbi, formatE
 import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 import { chainPicker } from './chainpick';
+import { SOLANA_ON, SOL_SOON } from './solflag';
 export type BCfg = { network: string; mode: string; feeWallet: string; supportedChains: number; lzGas: number; tiers?: { min: number; max: number; eth: string; label?: string }[];
   chains: Record<string, { name: string; chainId: number; eid: number; rpc: string; explorer: string; factory: string | null; logo: string; native?: string; lzScan?: string }>;
   collections: { id: string; slug: string; mirrorsSlug: string; name: string; native: string; contracts: Record<string, Address>; escrows: Record<string, Address>; img: string; fromBlock: Record<string, number>; kind?: 'omni'; cid?: `0x${string}`; supply?: number }[] };
@@ -55,6 +56,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
      <div class="bft"><label class="bl">From<div class="bsel">${lg(s.from)}<select data-k="from">${chainOpt(s.from, s.to)}</select></div></label>
       <button class="bswap" data-act="swap" title="Swap" aria-label="Swap chains">⇄</button>
       <label class="bl">To<div class="bsel">${lg(s.to)}<select data-k="to">${chainOpt(s.to, s.from)}</select></div></label></div>
+     ${SOLANA_ON ? '' : `<p class="mut small solsoon"><img class="cl" src="/logos/solana.svg" alt=""> ${SOL_SOON}</p>`}
      <div class="gh">Your NFTs on ${esc(cfg.chains[s.from].name)}</div>
      <div class="bnfts">${!wallet.address ? `<div class="bempty"><p class="mut">Connect your wallet to see your NFTs.</p><button class="bbtn" data-act="connect">Connect wallet</button></div>`
        : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img}${id}.webp" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')

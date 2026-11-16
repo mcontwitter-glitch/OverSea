@@ -2,6 +2,7 @@ import AV from './assetv.json';
 import CFG from '../config/collections.json';
 import { checkApi, onApiUp, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
+import { SOLANA_ON, SOL_SOON } from './solflag';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
 type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
@@ -46,7 +47,7 @@ const SORTS = [['featured', 'Featured'], ['volume', 'Volume'], ['floor', 'Floor'
 let q = '', sort = 'featured', showAll = false, chain = new URLSearchParams(location.search).get('chain') || ''; const LIMIT = 10;
 // Chain filter. Bitcoin is not an EVM deployment chain in collections.json: its chip shows Ordinals collections (src/btcpage.ts).
 let btcCards: string | null = null;
-const chainChips = () => `<div class="chips hchips" role="group" aria-label="Filter by chain"><button class="chip ${chain ? '' : 'on'}" data-chain="">All chains</button>${Object.entries(chains).map(([k, c]) => `<button class="chip ${chain === k ? 'on' : ''}" data-chain="${k}"><img class="cl" src="/logos/${k}.svg" alt="">${esc(c.name)}</button>`).join('')}<button class="chip btcchip ${chain === 'bitcoin' ? 'on' : ''}" data-chain="bitcoin"><img class="cl" src="/logos/bitcoin.svg" alt="">Bitcoin<em>Ordinals</em></button></div>`;
+const chainChips = () => `<div class="chips hchips" role="group" aria-label="Filter by chain"><button class="chip ${chain ? '' : 'on'}" data-chain="">All chains</button>${Object.entries(chains).map(([k, c]) => `<button class="chip ${chain === k ? 'on' : ''}" data-chain="${k}"><img class="cl" src="/logos/${k}.svg" alt="">${esc(c.name)}</button>`).join('')}<button class="chip btcchip ${chain === 'bitcoin' ? 'on' : ''}" data-chain="bitcoin"><img class="cl" src="/logos/bitcoin.svg" alt="">Bitcoin<em>Ordinals</em></button>${SOLANA_ON ? '' : `<button class="chip solsoon" disabled title="${SOL_SOON}"><img class="cl" src="/logos/solana.svg" alt="">Solana<em>after program deploy</em></button>`}</div>`;
 async function loadBtc() {
   const D = await import('./btc/data'); const [l, usd] = await Promise.all([D.featured(), D.btcUsd()]);
   btcCards = l.map(c => `<a class="ccard2 btcc" href="/btc/c/${esc(c.slug)}"><div class="cc2img">${c.icon ? `<img class="pix" src="${esc(c.icon)}" alt="" loading="lazy" onerror="this.onerror=null;this.outerHTML='&lt;iframe class=&quot;pix&quot; sandbox=&quot;allow-scripts&quot; scrolling=&quot;no&quot; src=&quot;'+this.src.replace('/content/','/preview/')+'&quot;&gt;&lt;/iframe&gt;'">` : ''}<span class="ftag btctag">Ordinals</span></div><div class="cc2body"><div class="ccname">${esc(c.name)}</div><div class="ccchains"><img class="cl" src="/logos/bitcoin.svg" title="Bitcoin" alt=""></div><div class="cc2stats"><div><span>Floor</span><b>${c.floor ? D.fmtBtc(c.floor) : '-'}</b></div><div><span>Floor USD</span><b>${c.floor && usd ? D.fmtUsd(c.floor, usd) : '-'}</b></div><div><span>Supply</span><b>${c.supply.toLocaleString()}</b></div><div><span>Listed</span><b>${c.listed}</b></div></div></div></a>`).join('');
