@@ -122,18 +122,29 @@ async function refresh(what: 'all' | 'sol' | string = 'all') {
 // ------------------------------------------------------------------ actions
 const solSigner = () => { if (!solWallet.pubkey || !solWallet.prov) throw new Error('Connect Phantom first (step 1).'); const p = solWallet.prov;
   return { publicKey: solWallet.pubkey, signTransaction: (t: any) => p.signTransaction(t), signAllTransactions: async (ts: any[]) => (p.signAllTransactions ? p.signAllTransactions(ts) : Promise.all(ts.map(t => p.signTransaction(t)))) }; };
+// Deploy: resumable at any point (it re-reads the chain). wantDeploy = MC started it and it is not finished: an upload that
+// stalled (busy network, phone tab suspended) continues by itself when the tab is visible again.
+let wantDeploy = false; let autoTries = 0;
+const RETRYABLE = /tap Deploy again|network|busy|fetch|timed? ?out|expired|block height/i;
 async function doDeploy() {
-  const so = await soFile(); const w = solSigner();
+  const so = await soFile(); const w = solSigner(); wantDeploy = true;
   if (solBal !== null && costs && solBal < costs.need && dst?.phase === 'new') throw new Error(`Your wallet has ${sol(solBal)} SOL; the deploy needs about ${sol(costs.need)} SOL while it runs.`);
   const pid = await PD.deployProgram(solConn, so, w, lsKeys, SO.sha256, p => {
     if (p.stage === 'approve-1') say('Approve 1 of 2 in your wallet: create the upload account.');
     if (p.stage === 'upload') { up = { written: p.written || 0, total: p.total || 0 }; say('Uploading the program… keep this tab open.'); }
+    if (p.stage === 'retry') say(`<span class="warn">${esc(p.note || 'Network busy: retrying…')}</span>`);
+    if (p.stage === 'top-up') say('Approve a small top-up for the upload fees (retries used them up).');
     if (p.stage === 'approve-2') say('Approve 2 of 2 in your wallet: create the program.');
   });
-  up = null; programId = pid; localStorage.setItem('msea-solprog-id', pid); say(`<span class="ok">Program deployed: <span class="mono">${esc(pid)}</span></span>`);
+  wantDeploy = false; autoTries = 0; up = null; programId = pid; localStorage.setItem('msea-solprog-id', pid); say(`<span class="ok">Program deployed: <span class="mono">${esc(pid)}</span></span>`);
   await refresh('all');
 }
-async function doCancel() { await PD.cancelUpload(solConn, solSigner(), lsKeys, SO.sha256); up = null; programId = ''; localStorage.removeItem('msea-solprog-id'); say('Upload cancelled; the deposit went back to your wallet.'); await refresh('sol'); }
+function autoResume() {
+  if (!wantDeploy || busy || document.visibilityState !== 'visible' || !dst || dst.phase === 'new' || dst.phase === 'deployed' || autoTries >= 5) return;
+  autoTries++; say('<span class="warn">Continuing the upload…</span>'); run('deploy', doDeploy);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') return; if (busy) return; refresh('sol').then(autoResume); });
+async function doCancel() { wantDeploy = false; await PD.cancelUpload(solConn, solSigner(), lsKeys, SO.sha256); up = null; programId = ''; localStorage.removeItem('msea-solprog-id'); say('Upload cancelled; the deposit went back to your wallet.'); await refresh('sol'); }
 async function doSetup() {
   const w = solSigner(); if (dst?.authority && dst.authority !== w.publicKey.toBase58()) throw new Error(`Connect the wallet that deployed the program (${short(dst.authority)}).`);
   const { setupPlan, runSetup } = await SS(); const items = await setupPlan(solConn, setupCfg());
@@ -192,7 +203,10 @@ function existingHtml() {
     <p>${xreg ? '<b class="ok">✓ registered</b>' : btn('xreg', 'Register', setupDone() && !!solWallet.pubkey, 'obtn')}
      ${xreg ? `copies ${xminted}/${esc(String(xf.maxSupply))} ${xminted >= +xf.maxSupply ? '<b class="ok">✓</b>' : btn('xcopies', 'Create copies', true, 'obtn')}` : ''}</p></div></details>`;
 }
-const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); f().catch(e => say(`<span class="err">${esc(errText(e))}</span>`)).finally(() => { busy = ''; render(); }); };
+const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); let again = false;
+  f().catch(e => { const m = errText(e); const soft = RETRYABLE.test(m) && !/reject|denied|cancel/i.test(m);
+    say(soft ? `<span class="warn">${esc(m)}</span>` : `<span class="err">${esc(m)}</span>`); again = key === 'deploy' && soft; })
+    .finally(async () => { busy = ''; if (key === 'deploy') await refresh('sol'); render(); if (again) setTimeout(autoResume, 3000); }); };
 
 // ------------------------------------------------------------------ render
 const det = (id: string, body: string) => `<details class="sddet" data-det="${id}" ${openDet.has(id) ? 'open' : ''}><summary>Details</summary><div class="sdpre">${body}</div></details>`;
@@ -238,7 +252,7 @@ function render() {
     { t: 'Deploy the Solana program', done: s2, cost: costs ? `≈ ${sol(costs.need)} SOL needed · ≈ ${sol(costs.locked)} SOL stays locked` : '',
       p: `One button. Your wallet asks you to approve 2 times; the upload in between runs by itself (${dst ? dst.total : '~100'} small transactions, keep this tab open). The upload deposit comes back automatically at the end.`,
       body: s2 ? `<div class="sdst"><span class="okc">✓ Deployed</span> program <span class="mono">${esc(programId)}</span> · ${costs ? sol(costs.locked) : ''} SOL locked (refundable if ever closed)</div>`
-        : `${btn('deploy', dst && dst.phase !== 'new' ? 'Resume deploy' : 'Deploy program', !!sw && !!dst)}${dst && dst.phase !== 'new' ? ` ${btn('cancel', 'Cancel and refund', !!sw, 'obtn')}` : ''}
+        : `${btn('deploy', dst && dst.phase !== 'new' ? 'Continue deploy' : 'Deploy program', !!sw && !!dst)}${dst && dst.phase !== 'new' ? ` ${btn('cancel', 'Cancel and refund', !!sw, 'obtn')}` : ''}
           ${up || (dst && dst.phase !== 'new') ? `<div class="sdbar wide"><i style="width:${Math.round(((up?.written ?? dst!.written) / (up?.total || dst!.total || 1)) * 100)}%"></i></div><div class="sdst mut">Uploaded ${up?.written ?? dst!.written} of ${up?.total ?? dst!.total} parts</div>` : ''}
           ${!sw ? '<div class="sdst mut">Connect Phantom first.</div>' : ''}`,
       d: `Program file <span class="mono">multisea_omni.so</span> · ${SO.size.toLocaleString()} bytes · sha256 <span class="mono">${SO.sha256}</span>

@@ -6,7 +6,8 @@
 //   per chain: LayerZero DVN config (2-of-2, same policy as the EVM chains) - ULN302 only
 //   per chain: set_mover (existing collections: the chain's MultiSeaSolanaMover + V1 escrow) + their nonces
 // Pure module (no DOM): the page and the local-validator test both use it.
-import { Connection, PublicKey, Transaction, ComputeBudgetProgram, type TransactionInstruction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, type TransactionInstruction } from '@solana/web3.js';
+import { priorityFee, budget, sendUntilConfirmed, TxExpired } from './soltx';
 import { Buffer } from 'buffer';
 import { EndpointProgram, EndpointPDADeriver, UlnProgram, SimpleMessageLibProgram, SetConfigType } from '@layerzerolabs/lz-solana-sdk-v2';
 import * as O from './solanaomni';
@@ -60,19 +61,19 @@ export async function setupPlan(conn: Connection, c: SetupCfg): Promise<SetupIte
   return items;
 }
 
-/** Signs every missing transaction with ONE wallet approval, then sends them in order. */
+/** Signs every missing transaction with ONE wallet approval, then sends them in order (priority fee, polled confirmation). */
 export async function runSetup(conn: Connection, w: Signer, items: SetupItem[], on: (m: string) => void = () => {}) {
   const todo = items.filter(i => !i.done && i.ixs); if (!todo.length) return [];
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
-  const txs: Transaction[] = [];
-  for (const it of todo) txs.push(new Transaction({ feePayer: w.publicKey, blockhash, lastValidBlockHeight }).add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), ...(await it.ixs!())));
+  const price = await priorityFee(conn, [w.publicKey], 20_000);
+  const ixs = await Promise.all(todo.map(it => it.ixs!()));
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed'); // fresh, right before the approval
+  const txs = ixs.map(x => new Transaction({ feePayer: w.publicKey, blockhash, lastValidBlockHeight }).add(...budget(400_000, price), ...x));
   on(`Approve ${txs.length} transaction${txs.length > 1 ? 's' : ''} in your wallet ("Approve all")`);
   const signed = await w.signAllTransactions(txs); const sigs: string[] = [];
   for (const [i, tx] of signed.entries()) {
-    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 5 });
-    const r = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-    if (r.value.err) throw new Error(`${todo[i].label}: failed ${JSON.stringify(r.value.err)}`);
-    on(`✓ ${todo[i].label}`); sigs.push(sig);
+    try { sigs.push(await sendUntilConfirmed(conn, tx, { lastValidBlockHeight: tx.recentBlockhash === blockhash ? lastValidBlockHeight : undefined, onWait: on })); }
+    catch (e) { if (e instanceof TxExpired) throw new Error('The network is busy and some setup transactions were not confirmed. Tap "Set up program" again: only the missing ones are signed.'); throw new Error(`${todo[i].label}: ${(e as any)?.message || e}`); }
+    on(`✓ ${todo[i].label}`);
   }
   return sigs;
 }

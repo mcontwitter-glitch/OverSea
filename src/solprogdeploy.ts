@@ -7,7 +7,8 @@
 //               buffer and refunds its deposit; the throwaway key returns its leftover lamports
 // The throwaway keys (buffer, program, upload) are kept in the browser's storage so an interrupted deploy resumes, or is
 // cancelled with the deposit refunded. They control nothing after the deploy. Pure module: also used by the tests.
-import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, ComputeBudgetProgram, SYSVAR_RENT_PUBKEY, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, SYSVAR_RENT_PUBKEY, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js';
+import { sendLocal, sendWallet, priorityFee, budget, feeOf, TxExpired } from './soltx';
 
 export const LOADER = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
 export const BUF_HDR = 37, PD_HDR = 45, PROG_LEN = 36;
@@ -61,73 +62,79 @@ export async function deployState(conn: Connection, so: Uint8Array, ks: KeyStore
 const missing = (data: Uint8Array, so: Uint8Array) => chunks(so).filter(i => { const a = i * CHUNK, e = Math.min(so.length, a + CHUNK);
   for (let j = a; j < e; j++) if (data[BUF_HDR + j] !== so[j]) return true; return false; });
 
-async function sendSigned(conn: Connection, tx: Transaction) {
-  const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 5 });
-  const r = await conn.confirmTransaction({ signature: sig, blockhash: tx.recentBlockhash!, lastValidBlockHeight: (tx as any).lastValidBlockHeight }, 'confirmed');
-  if (r.value.err) throw new Error('Solana transaction failed: ' + JSON.stringify(r.value.err)); return sig;
-}
-async function fresh(conn: Connection, payer: PublicKey, ...ixs: TransactionInstruction[]) { const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed'); return new Transaction({ feePayer: payer, blockhash, lastValidBlockHeight }).add(...ixs); }
-/** The wallet signs first (Phantom may add its own safety instructions), then the local keys add their signatures. */
-async function walletSend(conn: Connection, w: Wallet, ixs: TransactionInstruction[], local: Keypair[]) {
-  const tx = await fresh(conn, w.publicKey, ...ixs); const signed = await w.signTransaction(tx); if (local.length) signed.partialSign(...local); return sendSigned(conn, signed);
-}
-
-export type Progress = (p: { stage: string; written?: number; total?: number; sig?: string }) => void;
-/** Runs (or resumes) the whole deploy. Returns the program id. */
-export async function deployProgram(conn: Connection, so: Uint8Array, w: Wallet, ks: KeyStore, sha: string, on: Progress = () => {}, pace = { parallel: 4, delayMs: 150 }): Promise<string> {
+export type Progress = (p: { stage: string; written?: number; total?: number; sig?: string; note?: string }) => void;
+// compute limits measured on a local validator (x1.5 margin); unit prices from recent mainnet fees (src/soltx.ts)
+export const CU = { approve1: 15_000, write: 4_500, setAuth: 4_500, deploy: 120_000, transfer: 1_000, close: 4_500 }; // measured on a local validator: write/close/setAuth ≤ 2,970, transfer 450; ×1.5
+const WRITE_FEE_CAP = 50_000, WALLET_FEE_CAP = 100_000;
+const notConfirmed = (what: string) => new Error(`${what} was not confirmed by the network (busy). Nothing is lost: tap Deploy again to continue.`);
+/** Runs (or resumes) the whole deploy. Returns the program id. Safe to call again at any point: it re-reads the chain. */
+export async function deployProgram(conn: Connection, so: Uint8Array, w: Wallet, ks: KeyStore, sha: string, on: Progress = () => {}, pace = { parallel: 4, delayMs: 100 }): Promise<string> {
   let st = await deployState(conn, so, ks, sha);
   if (st.phase === 'deployed') return st.programId!;
   let k = loadKeys(ks, sha);
   if (k && k.sha !== sha && st.phase !== 'new') throw new Error('An upload of a different program file is in progress: cancel it first.');
   if (!k || st.phase === 'new') k = k && st.phase === 'new' && k.sha === sha ? k : newKeys(ks, sha);
-  const c = await costs(conn, so);
-  if (st.phase === 'new') { // approval 1
+  const kk = k; const c = await costs(conn, so);
+  const retry = (note: string) => on({ stage: 'retry', note });
+  if (st.phase === 'new') { // approval 1 (only when no upload account exists yet: never funds a second one)
     on({ stage: 'approve-1' });
-    const sig = await walletSend(conn, w, [SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: k.buffer.publicKey, lamports: c.buffer, space: BUF_HDR + so.length, programId: LOADER }),
-      L.initBuffer(k.buffer.publicKey, k.upload.publicKey), SystemProgram.transfer({ fromPubkey: w.publicKey, toPubkey: k.upload.publicKey, lamports: UPLOAD_FUND })], [k.buffer]);
-    on({ stage: 'buffer-created', sig }); st = await deployState(conn, so, ks, sha);
+    const price = await priorityFee(conn, [w.publicKey], WALLET_FEE_CAP);
+    try {
+      const sig = await sendWallet(conn, w, [...budget(CU.approve1, price), SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: kk.buffer.publicKey, lamports: c.buffer, space: BUF_HDR + so.length, programId: LOADER }),
+        L.initBuffer(kk.buffer.publicKey, kk.upload.publicKey), SystemProgram.transfer({ fromPubkey: w.publicKey, toPubkey: kk.upload.publicKey, lamports: UPLOAD_FUND })], [kk.buffer], { onWait: retry });
+      on({ stage: 'buffer-created', sig });
+    } catch (e) { if (!(e instanceof TxExpired)) throw e; if (!(await conn.getAccountInfo(kk.buffer.publicKey))) throw notConfirmed('Approval 1'); }
+    st = await deployState(conn, so, ks, sha);
   }
-  // uploads (resume: only the chunks that are not on-chain yet), signed by the throwaway key
-  const b0 = await conn.getAccountInfo(k.buffer.publicKey); if (!b0) throw new Error('Upload account missing.');
-  const authNow = new PublicKey(b0.data.subarray(5, 37));
-  if (authNow.equals(k.upload.publicKey)) {
-    for (let round = 0; round < 6; round++) {
-      const b = (await conn.getAccountInfo(k.buffer.publicKey))!; const todo = missing(b.data, so); const total = chunks(so).length;
-      on({ stage: 'upload', written: total - todo.length, total }); if (!todo.length) break;
+  const b0 = await conn.getAccountInfo(kk.buffer.publicKey); if (!b0) throw new Error('Upload account missing: cancel the upload and start again.');
+  const authNow = new PublicKey(b0.data.subarray(5, 37)); const total = chunks(so).length;
+  if (authNow.equals(kk.upload.publicKey)) {
+    // uploads: only the parts not yet on-chain (byte-compared), signed by the throwaway key, retried until all are written
+    for (let round = 0; round < 40; round++) {
+      const b = (await conn.getAccountInfo(kk.buffer.publicKey))!; const todo = missing(b.data, so);
+      let written = total - todo.length; on({ stage: 'upload', written, total }); if (!todo.length) break;
+      if (round) retry(`Network busy: re-sending ${todo.length} part${todo.length > 1 ? 's' : ''}…`);
+      const price = await priorityFee(conn, [kk.buffer.publicKey], WRITE_FEE_CAP);
+      const bal = await conn.getBalance(kk.upload.publicKey); const need = todo.length * feeOf(CU.write, price) + 2 * feeOf(CU.transfer, price) + feeOf(CU.setAuth, price);
+      if (bal < need) { on({ stage: 'top-up' }); // fees used up by retries: one extra small approval
+        try { await sendWallet(conn, w, [...budget(CU.transfer, await priorityFee(conn, [w.publicKey], WALLET_FEE_CAP)), SystemProgram.transfer({ fromPubkey: w.publicKey, toPubkey: kk.upload.publicKey, lamports: need - bal + 500_000 })], [], { onWait: retry }); }
+        catch (e) { if (!(e instanceof TxExpired)) throw e; continue; } }
       for (let i = 0; i < todo.length; i += pace.parallel) {
-        const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed'); // one blockhash per batch (fewer RPC calls)
         await Promise.all(todo.slice(i, i + pace.parallel).map(async n => { const off = n * CHUNK;
-          const tx = new Transaction({ feePayer: k!.upload.publicKey, blockhash, lastValidBlockHeight }).add(L.write(k!.buffer.publicKey, k!.upload.publicKey, off, so.subarray(off, Math.min(so.length, off + CHUNK))));
-          tx.sign(k!.upload); await sendSigned(conn, tx).catch(() => undefined); }));
-        on({ stage: 'upload', written: total - todo.length + Math.min(todo.length, i + pace.parallel), total });
+          try { await sendLocal(conn, [kk.upload], [...budget(CU.write, price), L.write(kk.buffer.publicKey, kk.upload.publicKey, off, so.subarray(off, Math.min(so.length, off + CHUNK)))], { attempts: 2, onRetry: retry });
+            written++; on({ stage: 'upload', written, total }); } catch { /* re-checked against the chain next round */ } }));
         if (pace.delayMs) await new Promise(r => setTimeout(r, pace.delayMs));
       }
     }
-    const b = (await conn.getAccountInfo(k.buffer.publicKey))!; if (missing(b.data, so).length) throw new Error('Upload incomplete (network busy): press the button again to resume.');
-    // the upload is verified byte-for-byte; hand the buffer to the wallet so the wallet becomes the upgrade authority
-    const tx = await fresh(conn, k.upload.publicKey, L.setBufferAuthority(k.buffer.publicKey, k.upload.publicKey, w.publicKey)); tx.sign(k.upload); await sendSigned(conn, tx);
+    const b = (await conn.getAccountInfo(kk.buffer.publicKey))!; if (missing(b.data, so).length) throw new Error('The network is very busy: part of the upload is still missing. Tap Deploy again to continue (nothing is lost).');
+    // verified byte-for-byte: hand the upload to the wallet so the wallet becomes the upgrade authority
+    await sendLocal(conn, [kk.upload], [...budget(CU.setAuth, await priorityFee(conn, [kk.buffer.publicKey], WRITE_FEE_CAP)), L.setBufferAuthority(kk.buffer.publicKey, kk.upload.publicKey, w.publicKey)], { onRetry: retry });
   } else if (!authNow.equals(w.publicKey)) throw new Error('The upload account belongs to another wallet: connect that wallet or cancel the upload.');
   // approval 2
   on({ stage: 'approve-2' });
-  const sig = await walletSend(conn, w, [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-    SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: k.program.publicKey, lamports: c.program, space: PROG_LEN, programId: LOADER }),
-    L.deploy(w.publicKey, programDataOf(k.program.publicKey), k.program.publicKey, k.buffer.publicKey, w.publicKey, so.length)], [k.program]);
-  on({ stage: 'deployed', sig });
-  await returnLeftover(conn, k.upload, w.publicKey).catch(() => undefined);
-  return k.program.publicKey.toBase58();
+  const price = await priorityFee(conn, [w.publicKey, kk.buffer.publicKey], WALLET_FEE_CAP);
+  try {
+    const sig = await sendWallet(conn, w, [...budget(CU.deploy, price),
+      SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: kk.program.publicKey, lamports: c.program, space: PROG_LEN, programId: LOADER }),
+      L.deploy(w.publicKey, programDataOf(kk.program.publicKey), kk.program.publicKey, kk.buffer.publicKey, w.publicKey, so.length)], [kk.program], { onWait: retry });
+    on({ stage: 'deployed', sig });
+  } catch (e) { if (!(e instanceof TxExpired)) throw e; if ((await deployState(conn, so, ks, sha)).phase !== 'deployed') throw notConfirmed('Approval 2'); }
+  await returnLeftover(conn, kk.upload, w.publicKey).catch(() => undefined);
+  return kk.program.publicKey.toBase58();
 }
 async function returnLeftover(conn: Connection, upload: Keypair, to: PublicKey) {
-  const bal = await conn.getBalance(upload.publicKey); if (bal <= 5000) return;
-  const tx = await fresh(conn, upload.publicKey, SystemProgram.transfer({ fromPubkey: upload.publicKey, toPubkey: to, lamports: bal - 5000 })); tx.sign(upload); await sendSigned(conn, tx);
+  const price = await priorityFee(conn, [], WRITE_FEE_CAP); const bal = await conn.getBalance(upload.publicKey); const fee = feeOf(CU.transfer, price); if (bal <= fee) return;
+  await sendLocal(conn, [upload], [...budget(CU.transfer, price), SystemProgram.transfer({ fromPubkey: upload.publicKey, toPubkey: to, lamports: bal - fee })], { attempts: 3 });
 }
 /** Cancel an unfinished upload: closes the buffer (deposit back to the wallet) and returns the throwaway key's lamports. */
 export async function cancelUpload(conn: Connection, w: Wallet, ks: KeyStore, sha: string) {
   const k = loadKeys(ks, sha); if (!k) return;
   const b = await conn.getAccountInfo(k.buffer.publicKey);
-  if (b) { const auth = new PublicKey(b.data.subarray(5, 37));
-    if (auth.equals(k.upload.publicKey)) { const tx = await fresh(conn, k.upload.publicKey, L.close(k.buffer.publicKey, w.publicKey, k.upload.publicKey)); tx.sign(k.upload); await sendSigned(conn, tx); }
-    else if (auth.equals(w.publicKey)) await walletSend(conn, w, [L.close(k.buffer.publicKey, w.publicKey, w.publicKey)], []);
+  if (b) { const auth = new PublicKey(b.data.subarray(5, 37)); const price = await priorityFee(conn, [k.buffer.publicKey], WRITE_FEE_CAP);
+    if (auth.equals(k.upload.publicKey)) await sendLocal(conn, [k.upload], [...budget(CU.close, price), L.close(k.buffer.publicKey, w.publicKey, k.upload.publicKey)]);
+    else if (auth.equals(w.publicKey)) { try { await sendWallet(conn, w, [...budget(CU.close, price), L.close(k.buffer.publicKey, w.publicKey, w.publicKey)]); }
+      catch (e) { if (!(e instanceof TxExpired) || (await conn.getAccountInfo(k.buffer.publicKey))) throw e; } }
     else throw new Error('The upload account belongs to another wallet.'); }
   await returnLeftover(conn, k.upload, w.publicKey).catch(() => undefined);
-  ks.clear();
+  if (!(await conn.getAccountInfo(k.buffer.publicKey))) ks.clear();
 }

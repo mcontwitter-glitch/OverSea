@@ -18,7 +18,9 @@ await page.exposeFunction('__signMsg', (b64, all) => { calls[all ? 'signAll' : '
 await page.exposeFunction('__countAll', () => { calls.signAll++; });
 await page.addInitScript(pk => {
   const sig = async (tx, all) => { const m = tx.serializeMessage(); const s = await window.__signMsg(btoa(String.fromCharCode(...m)), all);
-    const pub = tx.signatures.find(x => x.publicKey.toBase58() === pk).publicKey; tx.addSignature(pub, Uint8Array.from(atob(s), c => c.charCodeAt(0))); return tx; };
+    const pub = tx.signatures.find(x => x.publicKey.toBase58() === pk).publicKey; tx.addSignature(pub, Uint8Array.from(atob(s), c => c.charCodeAt(0)));
+    // like Phantom mobile: hand back a re-built transaction (no lastValidBlockHeight)
+    return all ? tx : tx.constructor.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false })); };
   window.phantom = { solana: { isPhantom: true, publicKey: null,
     async connect() { this.publicKey = { toBase58: () => pk }; return { publicKey: this.publicKey }; },
     signTransaction: tx => sig(tx, false),
@@ -37,8 +39,16 @@ await page.click('[data-act="solw:phantom"]'); await page.waitForFunction(() => 
 await page.click('[data-act="deploy"]');
 await page.waitForFunction(() => /Uploaded \d+ of/.test(document.querySelector('.sdp').innerText), null, { timeout: 60_000 });
 await page.screenshot({ path: '/workspace/shots/sol-ui-local-uploading.png', fullPage: true });
+// mid-upload tab reload (phone suspends / closes the in-app browser): the page must pick up the half-written upload account
+await page.waitForFunction(() => +((document.querySelector('.sdp').innerText.match(/Uploaded (\d+) of/) || [])[1] || 0) >= 20, null, { timeout: 120_000 });
+await page.reload(); await page.waitForSelector('.sdstep');
+await page.click('[data-act="solw:phantom"]'); await page.waitForFunction(() => /Connected/.test(document.querySelector('.sdstep').innerText));
+await page.waitForFunction(() => /Continue deploy/.test(document.querySelector('[data-act="deploy"]')?.innerText || ''), null, { timeout: 60_000 });
+t = await txt(); const m = t.match(/Uploaded (\d+) of (\d+)/);
+ok(!!m && +m[1] >= 20 && +m[1] < +m[2], `after a reload mid-upload: "Continue deploy", ${m?.[0]}`); ok(calls.sign === 1, `only approval 1 so far (${calls.sign})`);
+await page.click('[data-act="deploy"]');
 await page.waitForFunction(() => /✓ Deployed/.test(document.querySelector('.sdp').innerText) || /class="err"/.test(document.querySelector('.sdmsg')?.innerHTML || ''), null, { timeout: 300_000 });
-t = await txt(); ok(/✓ Deployed/.test(t), 'program deployed through the page'); ok(calls.sign === 2, `exactly 2 wallet approvals for the deploy (${calls.sign})`);
+t = await txt(); ok(/✓ Deployed/.test(t), 'program deployed through the page'); ok(calls.sign === 2, `exactly 2 wallet approvals for the deploy, reload included (${calls.sign})`);
 await page.waitForFunction(() => !document.querySelector('[data-act="setup"]')?.disabled, null, { timeout: 60_000 });
 await page.click('[data-act="setup"]');
 await page.waitForFunction(() => /settings saved/.test(document.querySelector('.sdp').innerText) || /class="err"/.test(document.querySelector('.sdmsg')?.innerHTML || ''), null, { timeout: 180_000 });
