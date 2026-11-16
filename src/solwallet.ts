@@ -10,7 +10,19 @@ export const SOL_WALLETS = [
   { id: 'solflare', name: 'Solflare', get: (): Prov | undefined => W.solflare, url: 'https://solflare.com/' },
 ];
 export const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || (LP as any).solana?.rpc || 'https://api.mainnet-beta.solana.com';
-export const solConn = new Connection(SOL_RPC, 'confirmed');
+/** The public RPC (publicnode) answers at most 10 accounts per getMultipleAccounts ("403: A maximum of 10 accounts is allowed"):
+ *  split bigger reads. Patched on the connection itself so the LayerZero SDK's reads through it are split too. */
+export function chunkMulti<T extends Connection>(c: T, max = 10): T {
+  const orig = c.getMultipleAccountsInfoAndContext.bind(c);
+  (c as any).getMultipleAccountsInfoAndContext = async (keys: PublicKey[], cfg?: any) => {
+    if (keys.length <= max) return orig(keys, cfg);
+    const parts: PublicKey[][] = []; for (let i = 0; i < keys.length; i += max) parts.push(keys.slice(i, i + max));
+    const rs = await Promise.all(parts.map(p => orig(p, cfg)));
+    return { context: rs[0].context, value: rs.flatMap(r => r.value) };
+  };
+  return c;
+}
+export const solConn = chunkMulti(new Connection(SOL_RPC, 'confirmed'));
 export const solWallet: { id: string; name: string; pubkey: PublicKey | null; prov: Prov | null } = { id: '', name: '', pubkey: null, prov: null };
 const subs: (() => void)[] = [];
 export const onSolWallet = (f: () => void) => { subs.push(f); };
