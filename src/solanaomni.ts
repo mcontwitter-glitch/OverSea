@@ -210,5 +210,21 @@ export function decodeRequest(d: Uint8Array) {
   return { status, qty, start, paid: r.u64(), to: r.pk(), payer: r.pk() };
 }
 /** Metaplex Core AssetV1: key (1) | owner (32) | update authority (enum) ... */
+/** reveal (drop owner): set the drop's base URI (<base><id>.json). Idempotent. Accounts: owner (s), drop (w). */
+export function revealIx(owner: PublicKey, cid: string, base: string, pid = OMNI_PROGRAM_ID) {
+  return ix([meta(owner, true, true), meta(dropPda(cid, pid), true)], disc("reveal").str(base).out(), pid);
+}
+/** refresh_uris (permissionless): point the given assets at the drop's current <base><id>.json. */
+export function refreshUrisIx(payer: PublicKey, cid: string, ids: number[], pid = OMNI_PROGRAM_ID) {
+  const w = disc("refresh_uris").u32(ids.length); for (const i of ids) w.u32(i);
+  return ix([meta(payer, true, true), meta(storePda(pid)), meta(dropPda(cid, pid)), meta(collectionPda(cid, pid)), meta(MPL_CORE_ID), meta(SystemProgram.programId),
+    ...ids.map(i => meta(assetPda(cid, i, pid), true))], w.out(), pid);
+}
+/** Core AssetV1 URI: key, owner, update authority (tag + key unless None), name, uri. */
+export function coreAssetUri(d: Uint8Array): string | null {
+  if (d[0] !== 1) return null; let o = 33; o += d[o] === 0 ? 1 : 33;
+  const dv = new DataView(d.buffer, d.byteOffset); const nl = dv.getUint32(o, true); o += 4 + nl; const ul = dv.getUint32(o, true); o += 4;
+  return new TextDecoder().decode(d.slice(o, o + ul));
+}
 export const coreAssetOwner = (d: Uint8Array) => (d[0] === 1 ? new PublicKey(d.slice(1, 33)) : null);
 export const hexOf = (b: Uint8Array) => hexlify(b) as `0x${string}`;

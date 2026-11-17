@@ -186,6 +186,7 @@ async function doTurnOn() {
 // to the MultiSea fee wallet) + every id created as a locked copy held by the Store (escrow). src/solexisting.ts.
 const XCOLS: any[] = (CFG as any).collections.filter((c: any) => (c.deployments || []).length > 1 && c.escrow);
 const SOL_PER_COPY = 0.00289192, SOL_REGISTER = 0.0093; // measured (mainnet simulation): Core asset rent + Metaplex create fee; drop + collection rent
+let xfix: { total: number; updated: number; items: any[]; owner: string } | null = null;
 let xslug = ''; let xcid = ''; let xf: O.ExistingParams | null = null; let xst: { registered: boolean; total: number; created: number; items: any[] } | null = null;
 const pid = () => new PublicKey(programId);
 const xcfg = () => ({ pid: pid(), admin: solWallet.pubkey || new PublicKey(dst?.authority || programId), cid: xcid, params: xf! });
@@ -204,7 +205,18 @@ async function xLoad(slug: string) {
     await xRefresh();
   } catch (e) { say(`<span class="err">${esc(c.name)}: ${esc(errText(e))}</span>`); }
 }
-async function xRefresh() { if (!programId || !xf) return render(); xst = await (await import('./solexisting')).existingPlan(solConn, xcfg()); render(); }
+async function xRefresh() { if (!programId || !xf) return render(); const E = await import('./solexisting'); xst = await E.existingPlan(solConn, xcfg());
+  xfix = null; const di = xst.registered ? await solConn.getAccountInfo(O.dropPda(xcid, pid())) : null;
+  if (di && xst.created === xst.total) { const owner = O.decodeDrop(di.data).owner; xfix = { ...await E.fixPlan(solConn, xcfg(), owner, E.metaBase(xslug)), owner: owner.toBase58() }; }
+  render(); }
+async function xFix() {
+  if (!xf || !xfix) throw new Error('Pick a collection first.');
+  if (solWallet.pubkey?.toBase58() !== xfix.owner) throw new Error(`Connect the collection's Solana owner wallet ${short(xfix.owner, 6, 4)} first.`);
+  const E = await import('./solexisting');
+  try { await E.runFix(solConn, solSigner(), xcfg(), E.metaBase(xslug), m => say(esc(m))); }
+  finally { await xRefresh().catch(() => {}); }
+  say(`<span class="ok">${esc(xf.name)}: all ${xf.maxSupply} copies point at the new metadata. Marketplaces pick it up on their next refresh.</span>`);
+}
 async function xAdd() {
   if (!xf) throw new Error('Pick a collection first.');
   const E = await import('./solexisting');
@@ -222,6 +234,7 @@ function existingHtml() {
     ${xf ? `<p class="mut">${esc(xf.name)} · ${xf.maxSupply} pieces · royalties ${xf.royaltyBps / 100}% to <span class="mono">${esc(short(SL.feeRecipient, 6, 4))}</span> · id <span class="mono">${esc(short(xcid, 6, 4))}</span></p>` : ''}
     ${xst ? `<p>${xst.registered ? '<b class="ok">✓ registered</b>' : 'not registered'} · copies ${xst.created}/${xst.total}
       ${n ? btn('xadd', `${xst.created ? `Continue: ${xst.created} of ${xst.total} copies done · ` : 'Add to Solana: '}${n} transaction${n > 1 ? 's' : ''} · ${appr} approval${appr > 1 ? 's' : ''} · ≈ ${cost.toFixed(3)} SOL`, setupDone() && !!solWallet.pubkey, 'obtn') : '<b class="ok">✓ full set on Solana</b>'}</p>` : ''}
+    ${xfix ? `<p>Images: ${xfix.updated} of ${xfix.total} updated ${xfix.items.length ? btn('xfix', `Fix images · ${xfix.items.length} transaction${xfix.items.length > 1 ? 's' : ''} · 1 approval`, solWallet.pubkey?.toBase58() === xfix.owner, 'obtn') + (solWallet.pubkey?.toBase58() === xfix.owner ? '' : ` <span class="mut">(connect ${esc(short(xfix.owner, 6, 4))})</span>`) : '<b class="ok">✓</b>'}</p>` : ''}
     </div></details>`;
 }
 const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); let again = false;
@@ -316,7 +329,8 @@ app.addEventListener('click', e => { const b = (e.target as HTMLElement).closest
   if (a === 'setup') return run(a, doSetup);
   if (a.startsWith('step:')) return run(a, () => doStep(a.slice(5)));
   if (a === 'on') return run(a, doTurnOn);
-  if (a === 'xadd') return run(a, xAdd); });
+  if (a === 'xadd') return run(a, xAdd);
+  if (a === 'xfix') return run(a, xFix); });
 app.addEventListener('change', e => { const t = e.target as HTMLInputElement;
   if (t.dataset.xslug !== undefined) { xLoad(t.value); return; }
   if (t.dataset.pid !== undefined) { const v = t.value.trim(); try { if (v) new PublicKey(v); programId = v; v ? localStorage.setItem('msea-solprog-id', v) : localStorage.removeItem('msea-solprog-id'); refresh('all'); } catch { say('<span class="err">That is not a Solana program id.</span>'); } } });

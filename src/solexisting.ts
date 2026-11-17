@@ -45,3 +45,29 @@ export async function runExisting(conn: Connection, w: BatchSigner, c: ExistingC
   if (p.items.length) sigs.push(...await sendBatched(conn, w, p.items, on, OPTS));
   return sigs;
 }
+
+// ---- "Fix images": re-point the copies' metadata at api.multisea.io (Magic Eden can't load ipfs.io images). The drop owner
+// signs one approval; every transaction starts with `reveal` (idempotent) so it is self-contained: all are sent at once, and a
+// refresh can never land before the new base and re-apply the old one. Re-planned from the chain: only copies whose URI is not
+// <base><id>.json yet.
+export const metaBase = (slug: string) => `https://api.multisea.io/sol/meta/${slug}/`;
+/** Copies per fix transaction: 15 (mainnet simulation: reveal + 20 = 1205 bytes / 341k CU; 15 = ~1020 bytes / ~260k CU). */
+export const FIX_PER_TX = 15;
+export type FixState = { total: number; updated: number; items: BatchItem[] };
+export async function fixPlan(conn: Connection, c: ExistingCfg, owner: PublicKey, base: string): Promise<FixState> {
+  const N = c.params.maxSupply; const todo: number[] = []; let updated = 0;
+  for (let i = 1; i <= N; i += 100) {
+    const ks = Array.from({ length: Math.min(100, N - i + 1) }, (_, k) => O.assetPda(c.cid, i + k, c.pid));
+    (await conn.getMultipleAccountsInfo(ks)).forEach((a, k) => { if (!a) return; if (O.coreAssetUri(a.data) === `${base}${i + k}.json`) updated++; else todo.push(i + k); });
+  }
+  const items: BatchItem[] = [];
+  for (let s = 0; s < todo.length; s += FIX_PER_TX) {
+    const ids = todo.slice(s, s + FIX_PER_TX);
+    items.push({ label: `Images #${ids[0]}–#${ids[ids.length - 1]}`, ixs: [O.revealIx(owner, c.cid, base, c.pid), O.refreshUrisIx(owner, c.cid, ids, c.pid)], cu: 40_000 + ids.length * 20_000 });
+  }
+  return { total: N, updated, items };
+}
+export async function runFix(conn: Connection, w: BatchSigner, c: ExistingCfg, base: string, on: Notify = () => {}) {
+  const p = await fixPlan(conn, c, w.publicKey, base);
+  return sendBatched(conn, w, p.items, on, { batch: 8, again: 'Fix images', priceCap: 200_000, priceFloor: EXISTING_PRICE, parallel: true });
+}

@@ -259,6 +259,20 @@ async function main() {
   const xd = O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data);
   check("existing collection registered + all 100 ids created as locked copies held by the Store (escrow)", xd.existing && xowners.every((o) => o.equals(store)) && plan2.items.length === 0 && pw.approvals - a0 === 2
     && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${xcost.toFixed(4)} SOL for register + 100 copies (local Core: no protocol fee), resume = ${pw.approvals - a0} approval`);
+  // "Fix images" (src/solexisting.ts fixPlan/runFix): drop owner re-points every copy at https metadata; resumable; 1 approval
+  const fbase = X.metaBase("multi-islands");
+  let strangerRevealed = true;
+  try { await sol([O.revealIx(stranger.publicKey, xcid, "https://evil.example/")], [stranger]); } catch { strangerRevealed = false; }
+  check("fix images: reveal is drop-owner only", !strangerRevealed);
+  const f0 = await X.fixPlan(conn, xc, admin.publicKey, fbase);
+  check("fix images plan: 0 of 100 updated, 7 transactions of <=15, each starts with reveal", f0.updated === 0 && f0.items.length === 7 && f0.items.every((it) => it.ixs.length === 2), `${f0.items.length} txs`);
+  await sendBatched(conn, pw, [f0.items[6]], () => {}, { batch: 8, again: "x", parallel: true }); // last batch alone first (order-independent), then "interrupted"
+  const f1 = await X.fixPlan(conn, xc, admin.publicKey, fbase);
+  check("fix images resume: only copies not yet on the new URI are planned", f1.updated === 10 && f1.items.length === 6, `${f1.updated}/100 updated, ${f1.items.length} left`);
+  const fa = pw.approvals; await X.runFix(conn, pw, xc, fbase); const f2 = await X.fixPlan(conn, xc, admin.publicKey, fbase);
+  const furis = await Promise.all(Array.from({ length: 100 }, async (_, i) => O.coreAssetUri((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)));
+  check("fix images: all 100 copies point at <base><id>.json in 1 approval, button would hide (0 left)", f2.updated === 100 && f2.items.length === 0 && pw.approvals - fa === 1
+    && furis.every((u, i) => u === `${fbase}${i + 1}.json`) && O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data).baseUri === fbase, `${furis[0]} · ${pw.approvals - fa} approval`);
   const moverB = ethers.getBytes(ethers.zeroPadValue(moverA, 32)), escV1B = ethers.getBytes(ethers.zeroPadValue(escV1A, 32));
   await sol([O.setMoverIx(admin.publicKey, EVM_EID, moverB, escV1B), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, moverB), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, escV1B)], [admin]);
   await (await mover.setCollection(xcid, true)).wait();
