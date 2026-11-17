@@ -10,8 +10,9 @@ import { sendBatched, type BatchItem, type BatchSigner, type Notify } from './so
 /** Copies per transaction: 8 (measured ~22k CU per copy on the local validator; 8 = ~180k CU, ~610 bytes, lots of room for
  *  whatever a mobile wallet adds). */
 export const COPIES_PER_TX = 8;
-/** Copy transactions per approval: 100 pieces = 13 transactions = ONE approval (after the register approval). */
-export const EXISTING_BATCH = 16;
+/** Copy transactions per approval: 6, each approval with a fresh blockhash fetched right before it, all 6 sent at once in
+ *  parallel and re-broadcast every 2 s (none waits in a queue while the blockhash ages). 100 pieces = 13 txs = 3 approvals. */
+export const EXISTING_BATCH = 6;
 /** The public RPCs report zero recent priority fees, so pay a fixed decent price: ~0.000012 SOL per copy transaction. */
 export const EXISTING_PRICE = 50_000;
 export type ExistingCfg = { pid: PublicKey; admin: PublicKey; cid: string; params: O.ExistingParams };
@@ -37,7 +38,7 @@ export async function existingPlan(conn: Connection, c: ExistingCfg): Promise<Ex
 /** Approvals for a plan: register alone first (so the copy transactions are checked against a registered collection, by the
  *  wallet's own simulation and by our preflight), then the copies. */
 export const approvalsFor = (p: { registered: boolean; items: BatchItem[] }) => { const copies = p.items.length - (p.registered ? 0 : 1); return (p.registered ? 0 : 1) + Math.ceil(Math.max(0, copies) / EXISTING_BATCH); };
-const OPTS = { batch: EXISTING_BATCH, again: 'Add to Solana', priceCap: 200_000, priceFloor: EXISTING_PRICE };
+const OPTS = { batch: EXISTING_BATCH, again: 'Add to Solana', priceCap: 200_000, priceFloor: EXISTING_PRICE, parallel: true };
 export async function runExisting(conn: Connection, w: BatchSigner, c: ExistingCfg, on: Notify = () => {}) {
   let p = await existingPlan(conn, c); const sigs: string[] = [];
   if (!p.registered) { on('Approval 1 of 2: register the collection'); sigs.push(...await sendBatched(conn, w, p.items.slice(0, 1), on, OPTS)); p = await existingPlan(conn, c); if (!p.registered) throw new Error('The register transaction confirmed but the collection is not visible yet. Tap "Add to Solana" again in a few seconds.'); }

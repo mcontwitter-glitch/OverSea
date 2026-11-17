@@ -139,7 +139,35 @@ export type BatchSigner = { publicKey: PublicKey; signAllTransactions(txs: Trans
  *    by the RPC itself (preflight on; BlockhashNotFound re-checked), never refused on our own clock or height math
  *  - strictly in order: each one is re-broadcast (also to the extra RPCs) until confirmed before the next is sent
  *  - errors name the transaction, the approval time and the RPC's answer; the caller re-plans from the chain on retry */
-export async function sendBatched(conn: Connection, w: BatchSigner, items: BatchItem[], on: Notify, o: { batch: number; again: string; priceCap?: number; priceFloor?: number }): Promise<string[]> {
+/** Independent transactions signed together: ALL sent at once and re-broadcast every 2 s (main + extra RPCs) until each is
+ *  confirmed, so none waits in a queue while the shared blockhash ages. Exact local checks + preflight (main RPC) first;
+ *  a real rejection is thrown with the RPC's error. Unconfirmed ones are reported, never retried with new signatures here:
+ *  the caller re-plans from the chain, so nothing is redone or paid twice. Validity authority: the main RPC only. */
+export async function sendParallel(conn: Connection, txs: Transaction[], labels: string[], on: Notify, o: { lastValidBlockHeight?: number; blockhash?: string; note?: string; maxMs?: number } = {}): Promise<{ sigs: (string | null)[]; failed: string[] }> {
+  const raws = txs.map(t => t.serialize()), sigs = txs.map(t => b58(t.signature!)), done: (string | null)[] = txs.map(() => null), failed: string[] = [];
+  const ins = txs.map((t, i) => inspectSigned(t, raws[i]));
+  ins.forEach((x, i) => { if (x.problems.length) throw new Error(`${labels[i]}: not sent: ${x.problems.join('; ')} [${x.desc}${o.note ? '; ' + o.note : ''}].`); });
+  const pre = await Promise.all(raws.map(r => preflight(conn, r)));
+  pre.forEach((p, i) => { if (!p.ok && p.logs) throw new Error(`${labels[i]}: the network rejected it in preflight, nothing was sent: ${p.err}${logTail(p.logs) ? ' · ' + logTail(p.logs) : ''} [${ins[i].desc}].`); });
+  const t0 = Date.now(); const last: string[] = txs.map(() => '');
+  for (let i = 0; ; i++) {
+    const open = txs.map((_, k) => k).filter(k => !done[k] && !failed.includes(labels[k]));
+    if (!open.length) break;
+    for (const k of open) { for (const x of extra) x.sendRawTransaction(raws[k], { skipPreflight: true, maxRetries: 0 }).catch(() => {});
+      conn.sendRawTransaction(raws[k], { skipPreflight: true, maxRetries: 0 }).then(() => { last[k] = ''; }, (e: any) => { last[k] = String(e?.message || e).slice(0, 160); }); }
+    await sleep(2000);
+    const st = (await conn.getSignatureStatuses(open.map(k => sigs[k])).catch(() => ({ value: open.map(() => null) }))).value;
+    open.forEach((k, j) => { const s = st[j]; if (s?.err) failed.push(labels[k]); else if (s && (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized')) { done[k] = sigs[k]; on(`✓ ${labels[k]}`); } });
+    const left = txs.length - done.filter(Boolean).length - failed.length; if (left) on(`Sending ${left} of ${txs.length} in parallel… ${done.filter(Boolean).length} confirmed`);
+    if (left && i > 0 && i % 5 === 0 && (Date.now() - t0 > (o.maxMs ?? 150_000) || (Date.now() - t0 > 30_000 && o.blockhash && await blockhashExpired(conn, o.blockhash, o.lastValidBlockHeight)))) {
+      await sleep(1500); const f = (await conn.getSignatureStatuses(open.map(k => sigs[k]), { searchTransactionHistory: true }).catch(() => ({ value: open.map(() => null) }))).value;
+      open.forEach((k, j) => { if (f[j] && !f[j]!.err) done[k] = sigs[k]; });
+      break;
+    }
+  }
+  return { sigs: done, failed: [...failed, ...txs.map((_, k) => k).filter(k => !done[k] && !failed.includes(labels[k])).map(k => `${labels[k]}${last[k] ? ` (RPC: ${last[k]})` : ''}${!pre[k].ok ? ` (preflight: ${pre[k].err})` : ''}`)] };
+}
+export async function sendBatched(conn: Connection, w: BatchSigner, items: BatchItem[], on: Notify, o: { batch: number; again: string; priceCap?: number; priceFloor?: number; parallel?: boolean }): Promise<string[]> {
   if (!items.length) return [];
   const price = await priorityFee(conn, [w.publicKey], Math.max(o.priceCap ?? 20_000, o.priceFloor ?? 0), o.priceFloor ?? 2_000);
   { const { blockhash } = await conn.getLatestBlockhash('confirmed');
@@ -155,6 +183,12 @@ export async function sendBatched(conn: Connection, w: BatchSigner, items: Batch
     const changed = signed[0].recentBlockhash !== blockhash;
     // No refusal on our own check here: every transaction is attempted (preflight on); only the RPC's own answer
     // (BlockhashNotFound, re-checked) or a real rejection stops it (sendUntilConfirmed).
+    if (o.parallel) {
+      const r = await sendParallel(conn, signed, part.map(x => x.label), on, { blockhash: changed ? signed[0].recentBlockhash! : blockhash, lastValidBlockHeight: changed ? undefined : lastValidBlockHeight, note: `approval took ${secs} s` });
+      sigs.push(...(r.sigs.filter(Boolean) as string[]));
+      if (r.failed.length) throw new Error(`${r.failed.length} of ${signed.length} in this approval did not confirm: ${r.failed.join('; ')}. Tap "${o.again}" again: it continues with only the missing ones.`);
+      continue;
+    }
     for (const [i, tx] of signed.entries()) {
       const n = b * o.batch + i + 1, label = part[i].label;
       on(`Sending ${n} of ${items.length}: ${label}`);

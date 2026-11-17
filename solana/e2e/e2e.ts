@@ -249,15 +249,15 @@ async function main() {
   const xc = { pid: O.OMNI_PROGRAM_ID, admin: admin.publicKey, cid: xcid, params: xparams };
   const xb0 = await conn.getBalance(admin.publicKey);
   const plan0 = await X.existingPlan(conn, xc);
-  check("existing plan: register alone (approval 1), then 13 copy transactions of 8 (approval 2)", !plan0.registered && plan0.items.length === 14 && X.approvalsFor(plan0) === 2, `${plan0.items.length} transactions, ${X.approvalsFor(plan0)} approvals`);
+  check("existing plan: register alone (approval 1), then 13 copy transactions of 8 in approvals of 6 (sent in parallel)", !plan0.registered && plan0.items.length === 14 && X.approvalsFor(plan0) === 4, `${plan0.items.length} transactions, ${X.approvalsFor(plan0)} approvals`);
   await sendBatched(conn, pw, plan0.items.slice(0, 3), () => {}, { batch: 8, again: "x" }); // a run interrupted after 3 transactions
   const plan1 = await X.existingPlan(conn, xc);
-  check("resume after a partial run: only the missing copies are planned", plan1.registered && plan1.created === 16 && plan1.items.length === 11 && X.approvalsFor(plan1) === 1, `${plan1.created}/100 created, ${plan1.items.length} left`);
+  check("resume after a partial run: only the missing copies are planned", plan1.registered && plan1.created === 16 && plan1.items.length === 11 && X.approvalsFor(plan1) === 2, `${plan1.created}/100 created, ${plan1.items.length} left`);
   const a0 = pw.approvals; await X.runExisting(conn, pw, xc); const plan2 = await X.existingPlan(conn, xc);
   const xcost = (xb0 - await conn.getBalance(admin.publicKey)) / LAMPORTS_PER_SOL;
   const xowners = await Promise.all(Array.from({ length: 100 }, async (_, i) => O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)!));
   const xd = O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data);
-  check("existing collection registered + all 100 ids created as locked copies held by the Store (escrow)", xd.existing && xowners.every((o) => o.equals(store)) && plan2.items.length === 0 && pw.approvals - a0 === 1
+  check("existing collection registered + all 100 ids created as locked copies held by the Store (escrow)", xd.existing && xowners.every((o) => o.equals(store)) && plan2.items.length === 0 && pw.approvals - a0 === 2
     && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${xcost.toFixed(4)} SOL for register + 100 copies (local Core: no protocol fee), resume = ${pw.approvals - a0} approval`);
   const moverB = ethers.getBytes(ethers.zeroPadValue(moverA, 32)), escV1B = ethers.getBytes(ethers.zeroPadValue(escV1A, 32));
   await sol([O.setMoverIx(admin.publicKey, EVM_EID, moverB, escV1B), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, moverB), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, escV1B)], [admin]);

@@ -208,19 +208,20 @@ async function xRefresh() { if (!programId || !xf) return render(); xst = await 
 async function xAdd() {
   if (!xf) throw new Error('Pick a collection first.');
   const E = await import('./solexisting');
-  await E.runExisting(solConn, solSigner(), xcfg(), m => say(esc(m)));
-  say(`<span class="ok">${esc(xf.name)}: all ${xf.maxSupply} pieces exist on Solana, held in escrow.</span>`); await xRefresh();
+  try { await E.runExisting(solConn, solSigner(), xcfg(), m => say(esc(m))); }
+  finally { await xRefresh().catch(() => {}); } // re-read the chain: the button continues with only the missing copies
+  say(`<span class="ok">${esc(xf.name)}: all ${xf.maxSupply} pieces exist on Solana, held in escrow.</span>`);
 }
 function existingHtml() {
   const missing = xst ? xst.total - xst.created : 0; const n = xst?.items.length || 0; const copiesTx = n - (xst && !xst.registered ? 1 : 0);
-  const appr = (xst && !xst.registered ? 1 : 0) + Math.ceil(Math.max(0, copiesTx) / 16); // register alone first, then the copies (src/solexisting.ts)
+  const appr = (xst && !xst.registered ? 1 : 0) + Math.ceil(Math.max(0, copiesTx) / 6); // register alone first, then the copies (src/solexisting.ts)
   const cost = xst ? missing * SOL_PER_COPY + (xst.registered ? 0 : SOL_REGISTER) + n * 0.00002 : 0; // + network/priority fees
   return `<details class="sddet sdx" data-det="x" ${openDet.has('x') ? 'open' : ''}><summary>Existing collections on Solana</summary><div class="sdpre">
     <p>Gives a live multichain collection its full set on Solana, like the other chains: registers it (royalties enforced, paid to ${esc(short(SL.feeRecipient))}) and creates every piece as a locked copy held by the Solana escrow. Bridging to Solana then releases the copy from escrow; leaving locks it again. About ${SOL_PER_COPY.toFixed(4)} SOL per piece (account rent + Metaplex fee, not refundable), paid by the program admin wallet. After step 3.</p>
     <label>Collection <select class="sdin" data-xslug><option value="">Choose…</option>${XCOLS.map(c => `<option value="${esc(c.slug)}" ${c.slug === xslug ? 'selected' : ''}>${esc(c.name)} (${c.supply})</option>`).join('')}</select></label>
     ${xf ? `<p class="mut">${esc(xf.name)} · ${xf.maxSupply} pieces · royalties ${xf.royaltyBps / 100}% to <span class="mono">${esc(short(SL.feeRecipient, 6, 4))}</span> · id <span class="mono">${esc(short(xcid, 6, 4))}</span></p>` : ''}
     ${xst ? `<p>${xst.registered ? '<b class="ok">✓ registered</b>' : 'not registered'} · copies ${xst.created}/${xst.total}
-      ${n ? btn('xadd', `Add to Solana: ${n} transaction${n > 1 ? 's' : ''} · ${appr} approval${appr > 1 ? 's' : ''} · ≈ ${cost.toFixed(3)} SOL`, setupDone() && !!solWallet.pubkey, 'obtn') : '<b class="ok">✓ full set on Solana</b>'}</p>` : ''}
+      ${n ? btn('xadd', `${xst.created ? `Continue: ${xst.created} of ${xst.total} copies done · ` : 'Add to Solana: '}${n} transaction${n > 1 ? 's' : ''} · ${appr} approval${appr > 1 ? 's' : ''} · ≈ ${cost.toFixed(3)} SOL`, setupDone() && !!solWallet.pubkey, 'obtn') : '<b class="ok">✓ full set on Solana</b>'}</p>` : ''}
     </div></details>`;
 }
 const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); let again = false;
