@@ -64,7 +64,7 @@ const isOn = () => !!flag?.on && !!programId && flag.programId === programId;
 // ------------------------------------------------------------------ reads
 async function soFile() {
   if (soBytes) return soBytes;
-  const b = new Uint8Array(await (await fetch(SO.path, { cache: 'force-cache' })).arrayBuffer());
+  const b = new Uint8Array(await (await fetch(`${SO.path}?h=${SO.sha256.slice(0, 16)}`, { cache: 'no-store' })).arrayBuffer());
   const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource)), x => x.toString(16).padStart(2, '0')).join('');
   if (h !== SO.sha256 || b.length !== SO.size) throw new Error('The program file did not download correctly (hash mismatch). Reload the page.');
   return (soBytes = b);
