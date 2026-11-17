@@ -19,6 +19,7 @@ import { makeSolanaLink } from './solanalink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
 import { makeIslandNfts } from './islandnfts.js';
+import { makeSolMeta } from './solmeta.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -267,6 +268,7 @@ let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, AD
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
+let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
 // ---------- router ----------
@@ -633,6 +635,8 @@ export default {
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url); const ch = corsHeaders(req, env);
+    // Public marketplace metadata/images (solmeta.js): any origin, no per-IP limit (edge-cached, immutable; ME's CDN fetches in bursts).
+    if (url.pathname.startsWith('/sol/meta/') || url.pathname.startsWith('/sol/img/')) { const r = await solMeta()(req, env, url, ctx); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     const H = ch || {};
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
