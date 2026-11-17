@@ -23,7 +23,7 @@ const D = {
   create_drop: [157, 142, 145, 247, 92, 73, 59, 48], mint: [51, 57, 225, 47, 182, 146, 137, 166],
   claim_refund: [15, 16, 30, 161, 255, 228, 97, 60], move_out: [70, 225, 254, 16, 221, 233, 233, 59],
   withdraw: [183, 18, 70, 156, 148, 109, 161, 34], set_paused: [91, 60, 125, 192, 176, 225, 166, 218],
-  reveal: [9, 35, 59, 190, 167, 249, 76, 115], refresh_uris: [190, 184, 138, 150, 61, 0, 175, 157],
+  reveal: [9, 35, 59, 190, 167, 249, 76, 115], refresh_uris: [190, 184, 138, 150, 61, 0, 175, 157], set_collection_uri: [115, 112, 161, 190, 140, 180, 214, 148],
   set_mover: [10, 202, 182, 143, 171, 208, 63, 204], register_existing: [2, 5, 61, 110, 9, 247, 100, 5], existing_copies: [40, 198, 111, 251, 244, 232, 14, 97],
 };
 /** Locked copies per existing_copies transaction (the program's MAX_COPIES_TX). */
@@ -219,6 +219,17 @@ export function refreshUrisIx(payer: PublicKey, cid: string, ids: number[], pid 
   const w = disc("refresh_uris").u32(ids.length); for (const i of ids) w.u32(i);
   return ix([meta(payer, true, true), meta(storePda(pid)), meta(dropPda(cid, pid)), meta(collectionPda(cid, pid)), meta(MPL_CORE_ID), meta(SystemProgram.programId),
     ...ids.map(i => meta(assetPda(cid, i, pid), true))], w.out(), pid);
+}
+/** set_collection_uri (drop owner; program upgrade of Nov 2026): Core UpdateCollectionV1 on the drop's collection. name "" keeps it. */
+export function setCollectionUriIx(owner: PublicKey, cid: string, name: string, uri: string, pid = OMNI_PROGRAM_ID) {
+  return ix([meta(owner, true, true), meta(storePda(pid)), meta(dropPda(cid, pid)), meta(collectionPda(cid, pid), true), meta(MPL_CORE_ID), meta(SystemProgram.programId)],
+    disc("set_collection_uri").str(name).str(uri).out(), pid);
+}
+/** Core CollectionV1: key 5, update authority, name, uri. */
+export function coreCollection(d: Uint8Array): { name: string; uri: string } | null {
+  if (d[0] !== 5) return null; const dv = new DataView(d.buffer, d.byteOffset); let o = 33; const t = new TextDecoder();
+  const nl = dv.getUint32(o, true); const name = t.decode(d.slice(o + 4, o + 4 + nl)); o += 4 + nl; const ul = dv.getUint32(o, true);
+  return { name, uri: t.decode(d.slice(o + 4, o + 4 + ul)) };
 }
 /** Core AssetV1 URI: key, owner, update authority (tag + key unless None), name, uri. */
 export function coreAssetUri(d: Uint8Array): string | null {

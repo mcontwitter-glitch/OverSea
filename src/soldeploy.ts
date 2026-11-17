@@ -48,6 +48,8 @@ let setup: SetupItem[] | null = null;
 const plans: Record<string, ChainPlan | undefined> = {}; const gasPrice: Record<string, bigint | undefined> = {}; const clockSkew: Record<string, number> = {};
 const chainErr: Record<string, string> = {};
 let flag: { on: boolean; programId: string | null; enabledAt: string | null } | null = null;
+let upg: PD.UpgradeState | null = null;
+const lsUpg: PD.KeyStore = { get: () => localStorage.getItem('msea-solupg-keys'), set: v => localStorage.setItem('msea-solupg-keys', v), clear: () => localStorage.removeItem('msea-solupg-keys') };
 let busy = ''; let msg = ''; let up: { written: number; total: number } | null = null;
 const openDet = new Set<string>();
 const say = (s: string) => { msg = s; render(); };
@@ -86,6 +88,7 @@ async function readSolana() {
     if (dst.programId && dst.phase === 'deployed') { programId = dst.programId; localStorage.setItem('msea-solprog-id', programId); }
     solBal = solWallet.pubkey ? await solConn.getBalance(solWallet.pubkey) : null;
     if (deployed()) setup = await (await SS()).setupPlan(solConn, setupCfg());
+    upg = deployed() && programId ? await PD.upgradeState(solConn, so, lsUpg, SO.sha256, programId).catch(() => null) : null;
   } catch (e) { msg = `<span class="err">Solana: ${esc(errText(e))}</span>`; }
 }
 function links(): Link[] { return KEYS.map(k => ({ k, name: NAMES[k], eid: M.chains[k].eid, escrow: V2.escrows[k], mover: V2.movers[k], v1: M.chains[k].omniEscrow, confirmations: M.chains[k].confirmations })); }
@@ -147,6 +150,30 @@ function autoResume() {
   autoTries++; say('<span class="warn">Continuing the upload…</span>'); run('deploy', doDeploy);
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') return; if (busy) return; refresh('sol').then(autoResume); });
+// ---- program upgrade (same id; only the upgrade authority): adds set_collection_uri. src/solprogdeploy.ts upgradeProgram.
+async function doUpgrade() {
+  const so = await soFile();
+  await PD.upgradeProgram(solConn, so, solSigner(), lsUpg, SO.sha256, programId, p => {
+    if (p.stage === 'approve-1') say(`Approve 1 of 2 in your wallet: create the upload account${upg?.extend ? ` and add ${upg.extend.toLocaleString()} bytes of program space` : ''}.`);
+    if (p.stage === 'upload') { up = { written: p.written || 0, total: p.total || 0 }; say('Uploading the new program… keep this tab open.'); }
+    if (p.stage === 'retry') say(`<span class="warn">${esc(p.note || 'Network busy: retrying…')}</span>`);
+    if (p.stage === 'top-up') say('Approve a small top-up for the upload fees (retries used them up).');
+    if (p.stage === 'approve-2') say('Approve 2 of 2 in your wallet: upgrade the program.');
+  });
+  up = null; say('<span class="ok">Program upgraded. The upload deposit went back to your wallet.</span>'); await refresh('sol');
+}
+async function doUpgradeCancel() { await PD.cancelUpload(solConn, solSigner(), lsUpg, SO.sha256); up = null; say('Upgrade upload cancelled; the deposit went back to your wallet.'); await refresh('sol'); }
+function upgradeHtml() {
+  if (!upg || upg.phase === 'upgraded' || !deployed()) return '';
+  const me = solWallet.pubkey?.toBase58(); const isAuth = me === upg.authority; const fees = PD.UPLOAD_FUND + 20_000;
+  return `<details class="sddet sdx" data-det="u" ${openDet.has('u') ? 'open' : ''}><summary>Program upgrade available</summary><div class="sdpre">
+    <p>New version of the MultiSea Solana program (same address): adds <b>set collection image</b>, so a drop owner can point the collection at its metadata (marketplaces read the collection image from it). Nothing else changes.</p>
+    <p class="mut">Needs ≈ ${sol(upg.bufferRent + upg.extendRent + fees)} SOL while it runs: ${sol(upg.bufferRent)} SOL upload deposit (refunded at the end)${upg.extend ? ` + ${sol(upg.extendRent)} SOL for ${upg.extend.toLocaleString()} more bytes of program space (stays with the program)` : ''} + ≈ ${sol(fees)} SOL upload fees (the unused part comes back). 2 approvals.</p>
+    ${up && busy === 'upgrade' ? `<p>Uploading ${up.written}/${up.total}</p>` : upg.phase !== 'new' ? `<p class="mut">Upload ${upg.written}/${upg.total} done; tap Upgrade to continue.</p>` : ''}
+    <p>${btn('upgrade', upg.phase === 'new' ? 'Upgrade program · 2 approvals' : 'Continue upgrade', isAuth, 'obtn')}${upg.phase !== 'new' ? ' ' + btn('upgcancel', 'Cancel upload', isAuth, 'obtn') : ''}
+      ${isAuth ? '' : `<span class="mut">(connect the upgrade authority ${esc(short(upg.authority || 'none', 6, 4))})</span>`}</p>
+  </div></details>`;
+}
 async function doCancel() { wantDeploy = false; await PD.cancelUpload(solConn, solSigner(), lsKeys, SO.sha256); up = null; programId = ''; localStorage.removeItem('msea-solprog-id'); say('Upload cancelled; the deposit went back to your wallet.'); await refresh('sol'); }
 async function doSetup() {
   const w = solSigner(); if (dst?.authority && dst.authority !== w.publicKey.toBase58()) throw new Error(`Connect the wallet that deployed the program (${short(dst.authority)}).`);
@@ -187,6 +214,7 @@ async function doTurnOn() {
 const XCOLS: any[] = (CFG as any).collections.filter((c: any) => (c.deployments || []).length > 1 && c.escrow);
 const SOL_PER_COPY = 0.00289192, SOL_REGISTER = 0.0093; // measured (mainnet simulation): Core asset rent + Metaplex create fee; drop + collection rent
 let xfix: { total: number; updated: number; items: any[]; owner: string } | null = null;
+let xcol: { name: string; uri: string; owner: string } | null = null;
 let xslug = ''; let xcid = ''; let xf: O.ExistingParams | null = null; let xst: { registered: boolean; total: number; created: number; items: any[] } | null = null;
 const pid = () => new PublicKey(programId);
 const xcfg = () => ({ pid: pid(), admin: solWallet.pubkey || new PublicKey(dst?.authority || programId), cid: xcid, params: xf! });
@@ -207,6 +235,7 @@ async function xLoad(slug: string) {
 }
 async function xRefresh() { if (!programId || !xf) return render(); const E = await import('./solexisting'); xst = await E.existingPlan(solConn, xcfg());
   xfix = null; const di = xst.registered ? await solConn.getAccountInfo(O.dropPda(xcid, pid())) : null;
+  xcol = null; if (di) { const ca = await solConn.getAccountInfo(O.collectionPda(xcid, pid())); const cc = ca && O.coreCollection(ca.data); if (cc) xcol = { ...cc, owner: O.decodeDrop(di.data).owner.toBase58() }; }
   if (di && xst.created === xst.total) { const owner = O.decodeDrop(di.data).owner; xfix = { ...await E.fixPlan(solConn, xcfg(), owner, E.metaBase(xslug)), owner: owner.toBase58() }; }
   render(); }
 async function xFix() {
@@ -224,6 +253,16 @@ async function xAdd() {
   finally { await xRefresh().catch(() => {}); } // re-read the chain: the button continues with only the missing copies
   say(`<span class="ok">${esc(xf.name)}: all ${xf.maxSupply} pieces exist on Solana, held in escrow.</span>`);
 }
+const colUri = () => `https://api.multisea.io/sol/meta/${xslug}/collection.json`;
+async function xSetCollection() {
+  if (!xf || !xcol) throw new Error('Pick a collection first.');
+  if (solWallet.pubkey?.toBase58() !== xcol.owner) throw new Error(`Connect the collection's Solana owner wallet ${short(xcol.owner, 6, 4)} first.`);
+  const { sendBatched } = await import('./soltx');
+  try { await sendBatched(solConn, solSigner(), [{ label: 'Set collection image', ixs: [O.setCollectionUriIx(solWallet.pubkey!, xcid, '', colUri(), pid())], cu: 40_000 }], m => say(esc(m)),
+    { batch: 1, again: 'Set collection image', priceCap: 200_000, priceFloor: 50_000, parallel: true }); }
+  finally { await xRefresh().catch(() => {}); }
+  say(`<span class="ok">${esc(xf.name)}: the collection now points at ${esc(colUri())}. Marketplaces pick it up on their next refresh.</span>`);
+}
 function existingHtml() {
   const missing = xst ? xst.total - xst.created : 0; const n = xst?.items.length || 0; const copiesTx = n - (xst && !xst.registered ? 1 : 0);
   const appr = (xst && !xst.registered ? 1 : 0) + Math.ceil(Math.max(0, copiesTx) / 6); // register alone first, then the copies (src/solexisting.ts)
@@ -234,6 +273,7 @@ function existingHtml() {
     ${xf ? `<p class="mut">${esc(xf.name)} · ${xf.maxSupply} pieces · royalties ${xf.royaltyBps / 100}% to <span class="mono">${esc(short(SL.feeRecipient, 6, 4))}</span> · id <span class="mono">${esc(short(xcid, 6, 4))}</span></p>` : ''}
     ${xst ? `<p>${xst.registered ? '<b class="ok">✓ registered</b>' : 'not registered'} · copies ${xst.created}/${xst.total}
       ${n ? btn('xadd', `${xst.created ? `Continue: ${xst.created} of ${xst.total} copies done · ` : 'Add to Solana: '}${n} transaction${n > 1 ? 's' : ''} · ${appr} approval${appr > 1 ? 's' : ''} · ≈ ${cost.toFixed(3)} SOL`, setupDone() && !!solWallet.pubkey, 'obtn') : '<b class="ok">✓ full set on Solana</b>'}</p>` : ''}
+    ${xcol ? `<p>Collection image: ${xcol.uri === colUri() ? '<b class="ok">✓ set</b>' : upg && upg.phase !== 'upgraded' ? '<span class="mut">needs the program upgrade above</span>' : btn('xcol', 'Set collection image · 1 approval', solWallet.pubkey?.toBase58() === xcol.owner, 'obtn') + (solWallet.pubkey?.toBase58() === xcol.owner ? '' : ` <span class="mut">(connect ${esc(short(xcol.owner, 6, 4))})</span>`)}</p>` : ''}
     ${xfix ? `<p>Images: ${xfix.updated} of ${xfix.total} updated ${xfix.items.length ? btn('xfix', `Fix images · ${xfix.items.length} transaction${xfix.items.length > 1 ? 's' : ''} · 1 approval`, solWallet.pubkey?.toBase58() === xfix.owner, 'obtn') + (solWallet.pubkey?.toBase58() === xfix.owner ? '' : ` <span class="mut">(connect ${esc(short(xfix.owner, 6, 4))})</span>`) : '<b class="ok">✓</b>'}</p>` : ''}
     </div></details>`;
 }
@@ -315,6 +355,7 @@ function render() {
    <div class="sdprog"><i style="width:${pct}%"></i></div>
    ${msg ? `<div class="sdmsg">${msg}</div>` : ''}
    ${steps.map((s, i) => `<div class="sdstep ${s.done ? 'done' : i === nowStep ? 'now' : ''}"><div class="sdnum">${s.done ? '✓' : i + 1}</div><div class="sdbody"><h3>${s.t}${s.cost ? `<span class="sdcost">${s.cost}</span>` : ''}</h3><p>${s.p}</p>${s.body}${det('s' + i, s.d)}</div></div>`).join('')}
+   ${upgradeHtml()}
    ${existingHtml()}
   </section>`;
   bindNav();
@@ -330,7 +371,10 @@ app.addEventListener('click', e => { const b = (e.target as HTMLElement).closest
   if (a.startsWith('step:')) return run(a, () => doStep(a.slice(5)));
   if (a === 'on') return run(a, doTurnOn);
   if (a === 'xadd') return run(a, xAdd);
-  if (a === 'xfix') return run(a, xFix); });
+  if (a === 'xfix') return run(a, xFix);
+  if (a === 'xcol') return run(a, xSetCollection);
+  if (a === 'upgrade') return run(a, doUpgrade);
+  if (a === 'upgcancel') return run(a, doUpgradeCancel); });
 app.addEventListener('change', e => { const t = e.target as HTMLInputElement;
   if (t.dataset.xslug !== undefined) { xLoad(t.value); return; }
   if (t.dataset.pid !== undefined) { const v = t.value.trim(); try { if (v) new PublicKey(v); programId = v; v ? localStorage.setItem('msea-solprog-id', v) : localStorage.removeItem('msea-solprog-id'); refresh('all'); } catch { say('<span class="err">That is not a Solana program id.</span>'); } } });

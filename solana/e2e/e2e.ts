@@ -273,6 +273,19 @@ async function main() {
   const furis = await Promise.all(Array.from({ length: 100 }, async (_, i) => O.coreAssetUri((await conn.getAccountInfo(O.assetPda(xcid, i + 1)))!.data)));
   check("fix images: all 100 copies point at <base><id>.json in 1 approval, button would hide (0 left)", f2.updated === 100 && f2.items.length === 0 && pw.approvals - fa === 1
     && furis.every((u, i) => u === `${fbase}${i + 1}.json`) && O.decodeDrop((await conn.getAccountInfo(O.dropPda(xcid)))!.data).baseUri === fbase, `${furis[0]} · ${pw.approvals - fa} approval`);
+  // set_collection_uri (program upgrade): drop owner only, Core UpdateCollectionV1 signed by the Store PDA
+  const colUri = "https://api.multisea.io/sol/meta/multi-islands/collection.json";
+  const rej = async (ixs: any[], signers: any[]) => { try { await sol(ixs, signers); return false; } catch { return true; } };
+  check("set_collection_uri: a non-owner is rejected", await rej([O.setCollectionUriIx(stranger.publicKey, xcid, "", colUri)], [stranger]));
+  const badCol = O.setCollectionUriIx(admin.publicKey, xcid, "", colUri); badCol.keys[3] = { ...badCol.keys[3], pubkey: O.collectionPda(cid) };
+  check("set_collection_uri: another drop's collection account is rejected", await rej([badCol], [admin]));
+  check("set_collection_uri: empty URI is rejected", await rej([O.setCollectionUriIx(admin.publicKey, xcid, "", "")], [admin]));
+  await sol([O.setCollectionUriIx(admin.publicKey, xcid, "", colUri)], [admin]);
+  const cc1 = O.coreCollection((await conn.getAccountInfo(O.collectionPda(xcid)))!.data)!;
+  check("set_collection_uri: owner updates the Core collection URI, name kept, royalties kept", cc1.uri === colUri && cc1.name === "MULTI ISLANDS"
+    && hasRoyalties((await conn.getAccountInfo(O.collectionPda(xcid)))!.data, 500, creator.publicKey), `${cc1.name} · ${cc1.uri}`);
+  await sol([O.setCollectionUriIx(admin.publicKey, xcid, "Island's", colUri)], [admin]);
+  check("set_collection_uri: owner can rename too", O.coreCollection((await conn.getAccountInfo(O.collectionPda(xcid)))!.data)!.name === "Island's");
   const moverB = ethers.getBytes(ethers.zeroPadValue(moverA, 32)), escV1B = ethers.getBytes(ethers.zeroPadValue(escV1A, 32));
   await sol([O.setMoverIx(admin.publicKey, EVM_EID, moverB, escV1B), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, moverB), endpoint.initOAppNonce(admin.publicKey, EVM_EID, store, escV1B)], [admin]);
   await (await mover.setCollection(xcid, true)).wait();

@@ -29,6 +29,10 @@ export const L = {
     ix([[payer, true, true], [pd, false, true], [prog, false, true], [buf, false, true], [SYSVAR_RENT_PUBKEY, false, false], [SYSVAR_CLOCK_PUBKEY, false, false], [SystemProgram.programId, false, false], [auth, true, false]], cat(u32(2), u64(maxLen))),
   setBufferAuthority: (buf: PublicKey, cur: PublicKey, next: PublicKey) => ix([[buf, false, true], [cur, true, false], [next, false, false]], u32(4)),
   close: (acc: PublicKey, to: PublicKey, auth: PublicKey) => ix([[acc, false, true], [to, false, true], [auth, true, false]], u32(5)),
+  upgrade: (pd: PublicKey, prog: PublicKey, buf: PublicKey, spill: PublicKey, auth: PublicKey) =>
+    ix([[pd, false, true], [prog, false, true], [buf, false, true], [spill, false, true], [SYSVAR_RENT_PUBKEY, false, false], [SYSVAR_CLOCK_PUBKEY, false, false], [auth, true, false]], u32(3)),
+  extend: (pd: PublicKey, prog: PublicKey, payer: PublicKey, bytes: number) =>
+    ix([[pd, false, true], [prog, false, true], [SystemProgram.programId, false, false], [payer, true, true]], cat(u32(6), u32(bytes))),
 };
 export const programDataOf = (prog: PublicKey) => PublicKey.findProgramAddressSync([prog.toBuffer()], LOADER)[0];
 
@@ -86,6 +90,23 @@ export async function deployProgram(conn: Connection, so: Uint8Array, w: Wallet,
     } catch (e) { if (!(e instanceof TxExpired)) throw e; if (!(await conn.getAccountInfo(kk.buffer.publicKey))) throw notConfirmed('Approval 1'); }
     st = await deployState(conn, so, ks, sha);
   }
+  await uploadAll(conn, so, w, kk, on, pace, 'Deploy');
+  // approval 2
+  on({ stage: 'approve-2' });
+  const price = await priorityFee(conn, [w.publicKey, kk.buffer.publicKey], WALLET_FEE_CAP);
+  try {
+    const sig = await sendWallet(conn, w, [...budget(CU.deploy, price),
+      SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: kk.program.publicKey, lamports: c.program, space: PROG_LEN, programId: LOADER }),
+      L.deploy(w.publicKey, programDataOf(kk.program.publicKey), kk.program.publicKey, kk.buffer.publicKey, w.publicKey, so.length)], [kk.program], { onWait: retry });
+    on({ stage: 'deployed', sig });
+  } catch (e) { if (!(e instanceof TxExpired)) throw e; if ((await deployState(conn, so, ks, sha)).phase !== 'deployed') throw notConfirmed('Approval 2'); }
+  await returnLeftover(conn, kk.upload, w.publicKey).catch(() => undefined);
+  return kk.program.publicKey.toBase58();
+}
+/** Writes the program file into the buffer (only the parts not yet on-chain, byte-compared), signed by the throwaway key, then
+ *  hands the buffer to the wallet. Shared by deploy and upgrade. */
+async function uploadAll(conn: Connection, so: Uint8Array, w: Wallet, kk: Keys, on: Progress, pace: { parallel: number; delayMs: number }, again: string) {
+  const retry = (note: string) => on({ stage: 'retry', note });
   const b0 = await conn.getAccountInfo(kk.buffer.publicKey); if (!b0) throw new Error('Upload account missing: cancel the upload and start again.');
   const authNow = new PublicKey(b0.data.subarray(5, 37)); const total = chunks(so).length;
   if (authNow.equals(kk.upload.publicKey)) {
@@ -106,21 +127,10 @@ export async function deployProgram(conn: Connection, so: Uint8Array, w: Wallet,
         if (pace.delayMs) await new Promise(r => setTimeout(r, pace.delayMs));
       }
     }
-    const b = (await conn.getAccountInfo(kk.buffer.publicKey))!; if (missing(b.data, so).length) throw new Error('The network is very busy: part of the upload is still missing. Tap Deploy again to continue (nothing is lost).');
+    const b = (await conn.getAccountInfo(kk.buffer.publicKey))!; if (missing(b.data, so).length) throw new Error(`The network is very busy: part of the upload is still missing. Tap ${again} again to continue (nothing is lost).`);
     // verified byte-for-byte: hand the upload to the wallet so the wallet becomes the upgrade authority
     await sendLocal(conn, [kk.upload], [...budget(CU.setAuth, await priorityFee(conn, [kk.buffer.publicKey], WRITE_FEE_CAP)), L.setBufferAuthority(kk.buffer.publicKey, kk.upload.publicKey, w.publicKey)], { onRetry: retry });
   } else if (!authNow.equals(w.publicKey)) throw new Error('The upload account belongs to another wallet: connect that wallet or cancel the upload.');
-  // approval 2
-  on({ stage: 'approve-2' });
-  const price = await priorityFee(conn, [w.publicKey, kk.buffer.publicKey], WALLET_FEE_CAP);
-  try {
-    const sig = await sendWallet(conn, w, [...budget(CU.deploy, price),
-      SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: kk.program.publicKey, lamports: c.program, space: PROG_LEN, programId: LOADER }),
-      L.deploy(w.publicKey, programDataOf(kk.program.publicKey), kk.program.publicKey, kk.buffer.publicKey, w.publicKey, so.length)], [kk.program], { onWait: retry });
-    on({ stage: 'deployed', sig });
-  } catch (e) { if (!(e instanceof TxExpired)) throw e; if ((await deployState(conn, so, ks, sha)).phase !== 'deployed') throw notConfirmed('Approval 2'); }
-  await returnLeftover(conn, kk.upload, w.publicKey).catch(() => undefined);
-  return kk.program.publicKey.toBase58();
 }
 async function returnLeftover(conn: Connection, upload: Keypair, to: PublicKey) {
   const price = await priorityFee(conn, [], WRITE_FEE_CAP); const bal = await conn.getBalance(upload.publicKey); const fee = feeOf(CU.transfer, price); if (bal <= fee) return;
@@ -137,4 +147,64 @@ export async function cancelUpload(conn: Connection, w: Wallet, ks: KeyStore, sh
     else throw new Error('The upload account belongs to another wallet.'); }
   await returnLeftover(conn, k.upload, w.publicKey).catch(() => undefined);
   if (!(await conn.getAccountInfo(k.buffer.publicKey))) ks.clear();
+}
+
+// ---------------------------------------------------------------------- upgrade (same program id, upgrade authority = the wallet)
+//   approval 1: create the buffer + fund the throwaway upload key (+ ExtendProgram when the new file is larger than the program's
+//               allocation: mainnet requires at least 10,240 extra bytes per extend). Extending here, in its own earlier
+//               transaction, keeps it out of the Upgrade's slot.
+//   uploads   : as for a deploy (throwaway key, no prompts), then the buffer is handed to the wallet
+//   approval 2: Upgrade: the loader copies the buffer into the program and refunds the buffer's deposit to the wallet
+export const MIN_EXTEND = 10_240;
+export type UpgradeState = { phase: 'upgraded' | 'new' | 'buffer' | 'ready'; authority?: string; capacity: number; extend: number; written: number; total: number;
+  bufferRent: number; extendRent: number; bufferAuthority?: string };
+export async function upgradeState(conn: Connection, so: Uint8Array, ks: KeyStore, sha: string, programId: string): Promise<UpgradeState> {
+  const pd = await conn.getAccountInfo(programDataOf(new PublicKey(programId)));
+  if (!pd) throw new Error('Program not found.');
+  const authority = pd.data[12] === 1 ? new PublicKey(pd.data.subarray(13, 45)).toBase58() : undefined;
+  const capacity = pd.data.length - PD_HDR; const total = chunks(so).length;
+  let same = capacity >= so.length; for (let i = 0; same && i < capacity; i++) if (pd.data[PD_HDR + i] !== (i < so.length ? so[i] : 0)) same = false;
+  const extend = so.length > capacity ? Math.max(MIN_EXTEND, so.length - capacity) : 0;
+  const [bufferRent, pdRent] = await Promise.all([conn.getMinimumBalanceForRentExemption(BUF_HDR + so.length), conn.getMinimumBalanceForRentExemption(pd.data.length + extend)]);
+  const base = { authority, capacity, extend, total, written: 0, bufferRent, extendRent: extend ? Math.max(0, pdRent - pd.lamports) : 0 };
+  if (same) return { ...base, phase: 'upgraded', written: total };
+  const k = loadKeys(ks, sha); if (!k) return { ...base, phase: 'new' };
+  const b = await conn.getAccountInfo(k.buffer.publicKey); if (!b) return { ...base, phase: 'new' };
+  const left = missing(b.data, so).length;
+  return { ...base, phase: left ? 'buffer' : 'ready', written: total - left, bufferAuthority: b.data[4] === 1 ? new PublicKey(b.data.subarray(5, 37)).toBase58() : undefined };
+}
+export const CU_UPGRADE = { approve1: 25_000, upgrade: 200_000 };
+/** Runs (or resumes) the upgrade. Safe to call again at any point: it re-reads the chain. */
+export async function upgradeProgram(conn: Connection, so: Uint8Array, w: Wallet, ks: KeyStore, sha: string, programId: string, on: Progress = () => {}, pace = { parallel: 4, delayMs: 100 }) {
+  const prog = new PublicKey(programId), pd = programDataOf(prog);
+  let st = await upgradeState(conn, so, ks, sha, programId);
+  if (st.phase === 'upgraded') return;
+  if (st.authority !== w.publicKey.toBase58()) throw new Error(`Only the program's upgrade authority ${st.authority || '(none: immutable)'} can upgrade it. Connect that wallet.`);
+  let k = loadKeys(ks, sha);
+  if (k && k.sha !== sha && st.phase !== 'new') throw new Error('An upload of a different program file is in progress: cancel it first.');
+  if (!k || st.phase === 'new') k = k && st.phase === 'new' && k.sha === sha ? k : newKeys(ks, sha);
+  const kk = k; const retry = (note: string) => on({ stage: 'retry', note });
+  const nc = (what: string) => new Error(`${what} was not confirmed by the network (busy). Nothing is lost: tap Upgrade again to continue.`);
+  if (st.phase === 'new') {
+    on({ stage: 'approve-1' });
+    const price = await priorityFee(conn, [w.publicKey], WALLET_FEE_CAP);
+    try {
+      const sig = await sendWallet(conn, w, [...budget(CU_UPGRADE.approve1, price),
+        SystemProgram.createAccount({ fromPubkey: w.publicKey, newAccountPubkey: kk.buffer.publicKey, lamports: st.bufferRent, space: BUF_HDR + so.length, programId: LOADER }),
+        L.initBuffer(kk.buffer.publicKey, kk.upload.publicKey), SystemProgram.transfer({ fromPubkey: w.publicKey, toPubkey: kk.upload.publicKey, lamports: UPLOAD_FUND }),
+        ...(st.extend ? [L.extend(pd, prog, w.publicKey, st.extend)] : [])], [kk.buffer], { onWait: retry });
+      on({ stage: 'buffer-created', sig });
+    } catch (e) { if (!(e instanceof TxExpired)) throw e; if (!(await conn.getAccountInfo(kk.buffer.publicKey))) throw nc('Approval 1'); }
+    st = await upgradeState(conn, so, ks, sha, programId);
+  }
+  if (st.capacity < so.length) throw new Error(`The program's space (${st.capacity} bytes) is still smaller than the new file (${so.length}). Tap Upgrade again.`);
+  await uploadAll(conn, so, w, kk, on, pace, 'Upgrade');
+  on({ stage: 'approve-2' });
+  const price = await priorityFee(conn, [w.publicKey, kk.buffer.publicKey], WALLET_FEE_CAP);
+  try {
+    const sig = await sendWallet(conn, w, [...budget(CU_UPGRADE.upgrade, price), L.upgrade(pd, prog, kk.buffer.publicKey, w.publicKey, w.publicKey)], [], { onWait: retry });
+    on({ stage: 'upgraded', sig });
+  } catch (e) { if (!(e instanceof TxExpired)) throw e; if ((await upgradeState(conn, so, ks, sha, programId)).phase !== 'upgraded') throw nc('Approval 2'); }
+  await returnLeftover(conn, kk.upload, w.publicKey).catch(() => undefined);
+  ks.clear();
 }

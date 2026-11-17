@@ -123,6 +123,7 @@ const I_LZ_RECEIVE_TYPES: u64 = 0x601f80f89ff611dd;
 const I_LZ_RECEIVE: u64 = 0x50bd76216d78b308;
 const I_REGISTER_EXISTING: u64 = 0x0564f7096e3d0502;
 const I_EXISTING_COPIES: u64 = 0x610ee8f4fb6fc628;
+const I_SET_COLLECTION_URI: u64 = 0x94d6b48cbea17073;
 // LayerZero endpoint instructions
 const EP_REGISTER_OAPP: [u8; 8] = [129, 89, 71, 68, 11, 82, 210, 125];
 const EP_SEND: [u8; 8] = [102, 251, 20, 187, 65, 75, 12, 69];
@@ -398,6 +399,7 @@ pub fn process(pid: &Pubkey, a: &[AccountInfo], data: &[u8]) -> R {
             Ok(())
         }
         I_REFRESH_URIS => refresh_uris(pid, a, &mut r),
+        I_SET_COLLECTION_URI => set_collection_uri(pid, a, &mut r),
         I_LZ_RECEIVE => lz_receive(pid, a, &mut r),
         _ => Err(E_PARAMS as u64),
     }
@@ -784,6 +786,33 @@ fn refresh_uris(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {
         };
         invoke_signed(&ix, a, &[&[b"Store", &[s.bump]]])?;
     }
+    Ok(())
+}
+
+/// Drop owner: set the drop's Core collection name (empty = keep) and URI (marketplaces read the collection image from it).
+/// Accounts: owner (s, w: pays any Core realloc), store, drop, collection (w), core, system. Data: name String, uri String.
+fn set_collection_uri(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {
+    req!(a.len() >= 6, E_ACCOUNTS);
+    signer(&a[0])?;
+    let s = store(&a[1], pid)?;
+    let d = drop_acc(&a[2], pid)?;
+    req!(*a[0].key == pk(d, D_OWNER), E_UNAUTHORIZED);
+    req!(*a[3].key == pk(d, D_COLLECTION) && *a[4].key == MPL_CORE, E_ACCOUNTS);
+    let name = r.s();
+    let uri = r.s();
+    req!(name.len() <= MAX_NAME && !uri.is_empty() && uri.len() <= MAX_URI, E_PARAMS);
+    // UpdateCollectionV1 (16): collection (w), payer (w, s), authority (s), new_update_authority (None), system, log wrapper (None)
+    let mut w = Wr(Vec::new());
+    w.b(&[16]);
+    if name.is_empty() { w.b(&[0]); } else { w.b(&[1]).s(name); }
+    w.b(&[1]).s(uri);
+    let ix = Instruction {
+        program_id: MPL_CORE,
+        accounts: vec![AccountMeta::new(*a[3].key, false), AccountMeta::new(*a[0].key, true), AccountMeta::new_readonly(s.key, true),
+            AccountMeta::new_readonly(MPL_CORE, false), AccountMeta::new_readonly(system_program::ID, false), AccountMeta::new_readonly(MPL_CORE, false)],
+        data: w.0,
+    };
+    invoke_signed(&ix, a, &[&[b"Store", &[s.bump]]])?;
     Ok(())
 }
 
