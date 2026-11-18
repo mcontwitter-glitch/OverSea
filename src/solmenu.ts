@@ -2,6 +2,7 @@
 // (src/wallet.ts, src/embedded.ts) render exactly as before; these functions append a Solana section / block / nav button.
 import { sol, onSol, shortSol, solWalletOptions, connectSolWallet, disconnectSolWallet, restoreSol, setSol, PRIVY_ON } from './solconnect';
 import { wallet, overlay, esc, API } from './wallet';
+import { profileWallets } from './walletlinks';
 
 const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || 'https://solana-rpc.publicnode.com';
 const SOL_ICON = '/logos/solana.svg';
@@ -54,7 +55,7 @@ function fillSol(m: HTMLElement) {
   const a = sol.address; const bal = m.querySelector('[data-solm=bal]') as HTMLElement | null; const lk = m.querySelector('[data-solm=link]') as HTMLElement | null;
   solBalance(a).then(v => { if (bal && sol.address === a) bal.innerHTML = `<b>${v.toLocaleString(undefined, { maximumFractionDigits: 4 })}</b> SOL`; bal?.classList.remove('mut', 'small'); })
     .catch(() => { if (bal) bal.textContent = 'Couldn’t read SOL balance'; });
-  if (lk && wallet.address) linkedSol(wallet.address).then(s => { lk.innerHTML = s === a ? '✓ linked to profile' : `<a href="/u/${esc(wallet.address!.toLowerCase())}#add-solana">Link to profile</a>`; });
+  if (lk && wallet.address) Promise.all([profileWallets(a), profileWallets(wallet.address)]).then(([x, y]) => { lk.innerHTML = x && y && x.profile === y.profile && x.wallets.some(w => w.addr === a) ? '✓ linked to profile' : `<a href="/u/${esc(wallet.address!.toLowerCase())}#add-solana">Link to profile</a>`; });
 }
 /** Appended to the EVM wallet menu (EVM part unchanged): Solana account + "Disconnect Solana", or a connect link. */
 export function solMenuBlock(m: HTMLElement) {

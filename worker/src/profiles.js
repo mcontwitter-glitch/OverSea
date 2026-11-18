@@ -7,7 +7,7 @@ const cleanText = (s, n) => String(s || '').replace(/<[^>]*>/g, '').replace(/[\u
 // BNB has none, so it is reported under `unsupported` (client may fill via Insight).
 const GALLERY_CHAINS = ['base', 'ethereum', 'bnb', 'apechain', 'robinhood'];
 
-export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch }) {
+export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch, wl }) {
   const key = a => 'profile:' + lc(a);
   const chains = CFG.chains;
   async function one(env, address) {
@@ -63,7 +63,11 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
       if (p[0] === 'profiles' && M === 'GET') {
         const addresses = (url.searchParams.get('addresses') || '').split(',').filter(Boolean);
         if (!addresses.length || addresses.length > 100 || addresses.some(a => !ADDR.test(a))) bad('provide 1 to 100 valid addresses');
-        const profiles = Object.fromEntries(await Promise.all([...new Set(addresses.map(lc))].map(async a => [a, await one(env, a)])));
+        const profiles = Object.fromEntries(await Promise.all([...new Set(addresses.map(lc))].map(async a => {
+          // A linked wallet shows its profile's name/avatar (keyed by the asked address; `primary` = the profile wallet).
+          const pr = wl ? await env.COLLECTIONS.get('walletprofile:' + a) : null;
+          return [a, pr ? { ...(await one(env, pr)), address: a, primary: pr } : await one(env, a)];
+        })));
         return { profiles };
       }
       // Session-scoped gallery of NFTs the signed-in wallet owns (OpenSea account endpoint, same source as /foot/<id>/nfts).
@@ -89,6 +93,7 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
       }
       if (p[0] !== 'profile' || M !== 'POST' || p.length !== 1) return undefined;
       const s = await requireSession(req, env); const b = await body();
+      if (wl && await env.COLLECTIONS.get('walletprofile:' + lc(s.address))) bad('this wallet is linked to another profile; edit that profile from its main wallet', 409);
       const name = cleanText(b.name, 24); if (name && !NAME.test(name)) bad('display name must be 1-24 letters, numbers, spaces, dots, dashes or underscores');
       if (name) {
         const matches = await env.COLLECTIONS.list({ prefix: 'profile:name:' + name.toLowerCase() });

@@ -5,7 +5,8 @@
 //   POST /profile/solana-link   { nonce, solSignature (base64), evmSignature (0x…) } -> { address, sol, linkedAt }
 //   POST /profile/solana-unlink { nonce, evmSignature }                              -> { address, sol: null }
 //   GET  /profile/<evm>/solana  -> { address, sol, linkedAt }      GET /profile/solana/<base58> -> { sol, address }
-// KV (COLLECTIONS): 'profile:sol:'+evm = { sol, linkedAt }, 'solprofile:'+sol = evm. Nonces (NONCES): 'sl:'+nonce, 10 min.
+// Storage now lives in walletlink.js (multi-wallet list); these legacy endpoints read/write the first linked Solana wallet.
+// Nonces (NONCES): 'sl:'+nonce, 10 min.
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 export function b58decode(s) {
   let n = 0n; for (const c of s) { const i = B58.indexOf(c); if (i < 0) throw Error('bad base58'); n = n * 58n + BigInt(i); }
@@ -21,12 +22,11 @@ export async function verifyEd25519(pub, msg, sig) {
   }
   return false;
 }
-export function makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm }) {
-  const fwd = a => 'profile:sol:' + lc(a), rev = s => 'solprofile:' + s;
+export function makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm, wl }) {
   const linkMsg = (evm, sol, n, t) => `MultiSea: link Solana wallet\nProfile: ${evm}\nSolana: ${sol}\nNonce: ${n}\nIssued: ${t}`;
   const confirmMsg = (evm, sol, n, t) => `MultiSea: confirm Solana wallet link\nProfile: ${evm}\nSolana: ${sol}\nNonce: ${n}\nIssued: ${t}\n\nOnly sign this on multisea.io.`;
   const unlinkMsg = (evm, sol, n, t) => `MultiSea: unlink Solana wallet\nProfile: ${evm}\nSolana: ${sol}\nNonce: ${n}\nIssued: ${t}`;
-  async function get(env, evm) { const r = await env.COLLECTIONS.get(fwd(evm), 'json'); return { address: lc(evm), sol: r?.sol || null, linkedAt: r?.linkedAt || null }; }
+  async function get(env, evm) { const r = (await wl.list(env, lc(evm))).find(w => w.kind === 'sol'); return { address: lc(evm), sol: r?.addr || null, linkedAt: r?.linkedAt || null }; }
   async function take(env, nonce, kind) {
     if (typeof nonce !== 'string' || !/^[0-9a-f]{24}$/.test(nonce)) bad('invalid nonce');
     const r = await env.NONCES.get('sl:' + nonce, 'json'); if (!r || r.kind !== kind) bad('nonce expired or unknown, start again', 401);
@@ -53,10 +53,7 @@ export function makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm }) {
       if (!(await verifyEd25519(b58decode(r.sol), new TextEncoder().encode(r.message), sig))) bad('Solana signature does not match that wallet', 401);
       if (!/^0x[0-9a-fA-F]+$/.test(evmSignature || '') || !(await verifyEvm(r.evm, r.confirm, evmSignature))) bad('EVM confirm signature does not match the profile wallet', 401);
       await env.NONCES.delete('sl:' + nonce);
-      const prevOwner = await env.COLLECTIONS.get(rev(r.sol)); if (prevOwner && prevOwner !== r.evm) await env.COLLECTIONS.delete(fwd(prevOwner));
-      const prev = await get(env, r.evm); if (prev.sol && prev.sol !== r.sol) await env.COLLECTIONS.delete(rev(prev.sol));
-      const linkedAt = Date.now();
-      await env.COLLECTIONS.put(fwd(r.evm), JSON.stringify({ sol: r.sol, linkedAt })); await env.COLLECTIONS.put(rev(r.sol), r.evm);
+      const ws = await wl.add(env, r.evm, r.sol); const linkedAt = ws.find(w => w.addr === r.sol).linkedAt;
       return { address: r.evm, sol: r.sol, linkedAt };
     }
     if (M === 'POST' && p[1] === 'solana-unlink' && p.length === 2) {
@@ -64,10 +61,10 @@ export function makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm }) {
       const r = await take(env, nonce, 'unlink');
       if (!/^0x[0-9a-fA-F]+$/.test(evmSignature || '') || !(await verifyEvm(r.evm, r.confirm, evmSignature))) bad('EVM signature does not match the profile wallet', 401);
       await env.NONCES.delete('sl:' + nonce);
-      const cur = await get(env, r.evm); if (cur.sol) { await env.COLLECTIONS.delete(rev(cur.sol)); await env.COLLECTIONS.delete(fwd(r.evm)); }
+      if (r.sol) await wl.remove(env, r.evm, r.sol);
       return { address: r.evm, sol: null };
     }
-    if (M === 'GET' && p[1] === 'solana' && p.length === 3) { if (!SOL_ADDR.test(p[2])) bad('invalid Solana address'); return { sol: p[2], address: (await env.COLLECTIONS.get(rev(p[2]))) || null }; }
+    if (M === 'GET' && p[1] === 'solana' && p.length === 3) { if (!SOL_ADDR.test(p[2])) bad('invalid Solana address'); return { sol: p[2], address: (await wl.profileOf(env, p[2])) || null }; }
     if (M === 'GET' && p.length === 3 && p[2] === 'solana' && ADDR.test(p[1])) return get(env, p[1]);
   }
   return { handle };

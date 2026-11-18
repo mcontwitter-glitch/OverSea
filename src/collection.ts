@@ -11,6 +11,8 @@ import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, op
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { addrHtml } from './names';
+import { mergeHolders, mergedAway } from './holdersmerge';
+import { resolveProfiles } from './walletlinks';
 // EVM addresses link to their profile (/u/<address>); other addresses stay plain text. The name inside still paints (names.ts).
 const addrLink = (a?: string | null) => (a && /^0x[0-9a-fA-F]{40}$/.test(a) && !/^0x0{40}$/.test(a) ? `<a class="ulink" href="/u/${a.toLowerCase()}">${addrHtml(a)}</a>` : addrHtml(a));
 import { collectionTransfers, insightOn } from './insight';
@@ -69,6 +71,14 @@ const items = itemsMin ? decodeItems(itemsMin) : await j<Item[]>('items.json', [
 const owners = ownersMin ? decodeOwners(ownersMin) : await j<Record<string, Loc>>('owners.json', {});
 // The snapshot above is from build time; overlay live ownerOf reads so bridged / transferred items show on their current chain.
 let ownersLiveAt: number | null = null;
+// Multi-wallet profiles: wallet -> profile wallet for linked holders; merged into one Holders row / one Owner.
+let holderMap: Record<string, string> = {}, holderCut = 0;
+async function loadHolderMap() {
+  const locs = Object.values(owners); const addrs = [...new Set(locs.flatMap(l => [l, ...(l.also || [])]).map(x => x.owner).filter(a => /^0x[0-9a-fA-F]{40}$/.test(a) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)))];
+  if (!addrs.length) return;
+  const m = await resolveProfiles(addrs); holderMap = m; const cut = Object.keys(m).length ? mergedAway(locs, m) : 0;
+  if (cut !== holderCut || Object.keys(m).length) { holderCut = cut; render(); }
+}
 async function loadLiveOwners() {
   try {
     const tl = performance.now(); const r = await (await import('./liveowners')).liveOwners(COL as any, owners); perf.liveOwnersMs = performance.now() - tl; perf.liveOwnersSinceLoadMs = performance.now() - t0;
@@ -84,7 +94,7 @@ async function loadLiveOwners() {
           p.ok = true; p.minted = st.held; p.inEscrow = st.inEscrow; p.live = st.live; p.holders = st.holders;
         }
       }
-      render(); // an open item modal is rebuilt so owner, chain and the buy/list button follow the live data
+      loadHolderMap(); render(); // an open item modal is rebuilt so owner, chain and the buy/list button follow the live data
       const mr = document.querySelector<HTMLElement>('.modal [data-mrow]'); if (mr) { const id = +mr.dataset.mrow!; mr.closest('.modal')!.remove(); modal(id); }
     }
   } catch {}
@@ -243,7 +253,7 @@ function header() {
       <div class="stat tip"><b>${volMain}</b><span>Total volume ⓘ</span><div class="tipbox">${volTip}${pc.bitcoin ? `<div class="tipr">${logo('bitcoin')}<span>Bitcoin floor</span><b>${pc.bitcoin.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) : '-'}</b></div>` : ''}<div class="tipnote">${summary?.volumeSource === 'opensea' ? 'Source: OpenSea API' : 'On-chain Seaport 1.6 sales'}${primVol ? ' + primary mints' : ''}</div></div></div>
       <div class="stat"><b>${!listsReady ? '…' : fl ? `${logo(fl.chain)} ${fmt(fl.price)} ${esc(fl.currency)}${/^W?ETH$/.test(fl.currency) ? '' : ` (≈ ${fmt(fl.priceEth)} ETH)`}` : '-'}</b><span>Floor price${summary?.listingsAvailable ? '' : ' <i class="need" title="' + esc(summary?.listingsReason) + '">needs OpenSea API key</i>'}</span></div>
       <div class="stat"><b>${COL.supply.toLocaleString()}</b><span>Items</span></div>
-      <div class="stat tip"><b>${summary ? summary.owners.toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded</div></div></div>
+      <div class="stat tip"><b>${summary ? Math.max(1, summary.owners - holderCut).toLocaleString() : '-'}</b><span>Owners ⓘ</span><div class="tipbox">${deployedChains.map(c => `<div class="tipr">${logo(c)}<span>${chains[c].name}</span><b>${pc[c]?.ok ? pc[c].holders : '-'}</b></div>`).join('')}<div class="tipnote">Unique across chains, vault/escrow excluded${holderCut ? ', wallets linked to one profile counted once' : ''}</div></div></div>
       <div class="stat"><b>${listedPct}</b><span>Listed</span></div>
       ${offerStatHtml(offerData.best, st.chains.size === 1 ? [...st.chains][0] : null, offerRates, COL.deployments)}
       ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary) ?? liveUsd)}
@@ -394,11 +404,9 @@ function itemsView() {
 }
 
 function holdersView() {
-  const by = new Map<string, { n: number; chains: Set<string> }>();
-  for (const l of Object.values(owners)) for (const x of [l, ...(l.also || [])]) { if (st.chains.size && !st.chains.has(x.chain)) continue; const k = x.owner.toLowerCase(); const h = by.get(k) || { n: 0, chains: new Set() }; h.n++; h.chains.add(x.chain); by.set(k, h); }
-  const rows = [...by.entries()].sort((a, b) => b[1].n - a[1].n); const tot = rows.reduce((s, r) => s + r[1].n, 0) || 1;
+  const rows = mergeHolders(Object.values(owners), holderMap, st.chains); const tot = rows.reduce((s, r) => s + r[1].n, 0) || 1;
   return `<div class="act hold"><div class="mut small" style="margin:0 0 8px">${rows.length.toLocaleString()} holders · ${ownersLiveAt ? 'live on-chain ownership' : 'snapshot'} · names via ENS / Basenames</div><div class="acth"><span>#</span><span>Holder</span><span>Owned</span><span>Share</span><span>Chains</span></div>
-   ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrLink(a)}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
+   ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrLink(a)}${h.wallets.size > 1 ? ` <span class="mut small" title="${h.wallets.size} linked wallets">· ${h.wallets.size} wallets</span>` : ''}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
 }
 function activityView() {
   const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain) || (a.chain2 && st.chains.has(a.chain2))).sort((a, b) => (b.ts || 0) - (a.ts || 0));
@@ -513,7 +521,7 @@ checkApi().then(apiLoad); onApiUp(() => { loadLiveListings().then(render); apiLo
 await Promise.race([listingsReady, new Promise<void>(r => setTimeout(r, 200))]);
 render();
 listingsReady.then(() => render());
-loadLiveOwners();
+loadLiveOwners(); loadHolderMap();
 async function loadOfferData() {
   if (!anyOffersLive(COL.deployments)) return;
   const [d, r] = await Promise.all([loadOffers(COL.slug), usdRates().catch(() => null)]);

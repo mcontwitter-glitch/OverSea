@@ -16,6 +16,7 @@ import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
 import { makeSolanaLink } from './solanalink.js';
+import { makeWalletLink } from './walletlink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
 import { makeIslandNfts } from './islandnfts.js';
@@ -262,8 +263,9 @@ async function verifyEvmMessage(address, message, signature) {
   for (const k of ['base', 'ethereum', 'apechain', 'bnb', 'robinhood']) if (chains[k] && await createPublicClient({ transport: http(chains[k].rpc) }).verifyMessage({ address, message, signature }).catch(() => false)) return true;
   return false;
 }
-let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage }));
-let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch }));
+let _wl; const walletLink = () => (_wl ??= makeWalletLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage }));
+let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage, wl: walletLink() }));
+let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch, wl: walletLink() }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
@@ -281,6 +283,7 @@ async function handle(req, env, url, ctx) {
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
+  { const wr = await walletLink().handle(req, env, url, p, M, body); if (wr !== undefined) return wr; }
   { const sl = await solanaLink().handle(req, env, url, p, M, body); if (sl !== undefined) return sl; }
   { const pr = await profiles().handle(req, env, url, p, M, body); if (pr !== undefined) return pr; }
   { const g = await growth().handle(req, env, url, p, M, body, native()); if (g !== undefined) return g; }

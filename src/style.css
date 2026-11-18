@@ -760,3 +760,4 @@ img.cl.solsoon{filter:grayscale(.4)}
 .bbtn.solb{width:100%;margin-top:10px;background:linear-gradient(135deg,#9945ff,#7a5cff 50%,#14f195)!important;border-color:#9945ff66!important}.bbtn.solb:disabled{opacity:.5}
 
 a.ulink{color:inherit;text-decoration:none}a.ulink:hover{text-decoration:underline}
+.uwwallets{flex-wrap:wrap;gap:6px}.uwwl{display:inline-flex;align-items:center;gap:4px}.chip .chipico{width:14px;height:14px;vertical-align:-2px;margin-right:4px}
