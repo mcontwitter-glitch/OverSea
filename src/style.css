@@ -758,3 +758,5 @@ img.cl.solsoon{filter:grayscale(.4)}
 .solcard .steps .n.d{background:#3ddc97;color:#022}.solcard .steps .n.c{background:#9945ff;color:#fff}
 .solcard .msg{background:#0a0a0f;border:1px solid #2a2440;border-radius:10px;padding:9px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#cfc8ff;white-space:pre-wrap;word-break:break-all;margin-top:6px}
 .bbtn.solb{width:100%;margin-top:10px;background:linear-gradient(135deg,#9945ff,#7a5cff 50%,#14f195)!important;border-color:#9945ff66!important}.bbtn.solb:disabled{opacity:.5}
+
+a.ulink{color:inherit;text-decoration:none}a.ulink:hover{text-decoration:underline}

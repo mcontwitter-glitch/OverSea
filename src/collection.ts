@@ -11,6 +11,8 @@ import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, op
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { addrHtml } from './names';
+// EVM addresses link to their profile (/u/<address>); other addresses stay plain text. The name inside still paints (names.ts).
+const addrLink = (a?: string | null) => (a && /^0x[0-9a-fA-F]{40}$/.test(a) && !/^0x0{40}$/.test(a) ? `<a class="ulink" href="/u/${a.toLowerCase()}">${addrHtml(a)}</a>` : addrHtml(a));
 import { collectionTransfers, insightOn } from './insight';
 import { makeRpc, rpcTransfers, annotateSales, assemble, escrowSet, type Raw, type Row, type Kv } from './activitycore';
 const perf: Record<string, number> = ((window as any).__msPerf ??= {}); const t0 = performance.now();
@@ -396,7 +398,7 @@ function holdersView() {
   for (const l of Object.values(owners)) for (const x of [l, ...(l.also || [])]) { if (st.chains.size && !st.chains.has(x.chain)) continue; const k = x.owner.toLowerCase(); const h = by.get(k) || { n: 0, chains: new Set() }; h.n++; h.chains.add(x.chain); by.set(k, h); }
   const rows = [...by.entries()].sort((a, b) => b[1].n - a[1].n); const tot = rows.reduce((s, r) => s + r[1].n, 0) || 1;
   return `<div class="act hold"><div class="mut small" style="margin:0 0 8px">${rows.length.toLocaleString()} holders · ${ownersLiveAt ? 'live on-chain ownership' : 'snapshot'} · names via ENS / Basenames</div><div class="acth"><span>#</span><span>Holder</span><span>Owned</span><span>Share</span><span>Chains</span></div>
-   ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrHtml(a)}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
+   ${rows.slice(0, 200).map(([a, h], i) => `<div class="actr"><span>${i + 1}</span><span>${addrLink(a)}</span><span><b>${h.n}</b></span><span>${((h.n / tot) * 100).toFixed(2)}%</span><span>${[...h.chains].map(c => logo(c)).join('')}</span></div>`).join('') || '<div class="empty">No holders found</div>'}</div>`;
 }
 function activityView() {
   const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain) || (a.chain2 && st.chains.has(a.chain2))).sort((a, b) => (b.ts || 0) - (a.ts || 0));
@@ -407,7 +409,7 @@ function activityView() {
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
    ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
      <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}</span></span>
-     <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrHtml(a.from)}</span><span>${addrHtml(a.to)}</span>
+     <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrLink(a.from)}</span><span>${addrLink(a.to)}</span>
      <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || `<div class="empty">${activityState === 'loading' ? 'Loading on-chain activity…' : activityState === 'error' ? "Couldn't load activity. Try again in a minute." : 'No activity found'}</div>`}</div>`;
 }
 
@@ -425,7 +427,7 @@ function chainsView() {
 const D_net = () => (ORD ? ordKit!.D.netLabel(ORD.net) : '');
 function mrowHtml(id: number) {
   const it = items.find(i => i.id === id)!; const loc = owners[id];
-  return `<div class="mrow" data-mrow="${id}"><span>Owned by <b>${addrHtml(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + addrHtml(a.owner)).join(', ')}</div>` : ''}`;
+  return `<div class="mrow" data-mrow="${id}"><span>Owned by <b>${addrLink(loc?.owner)}</b></span>${loc ? `<span>${logo(loc.chain)} ${chains[loc.chain].name}</span>` : '<span class="mut">Not live on any chain</span>'}<span>Rarity rank ${it.rank} / ${items.length}</span><a href="${gw[0]}${it.image}" target="_blank" rel="noopener">Original ↗</a></div>${loc?.also ? `<div class="mut small">Also held on: ${loc.also.map(a => chains[a.chain].name + ' ' + addrLink(a.owner)).join(', ')}</div>` : ''}`;
 }
 function modal(id: number) {
   if (isOrd(id)) { location.href = ordHref(id); return; }
@@ -442,7 +444,7 @@ function modal(id: number) {
     <div class="pricebox"><div class="mut">Current price</div><div class="big">${l ? `${logo(l.chain)} ${fmt(l.price)} ${esc(l.currency)}${usd(l)}${srcBadge(l)}` : listsReady ? '-' : '…'}</div>${l ? `<div>${eq(l)}</div>` : ''}${!summary?.listingsAvailable ? '<div class="need">Listings need an OpenSea API key</div>' : ''}${buyBtn(id, 'big')}${l && !sellBtn(id, '') ? `<button class="obtn sm addcart" data-cart="${id}">+ Add to cart</button>` : ''}<div class="osls">${osLinks}</div></div>
     <div class="gh">Traits</div><div class="tgrid">${it.attrs.map(([t, v]) => { const x = T[t]?.find(e => e.value === v); return `<div class="trait"><span>${esc(t)}</span><b>${esc(v)}</b><em>${x ? x.pct + '% have this' : ''}</em></div>`; }).join('')}</div>
   </div></div>`;
-  m.addEventListener('click', e => { const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const ab = (e.target as HTMLElement).closest('[data-accept]') as HTMLElement; if (ab) { m.remove(); doAccept(+ab.dataset.accept!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
+  m.addEventListener('click', e => { if ((e.target as HTMLElement).closest('a.ulink')) { e.stopPropagation(); return; } const ac = (e.target as HTMLElement).closest('[data-cart]') as HTMLElement; if (ac) { const ci = cartItems().find(x => x.id === +ac.dataset.cart!); if (ci) import('./gx').then(g => { g.addToCart([ci]); ac.textContent = '✓ In cart'; }); return; } const bb = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement; if (bb) { m.remove(); doBuy(+bb.dataset.buy!); return; } const ab = (e.target as HTMLElement).closest('[data-accept]') as HTMLElement; if (ab) { m.remove(); doAccept(+ab.dataset.accept!); return; } const sb = (e.target as HTMLElement).closest('[data-sell],[data-cancel]') as HTMLElement; if (sb) { m.remove(); sb.dataset.sell ? doSell(+sb.dataset.sell) : doCancel(+sb.dataset.cancel!); return; } if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) m.remove(); });
   document.body.appendChild(m);
   if (FW_ON) import('./footkit').then(async k => { fwkit = k; const r = await k.walletUsd([id]).catch(() => null); const v = r ? r.get(id) ?? null : null; fwv.set(id, v); const el = m.querySelector(`[data-fwm="${id}"]`); if (el) el.innerHTML = k.walletBadge(id, v, true).replace('Wallet: -', 'Wallet: unavailable'); });
 }
@@ -459,6 +461,7 @@ function render() {
 
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
+  if (t.closest('a.ulink')) { e.stopPropagation(); return; } // profile link: plain navigation
   const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { st.tab = tab.dataset.tab!; if (st.tab === 'activity') loadActivity(); render(); return; }
   if (t.closest('[data-btcsoon]')) { soonOn = !soonOn; if (soonOn) st.chains.clear(); render(); return; }
   const chip = t.closest('[data-chain]') as HTMLElement; if (chip) { soonOn = false; const c = chip.dataset.chain!;
