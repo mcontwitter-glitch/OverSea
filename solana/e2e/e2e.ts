@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import * as X from "../../src/solexisting";
 import { sendBatched } from "../../src/soltx";
 import * as O from "../../src/solanaomni.ts";
+import { v2Plan, sameKeys } from "./lzv2";
+const v2Stats = { n: 0, same: 0, bad: [] as string[] };
 
 const OUT = new URL("../../contracts/out/", import.meta.url).pathname;
 const art = (f: string, c: string) => JSON.parse(readFileSync(`${OUT}${f}/${c}.json`, "utf8"));
@@ -56,8 +58,11 @@ async function evmToSol(rcpt: any) {
     if (p.dstEid() !== SOL_EID) continue;
     const init = await endpoint.initVerify(conn, admin.publicKey, new PublicKey(ethers.getBytes(p.sender())), store, p.srcEid(), p.nonce().toString());
     await sol([init, simple.validatePacket(conn, O.LZ_ENDPOINT_ID, admin.publicKey, enc)], [admin]);
-    const ix = await lzReceive(conn, admin.publicKey, { message: p.message(), sender: p.sender(), srcEid: p.srcEid(), guid: p.guid(), receiver: store.toBase58(), nonce: p.nonce() });
-    const sig = await sol([ix], [admin], 1_400_000);
+    // executor path: LzReceiveTypesV2 (lz_receive_types_info -> lz_receive_types_v2); must equal the V1 lookup's accounts
+    const v1 = await lzReceive(conn, admin.publicKey, { message: p.message(), sender: p.sender(), srcEid: p.srcEid(), guid: p.guid(), receiver: store.toBase58(), nonce: p.nonce() });
+    const v2 = await v2Plan(conn.rpcEndpoint, admin.publicKey, store, O.OMNI_PROGRAM_ID, { srcEid: p.srcEid(), sender: ethers.getBytes(p.sender()), nonce: BigInt(p.nonce()), guid: ethers.getBytes(p.guid()), message: ethers.getBytes(p.message()) });
+    v2Stats.n++; if (v2.info.accounts.length === 1 && v2.info.accounts[0] === store.toBase58() && v2.plan.contextVersion === 1 && v2.plan.addressLookupTables.length === 0 && v2.ixs.length === 1 && sameKeys(v2.ixs[0], v1)) v2Stats.same++; else v2Stats.bad.push(`nonce ${p.nonce()}`);
+    const sig = await sol(v2.ixs, [admin], 1_400_000);
     const t = await conn.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     lastCu = t?.meta?.computeUnitsConsumed || 0;
     n++;
@@ -302,6 +307,15 @@ async function main() {
   check("existing collection: move out from Solana released by the existing V1 escrow (#2 Active for bob, Solana copy locked)", (await dropV1.ownerOf(2)) === bobAddr
     && O.coreAssetOwner((await conn.getAccountInfo(O.assetPda(xcid, 2)))!.data)!.equals(store));
 
+  check(`LzReceiveTypesV2: every inbound message delivered through the executor's V2 plan (info -> v2), accounts identical to V1 lz_receive_types`, v2Stats.n > 0 && v2Stats.same === v2Stats.n, `${v2Stats.same}/${v2Stats.n}${v2Stats.bad.length ? ' bad: ' + v2Stats.bad.join(', ') : ''}`);
+  { // lz_receive_types_info refuses a wrong second account (must be the LzReceiveTypes PDA) and a non-store first account
+    const disc = Buffer.from("2b94d55d657f25aa", "hex"); const bad = Keypair.generate().publicKey;
+    const run = async (keys: PublicKey[]) => (await conn.simulateTransaction(new Transaction({ feePayer: admin.publicKey, ...(await conn.getLatestBlockhash()) }).add({ programId: O.OMNI_PROGRAM_ID, keys: keys.map((pubkey) => ({ pubkey, isSigner: false, isWritable: false })), data: Buffer.concat([disc, Buffer.alloc(80)]) } as any))).value;
+    const [ltp] = PublicKey.findProgramAddressSync([Buffer.from("LzReceiveTypes"), store.toBuffer()], O.OMNI_PROGRAM_ID);
+    const ok = await run([store, ltp]); const w1 = await run([store, bad]); const w2 = await run([bad, ltp]);
+    const rd = ok.returnData ? Buffer.from(ok.returnData.data[0], "base64") : Buffer.alloc(0);
+    check("lz_receive_types_info: returns 2 | [store]; refuses a wrong LzReceiveTypes PDA or store", !ok.err && rd.length === 37 && rd[0] === 2 && rd.readUInt32LE(1) === 1 && new PublicKey(rd.subarray(5)).equals(store) && !!w1.err && !!w2.err);
+  }
   const failed = results.filter((r) => !r[1]).length;
   console.log(`\n${results.length - failed}/${results.length} passed`);
   process.exit(failed ? 1 : 0);

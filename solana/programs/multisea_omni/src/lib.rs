@@ -121,6 +121,10 @@ const I_REVEAL: u64 = 0x734cf9a7be3b2309;
 const I_REFRESH_URIS: u64 = 0x9daf003d968ab8be;
 const I_LZ_RECEIVE_TYPES: u64 = 0x601f80f89ff611dd;
 const I_LZ_RECEIVE: u64 = 0x50bd76216d78b308;
+// LzReceiveTypesV2 discovery (the LayerZero Solana executor no longer falls back to V1): Anchor discriminators of
+// "global:lz_receive_types_info" / "global:lz_receive_types_v2", read as little-endian u64 like the others.
+const I_LZ_RECEIVE_TYPES_INFO: u64 = 0xaa257f655dd5942b;
+const I_LZ_RECEIVE_TYPES_V2: u64 = 0xa49fdf8a8ec89d6d;
 const I_REGISTER_EXISTING: u64 = 0x0564f7096e3d0502;
 const I_EXISTING_COPIES: u64 = 0x610ee8f4fb6fc628;
 const I_SET_COLLECTION_URI: u64 = 0x94d6b48cbea17073;
@@ -361,7 +365,9 @@ pub fn process(pid: &Pubkey, a: &[AccountInfo], data: &[u8]) -> R {
     let mut r = Rd { d: data, o: 8 };
     let ix = g64(data, 0);
     // lz_receive_types is the only instruction with a single account (the store)
-    if ix == I_LZ_RECEIVE_TYPES { return lz_receive_types(pid, a, &mut r); }
+    if ix == I_LZ_RECEIVE_TYPES { return set_ret(&receive_accounts(pid, a, &mut r)?); }
+    if ix == I_LZ_RECEIVE_TYPES_V2 { return lz_receive_types_v2(pid, a, &mut r); }
+    if ix == I_LZ_RECEIVE_TYPES_INFO { return lz_receive_types_info(pid, a); }
     req!(a.len() >= 2, E_ACCOUNTS);
     match ix {
         I_INIT_STORE => init_store(pid, a, &mut r),
@@ -952,7 +958,7 @@ fn lz_params<'a>(r: &mut Rd<'a>) -> R<Lz<'a>> {
 /// Accounts the executor must pass to lz_receive for this message (returned as Vec<LzAccount>):
 /// 0 payer | 1 store | 2 peer | 3 drop | 4 collection | 5 core | 6 system | 7..15 endpoint clear | then
 /// CONFIRM: request, minter, assets[qty] · REJECT: request · COPY: assets[qty] · MOVE: recipient, asset
-fn lz_receive_types(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {
+fn receive_accounts(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R<Vec<u8>> {
     let s = store(&a[0], pid)?;
     let p = lz_params(r)?;
     let m = decode_msg(p.message)?;
@@ -993,8 +999,38 @@ fn lz_receive_types(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {
     }
     let n = ((v.len() - 4) / 34) as u32;
     v[..4].copy_from_slice(&n.to_le_bytes());
-    set_return_data(&v);
-    Ok(())
+    Ok(v)
+}
+
+fn set_ret(v: &[u8]) -> R { set_return_data(v); Ok(()) }
+
+/// V2 discovery, accounts [store, LzReceiveTypes PDA]: returns (version 2u8, LzReceiveTypesV2Accounts { accounts: [store] }),
+/// Borsh: 2 | u32 1 | store. The executor then calls lz_receive_types_v2 with exactly these accounts.
+fn lz_receive_types_info(pid: &Pubkey, a: &[AccountInfo]) -> R {
+    let s = store(&a[0], pid)?;
+    req!(a.len() >= 2 && *a[1].key == find(&[b"LzReceiveTypes", s.key.as_ref()], pid).0, E_ACCOUNTS);
+    let mut v = [0u8; 37];
+    v[0] = 2;
+    v[1] = 1;
+    v[5..].copy_from_slice(s.key.as_ref());
+    set_ret(&v)
+}
+
+/// V2 execution plan, accounts [store]: the same accounts as V1, as LzReceiveTypesV2Result
+/// { context_version: 1, alts: [], instructions: [LzReceive { accounts: Vec<AccountMetaRef> }] }, where the V1 payer
+/// placeholder becomes AddressLocator::Payer (tag 2) and every other account AddressLocator::Address (tag 0) + key.
+fn lz_receive_types_v2(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {
+    let v1 = receive_accounts(pid, a, r)?;
+    let n = (v1.len() - 4) / 34;
+    let mut v: Vec<u8> = Vec::with_capacity(14 + n * 34);
+    v.extend_from_slice(&[1, 0, 0, 0, 0, 1, 0, 0, 0, 0]);
+    v.extend_from_slice(&(n as u32).to_le_bytes());
+    for i in 0..n {
+        let e = &v1[4 + i * 34..4 + i * 34 + 34];
+        if i == 0 { v.push(2); } else { v.push(0); v.extend_from_slice(&e[..32]); }
+        v.push(e[33]);
+    }
+    set_ret(&v)
 }
 
 fn lz_receive(pid: &Pubkey, a: &[AccountInfo], r: &mut Rd) -> R {

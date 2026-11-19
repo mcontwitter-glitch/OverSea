@@ -167,7 +167,7 @@ function upgradeHtml() {
   if (!upg || upg.phase === 'upgraded' || !deployed()) return '';
   const me = solWallet.pubkey?.toBase58(); const isAuth = me === upg.authority; const fees = PD.UPLOAD_FUND + 20_000;
   return `<details class="sddet sdx" data-det="u" ${openDet.has('u') ? 'open' : ''}><summary>Program upgrade available</summary><div class="sdpre">
-    <p>New version of the MultiSea Solana program (same address): adds <b>set collection image</b>, so a drop owner can point the collection at its metadata (marketplaces read the collection image from it). Nothing else changes.</p>
+    <p>New version of the MultiSea Solana program (same address): adds LayerZero's newer delivery lookup (<b>LzReceiveTypesV2</b>), so LayerZero delivers moves and mints into Solana automatically again instead of waiting for a manual Deliver. Nothing else changes: same accounts, same instructions, the old lookup keeps working.</p>
     <p class="mut">Needs ≈ ${sol(upg.bufferRent + upg.extendRent + fees)} SOL while it runs: ${sol(upg.bufferRent)} SOL upload deposit (refunded at the end)${upg.extend ? ` + ${sol(upg.extendRent)} SOL for ${upg.extend.toLocaleString()} more bytes of program space (stays with the program)` : ''} + ≈ ${sol(fees)} SOL upload fees (the unused part comes back). 2 approvals.</p>
     ${up && busy === 'upgrade' ? `<p>Uploading ${up.written}/${up.total}</p>` : upg.phase !== 'new' ? `<p class="mut">Upload ${upg.written}/${upg.total} done; tap Upgrade to continue.</p>` : ''}
     <p>${btn('upgrade', upg.phase === 'new' ? 'Upgrade program · 2 approvals' : 'Continue upgrade', isAuth, 'obtn')}${upg.phase !== 'new' ? ' ' + btn('upgcancel', 'Cancel upload', isAuth, 'obtn') : ''}
