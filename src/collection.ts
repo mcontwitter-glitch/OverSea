@@ -5,7 +5,7 @@ import GATES from '../config/gates.json';
 import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 import './style.css';
 import CFG from '../config/collections.json';
-import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API } from './wallet';
+import { wallet, onWallet, checkApi, onApiUp, startBuy, apiReady, apiFeatures, API, readClient } from './wallet';
 import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd, mcapStatHtml } from './shell';
 import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, openMakeOffer, openAccept, openCancel, offerUsd, type OffersPayload, type Offer } from './offers';
 import { openEdit, linksHtml } from './edit';
@@ -83,7 +83,7 @@ async function loadLiveOwners() {
   try {
     const tl = performance.now(); const r = await (await import('./liveowners')).liveOwners(COL as any, owners); perf.liveOwnersMs = performance.now() - tl; perf.liveOwnersSinceLoadMs = performance.now() - t0;
     if (r) {
-      for (const k of Object.keys(owners)) if (+k >= 0) delete owners[k]; Object.assign(owners, r.owners); ownersLiveAt = r.at;
+      for (const k of Object.keys(owners)) if (+k >= 0) delete owners[k]; Object.assign(owners, r.owners); ownersLiveAt = r.at; applySolana();
       if (summary) {
         const uniq = new Set(Object.values(owners).flatMap(l => [l, ...(l.also || [])]).map(l => l.owner.toLowerCase()));
         if (uniq.size) summary.owners = uniq.size;
@@ -178,6 +178,32 @@ const ordSoon = () => { const c = ordCfg(); return !!(c?.comingSoon && !c.enable
 let soonOn = false;
 const btcSoonChip = () => ordSoon() ? `<button class="chip soonchip ${soonOn ? 'on' : ''}" data-btcsoon>${logo('bitcoin')}Bitcoin <i class="soon">Coming soon</i></button>` : '';
 const btcSoonView = () => `<div class="btcsoon"><img src="/logos/bitcoin.svg" alt="" width="56" height="56"><h3>Bitcoin Ordinals coming soon</h3><p>${esc(COL.name)} on Bitcoin is on the way. When inscriptions go live you'll browse, buy and list them right here, next to every other chain.</p><button class="obtn sm" data-btcsoon>Back to all chains</button></div>`;
+// ---- Solana for existing multichain collections (e.g. Island's): once Solana is switched on and the collection's Solana side
+// exists, every id has a Core copy on Solana, locked in the Store (escrow) until someone bridges it there. Active copies
+// (owner != Store) show as items on Solana, like any other chain; the Chains tab shows the copies and the escrow count.
+let solState: { cid: string; collection: string; created: number; locked: number; active: Map<number, string> } | null = null;
+async function loadSolana() {
+  if (COL.deployments.length < 2 || !(COL as any).escrow?.length) return;
+  const F = await import('./solflag'); await F.solanaReady; if (!F.SOLANA_ON) return;
+  try {
+    const orig = COL.deployments.find(d => (d as any).original) || COL.deployments[0];
+    const SX = await import('./solexist');
+    const cid = await (readClient(orig.chain) as any).readContract({ address: orig.address, abi: SX.DROP_CID, functionName: 'collectionId' }) as string;
+    if (!(await SX.hasSolanaSide(cid))) return;
+    const m = await SX.solCopies(cid, items.filter(it => it.id >= 0).map(it => it.id));
+    const vals = [...m.values()];
+    solState = { cid, collection: SX.collectionOf(cid), created: vals.filter(v => v).length, locked: vals.filter(v => v === 'locked').length, active: new Map([...m].filter(([, o]) => o && o !== 'locked') as [number, string][]) };
+    (chains as any).solana = { name: 'Solana', chainId: 0, native: 'SOL', openseaSlug: null, explorer: 'https://solscan.io' };
+    if (!deployedChains.includes('solana')) deployedChains.push('solana');
+    applySolana(); if (st.tab !== 'bridge') render(); // the Bridge tab detects Solana itself; a re-render would reset its picks
+  } catch { /* Solana RPC unavailable: the EVM chains render as before */ }
+}
+function applySolana() {
+  if (!solState) return;
+  for (const [id, o] of solState.active) { const cur = owners[id]; const loc = { chain: 'solana', owner: o };
+    if (!cur) owners[id] = loc; else if (cur.chain !== 'solana' && !cur.also?.some(a => a.chain === 'solana')) cur.also = [...(cur.also || []), loc]; }
+  if (summary) (summary.perChain ??= {}).solana = { ok: true, error: null, minted: solState.created, inEscrow: solState.locked, live: solState.active.size, holders: new Set(solState.active.values()).size, volume: {}, sales: 0, historyComplete: false };
+}
 async function loadOrdinals() {
   const c = ordCfg(); if (!c || (ordSoon() && !c.bridge)) return; ordKit ??= await import('./ordlayer');
   const br = c.bridge && !c.enabled ? await ordKit.loadBridged(c.bridge) : [];
@@ -427,6 +453,11 @@ function chainsView() {
     <a class="mono" href="${c.explorer}/address/${d.address}" target="_blank" rel="noopener">${d.address}</a>
     ${p?.ok ? `<div class="kv"><span>Held (ownerOf)</span><b>${p.minted}</b><span>In vault/escrow</span><b>${p.inEscrow}</b><span>Live on chain</span><b>${p.live}</b><span>Holders</span><b>${p.holders}</b><span>Transfers indexed</span><b>${p.transfers ?? '-'}${p.historyComplete ? '' : ' (partial)'}</b><span>Seaport sales</span><b>${p.sales}</b></div>` : `<div class="mut">${esc(p?.error || 'no data')}</div>`}
     ${c.openseaSlug ? `<a class="os" target="_blank" rel="noopener" href="https://opensea.io/assets/${c.openseaSlug}/${d.address}">View on OpenSea ↗</a>` : ''}</div></div>`; }).join('')}
+    ${solState ? `<div class="cc">${logo('solana', 'cl lg')}<div><h3>Solana <i class="tag">Metaplex Core</i></h3>
+    <a class="mono" href="https://solscan.io/account/${esc(solState.collection)}" target="_blank" rel="noopener">${esc(solState.collection)}</a>
+    <div class="kv"><span>Copies created</span><b>${solState.created}</b><span>In Solana escrow</span><b>${solState.locked}</b><span>Live on chain</span><b>${solState.active.size}</b><span>Holders</span><b>${new Set(solState.active.values()).size}</b></div>
+    <div class="mut small">Every id has a copy on Solana, locked in the MultiSea escrow until it is bridged there.</div>
+    <a class="os" target="_blank" rel="noopener" href="https://magiceden.us/marketplace/${esc(solState.collection)}">View on Magic Eden ↗</a></div></div>` : ''}
     ${ordSoon() ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) <i class="soon">Coming soon</i></h3><div class="mut">Not live yet. No inscriptions are linked to ${esc(COL.name)}.</div></div></div>` : ''}
     ${ORD ? `<div class="cc">${logo('bitcoin', 'cl lg')}<div><h3>Bitcoin (Ordinals) ${ORD.demo ? '<i class="need">DEMO · signet mock</i>' : ''}</h3><div class="mut">${ORD.collection ? 'Ordinals collection ' + esc(ORD.collection) : bridgedN ? 'Bridged from Abstract (each foot stays locked in the Abstract vault)' : 'Linked inscriptions'} · ${D_net()}</div><div class="kv"><span>Inscriptions</span><b>${ORD.items.length}</b><span>Holders</span><b>${pc.bitcoin?.holders ?? '-'}</b><span>Listed on MultiSea</span><b>${ORD.items.filter(o => o.priceSats != null).length}</b><span>Floor</span><b>${pc.bitcoin?.floorSats ? ordKit!.D.fmtBtc(pc.bitcoin.floorSats) + ' · ' + ordKit!.D.fmtSats(pc.bitcoin.floorSats) : '-'}</b></div><a class="os" href="/btc${ORD.collection ? '/c/' + esc(ORD.collection) : ''}">Open Bitcoin marketplace ↗</a></div></div>` : ''}
     <p class="mut small">Data generated ${summary ? new Date(summary.generatedAt).toLocaleString() : '-'}${ownersLiveAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(ownersLiveAt).toLocaleTimeString()}` : ''}. Vault/escrow addresses excluded: ${COL.escrow.map(e => `${esc(e.label)} ${short(e.address)}`).join(', ')}.</p></div>`;
@@ -521,7 +552,7 @@ checkApi().then(apiLoad); onApiUp(() => { loadLiveListings().then(render); apiLo
 await Promise.race([listingsReady, new Promise<void>(r => setTimeout(r, 200))]);
 render();
 listingsReady.then(() => render());
-loadLiveOwners(); loadHolderMap();
+loadLiveOwners(); loadHolderMap(); loadSolana();
 async function loadOfferData() {
   if (!anyOffersLive(COL.deployments)) return;
   const [d, r] = await Promise.all([loadOffers(COL.slug), usdRates().catch(() => null)]);

@@ -34,16 +34,23 @@ export async function walletFor(c: BCfg['chains'][string]) {
 }
 const fmtE = (w: bigint) => { const s = formatEther(w); const [a, b = ''] = s.split('.'); return a + (b ? '.' + b.slice(0, 6).replace(/0+$/, '') : '') || '0'; };
 
-type St = { col: number; from: string; to: string; ids: number[]; loading: boolean; sel: number | null; recip: string; quote: { p: bigint; lz: bigint } | null; status: string; cls: string; busy: boolean; link: string };
+type St = { col: number; from: string; to: string; ids: number[]; loading: boolean; sel: number | null; recip: string; quote: { p: bigint; lz: bigint } | null; status: string; cls: string; busy: boolean; link: string; solAddr: string };
 export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {}) {
   const cfg0 = await bridgeCfg();
   if (!cfg0) { el.innerHTML = `<div class="bridge"><p class="mut">Bridging isn't set up for this collection yet.</p></div>`; return; }
   if (!cfg0.collections.length) { el.innerHTML = `<div class="bridge"><div class="gh">Bridge</div><p class="mut">The MultiSea bridge is live on ${Object.values(cfg0.chains).map(c => esc(c.name)).join(', ')}. No collections are listed yet. Own a collection? <a href="/submit">List it for bridging</a>: you pay only the deploy gas.</p></div>`; return; }
-  const cfg: BCfg = cfg0;
-  const cols = opts.slug ? cfg.collections.filter(c => c.slug === opts.slug || c.mirrorsSlug === opts.slug) : cfg.collections;
+  const cols = opts.slug ? cfg0.collections.filter(c => c.slug === opts.slug || c.mirrorsSlug === opts.slug) : cfg0.collections;
   if (!cols.length) { el.innerHTML = `<div class="bridge"><p class="mut">Bridging isn't set up for this collection yet.</p></div>`; return; }
-  const keys = (i: number) => Object.keys(cols[i].contracts);
-  const s: St = { col: 0, from: keys(0)[0], to: keys(0)[1], ids: [], loading: false, sel: null, recip: '', quote: null, status: '', cls: 'mut', busy: false, link: '' };
+  // Solana for existing multichain collections whose Solana side exists (src/solexist.ts): EVM -> Solana through the chain's
+  // mover, Solana -> EVM through the program's move_out. A local chains copy, so the shared bridge config is untouched.
+  const SX = SOLANA_ON && cols.some(c => c.kind === 'omni' && c.cid) ? await import('./solexist') : null;
+  const solOk = await Promise.all(cols.map(c => (SX && c.kind === 'omni' && c.cid ? SX.hasSolanaSide(c.cid) : false)));
+  const cfg: BCfg = solOk.some(Boolean) ? { ...cfg0, chains: { ...cfg0.chains, solana: { name: 'Solana', chainId: 0, eid: SX!.SOL_EID, rpc: '', explorer: 'https://solscan.io', factory: null, logo: 'solana', native: 'SOL' } } } : cfg0;
+  const SW = SX ? await import('./solwallet') : null;
+  const keys = (i: number) => [...Object.keys(cols[i].contracts), ...(solOk[i] ? ['solana'] : [])];
+  const isSol = (k: string) => k === 'solana';
+  const solMe = () => SW?.solWallet.pubkey?.toBase58() || '';
+  const s: St = { col: 0, from: keys(0)[0], to: keys(0)[1], ids: [], loading: false, sel: null, recip: '', quote: null, status: '', cls: 'mut', busy: false, link: '', solAddr: '' };
   const C = () => cols[s.col];
   const N = () => sym(cfg.chains[s.from]);
   const chainOpt = (sel: string, other: string) => keys(s.col).map(k => `<option value="${k}" ${k === sel ? 'selected' : ''} ${k === other ? 'disabled' : ''}>${esc(cfg.chains[k].name)}</option>`).join('');
@@ -58,19 +65,26 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       <label class="bl">To<div class="bsel">${lg(s.to)}<select data-k="to">${chainOpt(s.to, s.from)}</select></div></label></div>
      ${SOLANA_ON ? '' : `<p class="mut small solsoon"><img class="cl" src="/logos/solana.svg" alt=""> ${SOL_SOON}</p>`}
      <div class="gh">Your NFTs on ${esc(cfg.chains[s.from].name)}</div>
-     <div class="bnfts">${!wallet.address ? `<div class="bempty"><p class="mut">Connect your wallet to see your NFTs.</p><button class="bbtn" data-act="connect">Connect wallet</button></div>`
+     <div class="bnfts">${isSol(s.from) && !solMe() ? `<div class="bempty"><p class="mut">Connect your Solana wallet to see your NFTs on Solana.</p><button class="bbtn" data-act="solconnect">Connect Phantom, Solflare…</button></div>`
+       : !isSol(s.from) && !wallet.address ? `<div class="bempty"><p class="mut">Connect your wallet to see your NFTs.</p><button class="bbtn" data-act="connect">Connect wallet</button></div>`
        : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img}${id}.webp" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')
        : `<p class="mut">No ${esc(C().name)} NFTs in this wallet on ${esc(cfg.chains[s.from].name)}.</p>`}</div>
-     <label class="bl">Recipient on ${esc(cfg.chains[s.to].name)}<input data-k="recip" placeholder="${esc(wallet.address || '0x…')}" value="${esc(s.recip)}"></label>
-     <div class="bfee"><div><span>Platform fee</span><b>${C().kind === 'omni' ? (q ? `${fmtE(q.p)} ${N()}` : '…') : `$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}`}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
-      ${C().kind === 'omni' ? '<p class="mut small">The LayerZero fee is quoted by the escrow and any excess is refunded.</p>' : `<p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p>`}</div>
+     <label class="bl">Recipient on ${esc(cfg.chains[s.to].name)}<input data-k="recip" placeholder="${esc(isSol(s.to) ? solMe() || 'Solana address' : wallet.address || '0x…')}" value="${esc(s.recip)}"></label>
+     ${isSol(s.to) && !solMe() && !s.recip ? '<p class="mut small">Enter a Solana address, or <button class="lnk small" data-act="solconnect">connect Phantom / Solflare</button> to receive it in that wallet.</p>' : ''}
+     ${isSol(s.from) ? `<div class="bfee"><div><span>Move fee</span><b>${SX!.MOVE_FEE_SOL} SOL</b></div><div><span>LayerZero delivery</span><b>quoted at signing</b></div><p class="mut small">Paid in SOL from your Solana wallet. The LayerZero fee is charged at its live quote (capped at ${SX!.MAX_LZ_SOL} SOL).</p></div>` : `<div class="bfee"><div><span>Platform fee</span><b>${C().kind === 'omni' ? (q ? `${fmtE(q.p)} ${N()}` : '…') : `$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}`}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
+      ${C().kind === 'omni' ? `<p class="mut small">The LayerZero fee is quoted by the ${isSol(s.to) ? 'Solana mover' : 'escrow'} and any excess is refunded.${isSol(s.to) ? ' First time: one extra approval lets the mover lock the NFT in the escrow.' : ''}</p>` : `<p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p>`}</div>`}
      <p class="msg ${s.cls}">${s.status}${s.link ? ` <a href="${esc(s.link)}" target="_blank" rel="noopener">View transaction ↗</a>` : ''}</p>
-     <button class="bbtn go" data-act="bridge" ${s.busy || (wallet.address && s.sel == null) ? 'disabled' : ''}>${!wallet.address ? 'Connect wallet' : s.sel == null ? 'Select an NFT' : s.busy ? 'Working…' : `Bridge #${s.sel} to ${esc(cfg.chains[s.to].name)}`}</button>
+     <button class="bbtn go" data-act="bridge" ${s.busy || ((isSol(s.from) ? solMe() : wallet.address) && s.sel == null) ? 'disabled' : ''}>${isSol(s.from) && !solMe() ? 'Connect Solana wallet' : !isSol(s.from) && !wallet.address ? 'Connect wallet' : s.sel == null ? 'Select an NFT' : s.busy ? 'Working…' : `Bridge #${s.sel} to ${esc(cfg.chains[s.to].name)}`}</button>
     </div>`;
     el.querySelectorAll<HTMLSelectElement>('select[data-k=from],select[data-k=to]').forEach(x => chainPicker(x, k => `/logos/${cfg.chains[k].logo}.svg`, x.dataset.k === 'from' ? 'From chain' : 'To chain'));
   }
   async function loadIds() {
-    s.ids = []; s.sel = null; if (!wallet.address) return draw();
+    s.ids = []; s.sel = null;
+    if (isSol(s.from)) { const me = solMe(); if (!me) return draw(); s.loading = true; draw();
+      try { const all = Array.from({ length: C().supply || 0 }, (_, i) => i + 1); const m = await SX!.solCopies(C().cid!, all); s.ids = all.filter(id => m.get(id) === me); }
+      catch (e: any) { s.status = 'Could not load NFTs on Solana: ' + (e.message || e); s.cls = 'err'; }
+      s.loading = false; return draw(); }
+    if (!wallet.address) return draw();
     s.loading = true; draw();
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const token = C().contracts[s.from];
@@ -93,6 +107,10 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     s.loading = false; draw();
   }
   async function quote() {
+    if (isSol(s.from)) { s.quote = null; return draw(); }
+    if (isSol(s.to)) { try { const r = (s.recip && SX!.isSolAddr(s.recip)) ? s.recip : solMe() || '11111111111111111111111111111111';
+      const [p, lz] = await pubFor(cfg.chains[s.from]).readContract({ address: SX!.moverOf(s.from), abi: SX!.MOVER, functionName: 'quoteToSolana', args: [C().cid!, BigInt(s.sel ?? 1), SX!.sol32(r)] }) as [bigint, bigint];
+      s.quote = { p, lz }; } catch (e: any) { s.quote = null; s.status = 'Fee quote unavailable: ' + (e.shortMessage || e.message); s.cls = 'err'; } return draw(); }
     try {
       const c = cfg.chains[s.from]; const pub = pubFor(c); const to = (s.recip || wallet.address || cfg.feeWallet) as Address;
       const [p, lz] = C().kind === 'omni' ? await pub.readContract({ address: C().escrows[s.from], abi: OMNI, functionName: 'quoteMove', args: [C().cid!, cfg.chains[s.to].eid, BigInt(s.sel ?? 1), to] })
@@ -102,8 +120,10 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     draw();
   }
   async function doBridge() {
+    if (isSol(s.from)) return fromSolana();
     if (!wallet.address) return openConnect();
     if (s.sel == null) return;
+    if (isSol(s.to)) return toSolana();
     const to = (s.recip || wallet.address) as Address;
     if (!/^0x[0-9a-fA-F]{40}$/.test(to)) { s.status = 'Recipient must be a 0x address.'; s.cls = 'err'; return draw(); }
     s.busy = true; s.link = ''; s.status = 'Switching network…'; s.cls = 'mut'; draw();
@@ -138,18 +158,62 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     } catch (e: any) { s.status = e?.code === 4001 ? 'Rejected in wallet.' : (e.shortMessage || e.message || String(e)); s.cls = 'err'; }
     s.busy = false; await loadIds(); quote();
   }
+  // EVM -> Solana: approve the chain's mover for the id (once), then mover.toSolana locks it in the V1 escrow and LayerZero
+  // makes the Solana copy active in the recipient's wallet.
+  async function toSolana() {
+    const to = s.recip || solMe();
+    if (!SX!.isSolAddr(to)) { s.status = 'Recipient must be a Solana address (connect Phantom / Solflare or paste one).'; s.cls = 'err'; return draw(); }
+    s.busy = true; s.link = ''; s.status = 'Switching network…'; s.cls = 'mut'; draw();
+    try {
+      const c = cfg.chains[s.from]; const pub = pubFor(c); const w = await walletFor(c); const token = C().contracts[s.from]; const mover = SX!.moverOf(s.from); const id = BigInt(s.sel!);
+      const ok = (await pub.readContract({ address: token, abi: NFT, functionName: 'getApproved', args: [id] })).toLowerCase() === mover.toLowerCase()
+        || (await pub.readContract({ address: token, abi: NFT, functionName: 'isApprovedForAll', args: [wallet.address as Address, mover] }));
+      if (!ok) { s.status = `Step 1/2: allow the MultiSea Solana mover to lock #${s.sel} in the escrow…`; draw();
+        const h = await w.writeContract({ address: token, abi: NFT, functionName: 'approve', args: [mover, id] }); await pub.waitForTransactionReceipt({ hash: h }); }
+      const [p, lz] = await pub.readContract({ address: mover, abi: SX!.MOVER, functionName: 'quoteToSolana', args: [C().cid!, id, SX!.sol32(to)] }) as [bigint, bigint];
+      s.quote = { p, lz }; s.status = `${ok ? '' : 'Step 2/2: '}confirm the move to Solana (${fmtE(p + lz)} ${N()}) in your wallet…`; draw();
+      const h = await w.writeContract({ address: mover, abi: SX!.MOVER, functionName: 'toSolana', args: [C().cid!, id, SX!.sol32(to)], value: p + (lz * 102n) / 100n });
+      const r = await pub.waitForTransactionReceipt({ hash: h }); if (r.status !== 'success') throw new Error('Transaction reverted');
+      s.link = `https://layerzeroscan.com/tx/${h}`;
+      s.status = `✓ #${s.sel} locked on ${c.name}. LayerZero is delivering it to Solana (usually a few minutes).`; s.cls = 'ok'; draw();
+      for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 6000));
+        const o = (await SX!.solCopies(C().cid!, [Number(id)]).catch(() => null))?.get(Number(id));
+        if (o === to) { s.status = `✓ Delivered: #${s.sel} is now in ${to.slice(0, 4)}…${to.slice(-4)} on Solana.`; break; } }
+    } catch (e: any) { s.status = e?.code === 4001 ? 'Rejected in wallet.' : (e.shortMessage || e.message || String(e)); s.cls = 'err'; }
+    s.busy = false; await loadIds(); quote();
+  }
+  // Solana -> EVM: move_out locks the Solana copy and sends MOVE to the destination chain's V1 escrow, which releases the id.
+  async function fromSolana() {
+    if (!solMe()) { (await import('./solmenu')).openSolConnect(); return; }
+    if (s.sel == null) return;
+    const to = (s.recip || wallet.address || '') as Address;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to)) { s.status = `Enter the 0x address to receive it on ${cfg.chains[s.to].name}, or connect your EVM wallet.`; s.cls = 'err'; return draw(); }
+    s.busy = true; s.link = ''; s.status = 'Approve the move in your Solana wallet…'; s.cls = 'mut'; draw();
+    try {
+      const id = s.sel; const sig = await SX!.solToEvm(C().cid!, id, cfg.chains[s.to].eid, C().escrows[s.to], to);
+      s.link = `https://solscan.io/tx/${sig}`;
+      s.status = `✓ #${id} locked on Solana. LayerZero is delivering it to ${cfg.chains[s.to].name} (usually a few minutes).`; s.cls = 'ok'; draw();
+      const dpub = pubFor(cfg.chains[s.to]); const dtoken = C().contracts[s.to];
+      for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 6000));
+        const o = await dpub.readContract({ address: dtoken, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null);
+        if ((o as string | null)?.toLowerCase() === to.toLowerCase()) { s.status = `✓ Delivered: #${id} is now on ${cfg.chains[s.to].name}.`; break; } }
+    } catch (e: any) { s.status = /reject|denied|cancel/i.test(e?.message || '') ? 'Rejected in wallet.' : (e.message || String(e)); s.cls = 'err'; }
+    s.busy = false; await loadIds(); quote();
+  }
   el.onchange = e => { e.stopPropagation(); const t = e.target as HTMLSelectElement; const k = t.dataset.k;
     if (k === 'col') { s.col = +t.value; s.from = keys(s.col)[0]; s.to = keys(s.col)[1]; loadIds(); quote(); }
-    if (k === 'from' || k === 'to') { (s as any)[k] = t.value; loadIds(); quote(); }
+    if (k === 'from' || k === 'to') { const was = isSol(s.to); (s as any)[k] = t.value; if (was !== isSol(s.to)) s.recip = ''; loadIds(); quote(); }
     if (k === 'recip') { s.recip = t.value.trim(); quote(); } };
   el.onclick = e => { e.stopPropagation(); const t = e.target as HTMLElement; const a = t.closest('[data-act]') as HTMLElement | null; const n = t.closest('[data-id]') as HTMLElement | null;
     if (n) { s.sel = +n.dataset.id!; s.status = ''; draw(); quote(); return; }
     if (!a) return;
-    if (a.dataset.act === 'swap') { [s.from, s.to] = [s.to, s.from]; loadIds(); quote(); }
+    if (a.dataset.act === 'swap') { [s.from, s.to] = [s.to, s.from]; if (isSol(s.from) || isSol(s.to)) s.recip = ''; loadIds(); quote(); }
     if (a.dataset.act === 'connect') openConnect();
+    if (a.dataset.act === 'solconnect') import('./solmenu').then(m => m.openSolConnect());
     if (a.dataset.act === 'bridge') doBridge(); };
   el.oninput = e => e.stopPropagation();
   onWallet(() => { if (el.isConnected) { loadIds(); quote(); } });
   onSolanaFlag(() => { if (el.isConnected) draw(); });
+  SW?.onSolWallet(() => { if (el.isConnected && (isSol(s.from) || isSol(s.to))) { loadIds(); quote(); } });
   draw(); loadIds(); quote();
 }
