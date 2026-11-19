@@ -1,0 +1,7 @@
+{
+ "_note": "IslandWalletFactory (contracts/src/island). Deployed by MC from /deploy-island-wallets through the deterministic deployer; same address on all 5 chains.",
+ "factory": "0x9345484c0b776ddbE022D88B62aaA0ED9101e88F",
+ "implementation": "0x8848E580892A378caBd04698Bdafa4D0f4EEDa08",
+ "saltTag": "0x8af775a3f81d5bbb582da54815fca70b4dfbe01517c818c58e1e622697fe6684",
+ "wallet31": "0x4e4aF6206B3FFb226DaCaC2e7b03C871D352FF41"
+}

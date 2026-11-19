@@ -1,11 +1,12 @@
-// GET /islands/wallet-nfts: how many NFTs each Island's ERC-6551 wallets hold, summed over the 5 chains (each chain has its
+// GET /islands/wallet-nfts: how many NFTs each Island's wallets hold (legacy ERC-6551 per chain + the one-address wallet), summed over the 5 chains (each chain has its
 // own wallet address: Tokenbound V3 proxy, salt 0, bound to that chain's drop contract). The Island itself is not counted.
 // Base / Ethereum / ApeChain / BNB: thirdweb Insight owned NFTs (any collection), 20 wallets per request (Insight's cap).
 // Robinhood is not on Insight and its RPCs refuse wide eth_getLogs, so there we read balanceOf of the static ERC-721
 // collections deployed on Robinhood (one multicall). Also the USD value of the coins + tokens in each Island's 5 wallets
 // (Multicall3 getEthBalance + ERC-20 balanceOf per chain; token list = src/islandkit.ts ISLAND_TOKENS, keep in sync;
 // prices from CoinGecko like the site). Kept in KV for 10 min (1 min if a chain failed), edge-cached 60 s in front.
-import { concat, encodeAbiParameters, getContractAddress, encodeFunctionData, decodeFunctionResult, parseAbi } from 'viem';
+import { concat, encodeAbiParameters, getContractAddress, encodeFunctionData, decodeFunctionResult, parseAbi, keccak256 } from 'viem';
+import IW from '../../config/island-wallet.json';
 const INSIGHT = 'https://insight.thirdweb.com';
 const INSIGHT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb'];
 const REG = '0x000000006551c19487814612e58FE06813775758', PROXY = '0x55266d75D1a14E4572138116aF39863Ed6596E7F', Z = '0x' + '0'.repeat(64);
@@ -23,6 +24,10 @@ const NATIVE_PX = { base: 'ETH', ethereum: 'ETH', apechain: 'APE', bnb: 'BNB', r
 const units = (v, d) => Number(v) / 10 ** d;
 const AGG = parseAbi(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[])']);
 const tba = (chainId, drop, id) => getContractAddress({ opcode: 'CREATE2', from: REG, salt: Z, bytecode: concat(['0x3d60ad80600a3d3981f3363d3d373d3d3d363d73', PROXY, '0x5af43d82803e903d91602b57fd5bf3', encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], [Z, BigInt(chainId), drop, BigInt(id)])]) }).toLowerCase();
+
+// One-address Island wallets (IslandWalletFactory, same address on all 5 chains). Counted too, so holdings show up the
+// moment something is sent there (the address receives before the wallet is created). Zero until then.
+const iw2 = id => getContractAddress({ opcode: 'CREATE2', from: IW.factory, salt: keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [IW.saltTag, BigInt(id)])), bytecode: concat(['0x3d602d80600a3d3981f3363d3d373d3d3d363d73', IW.implementation, '0x5af43d82803e903d91602b57fd5bf3']) }).toLowerCase();
 
 export function makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }) {
   const col = CFG.collections.find(c => c.slug === 'multi-islands');
@@ -89,26 +94,27 @@ export function makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }) {
     const counts = Object.fromEntries(ids.map(i => [i, 0])); const usd = Object.fromEntries(ids.map(i => [i, 0])); const failed = [];
     const px = await rates().catch(e => { failed.push('prices'); console.warn('island usd rates', e?.message); return null; });
     await Promise.all(deps.map(async d => {
-      const k = d.chain, drop = lc(d.address); const addrs = ids.map(i => tba(chains[k].chainId, drop, i));
+      const k = d.chain, drop = lc(d.address); const legacy = ids.map(i => tba(chains[k].chainId, drop, i)); const neu = ids.map(iw2);
+      const addrs = [...legacy, ...neu], idOf = a => ids[addrs.indexOf(a) % ids.length];
       try {
         if (INSIGHT_CHAINS.includes(k)) {
-          const byAddr = new Map(addrs.map((a, i) => [a, ids[i]]));
+          const byAddr = new Map(addrs.map(a => [a, idOf(a)]));
           for (const x of await insight(env, k, drop, addrs)) for (const o of x.owners) {
             const id = byAddr.get(o); if (id == null) continue;
             if (x.contract === drop && x.id === String(id)) continue; // the Island itself
             counts[id] += x.bal;
           }
-        } else (await onchainCounts(k, addrs)).forEach((v, i) => { counts[ids[i]] += Math.max(0, v); });
+        } else for (const set of [legacy, neu]) (await onchainCounts(k, set)).forEach((v, i) => { counts[ids[i]] += Math.max(0, v); });
       } catch (e) { failed.push(k); console.warn('island nfts', k, e?.message); }
-      if (px) try { (await usdOn(k, addrs, px)).forEach((v, i) => { usd[ids[i]] += v; }); } catch (e) { if (!failed.includes(k)) failed.push(k); console.warn('island usd', k, e?.message); }
+      if (px) try { (await usdOn(k, addrs, px)).forEach((v, i) => { usd[ids[i % ids.length]] += v; }); } catch (e) { if (!failed.includes(k)) failed.push(k); console.warn('island usd', k, e?.message); }
     }));
     return { counts: Object.fromEntries(Object.entries(counts).filter(([, v]) => v > 0)), usd: px ? Object.fromEntries(Object.entries(usd).filter(([, v]) => v >= 0.005).map(([i, v]) => [i, Math.round(v * 100) / 100])) : {}, failed, at: Math.floor(Date.now() / 1000) };
   }
   return async function handle(req, env, url, p, M) {
     if (!(M === 'GET' && p[0] === 'islands' && p[1] === 'wallet-nfts' && p.length === 2)) return undefined;
-    const key = new Request('https://cache.multisea/island-wallet-nfts:v3');
+    const key = new Request('https://cache.multisea/island-wallet-nfts:v4');
     const hit = await caches.default.match(key); if (hit) return hit.json();
-    const KV = env.COLLECTIONS, kk = 'cache:island-wallets:v3'; const now = Math.floor(Date.now() / 1000);
+    const KV = env.COLLECTIONS, kk = 'cache:island-wallets:v4'; const now = Math.floor(Date.now() / 1000);
     let v = KV ? await KV.get(kk, 'json').catch(() => null) : null;
     if (!v || now - v.at > (v.failed?.length ? 60 : 600)) { v = await build(env); if (KV) await KV.put(kk, JSON.stringify(v), { expirationTtl: 3600 }).catch(() => {}); }
     await caches.default.put(key, new Response(JSON.stringify(v), { headers: { 'cache-control': 'public, max-age=60' } }));
