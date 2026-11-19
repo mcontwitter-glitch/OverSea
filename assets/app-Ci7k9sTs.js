@@ -1,0 +1,1 @@
+var e={apiBase:`https://api.multisea.io`,siteUrl:`https://multisea.io/`,adminAddresses:[`0xca89ae48a5c61d13e78236daa4ac29ee588ea475`],feeWallet:`0x25411039F77529A543344603bD8acdd65fABA4d0`,solanaFeeWallet:`85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS`,solanaFeeBps:50};export{e as t};
