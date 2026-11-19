@@ -1,1 +1,0 @@
-export{D as openSolConnect}from"./wallet-YVPcMsy0.js";
