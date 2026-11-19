@@ -3,7 +3,7 @@
 // currency from the order) and bridge (escrow/vault lock or mirror burn on one chain paired with the release or mirror mint
 // of the same id on another chain). Escrow copies minted straight into escrow are not user events and are dropped.
 export type Raw = { chain: string; contract: string; id: number; from: string; to: string; tx: string; log: number; block: number; ts: number; sale?: { price: number; currency: string } | null };
-export type Row = { type: 'mint' | 'sent' | 'sale' | 'bridge'; chain: string; chain2?: string; dir?: 'in' | 'out'; id: number; from: string; to: string; tx: string; ts: number; price?: number; currency?: string };
+export type Row = { type: 'mint' | 'sent' | 'sale' | 'bridge'; chain: string; chain2?: string; dir?: 'in' | 'out'; id: number; from: string; to: string; tx: string; ts: number; price?: number; currency?: string; tx2?: string };
 export type Kv = { get(k: string): Promise<any>; put(k: string, v: any): Promise<void> };
 type ChainCfg = { chainId: number; rpc: string; rpcs?: string[]; native?: string; name?: string };
 
@@ -137,4 +137,18 @@ export function assemble(raw: Raw[], esc: Set<string>): Row[] {
   }
   for (const q of open.values()) for (const d of q) out.push(d.kind === 'lock' ? { type: 'bridge', chain: d.chain, chain2: d.chain, dir: 'out', id: d.id, from: d.from, to: '', tx: d.tx, ts: d.ts } : { type: 'sent', chain: d.chain, id: d.id, from: d.from, to: d.to, tx: d.tx, ts: d.ts });
   return out.sort((a, b) => b.ts - a.ts);
+}
+
+/** Other side of an unpaired lock/release from LayerZero Scan (Worker GET /activity/lz), e.g. a Solana leg. */
+export type Leg = { dir: 'in' | 'out'; peer: string; peerTx: string; status?: string; ts?: number } | null;
+/** Bridge rows the EVM transfers alone couldn't pair (dir in/out): their EVM tx hashes, keyed "<chain>:<tx>". */
+export const unpairedBridges = (rows: Row[]) => rows.filter(r => r.type === 'bridge' && r.dir).map(r => `${r.chain}:${r.tx}`);
+/** Rewrite unpaired rows with their LayerZero peer: out -> "A → peer" (tx2 = delivery on the peer), in -> "peer → A"
+ *  (tx = the peer's source tx, e.g. a Solana signature; tx2 = the release on A). */
+export function applyLegs(rows: Row[], legs: Record<string, Leg>): Row[] {
+  return rows.map(r => {
+    const l = r.type === 'bridge' && r.dir ? legs[r.tx.toLowerCase()] : null; if (!l || l.dir !== r.dir || !l.peer) return r;
+    if (r.dir === 'out') return { ...r, dir: undefined, chain2: l.peer, tx2: l.peerTx || undefined };
+    return { ...r, dir: undefined, chain: l.peer, chain2: r.chain, from: '', tx: l.peerTx || r.tx, tx2: l.peerTx ? r.tx : undefined, ts: l.ts || r.ts };
+  }).sort((a, b) => b.ts - a.ts);
 }

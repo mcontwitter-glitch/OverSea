@@ -16,7 +16,7 @@ import { resolveProfiles } from './walletlinks';
 // EVM addresses link to their profile (/u/<address>); other addresses stay plain text. The name inside still paints (names.ts).
 const addrLink = (a?: string | null) => (a && /^0x[0-9a-fA-F]{40}$/.test(a) && !/^0x0{40}$/.test(a) ? `<a class="ulink" href="/u/${a.toLowerCase()}">${addrHtml(a)}</a>` : addrHtml(a));
 import { collectionTransfers, insightOn } from './insight';
-import { makeRpc, rpcTransfers, annotateSales, assemble, escrowSet, type Raw, type Row, type Kv } from './activitycore';
+import { makeRpc, rpcTransfers, annotateSales, assemble, escrowSet, unpairedBridges, applyLegs, type Raw, type Row, type Kv, type Leg } from './activitycore';
 const perf: Record<string, number> = ((window as any).__msPerf ??= {}); const t0 = performance.now();
 
 type Chain = { name: string; chainId: number; native: string; openseaSlug: string | null; explorer: string; note?: string };
@@ -126,6 +126,17 @@ async function loadActivity() {
     } catch (e: any) { console.warn('[activity]', d.chain, e?.message); }
   }));
   activity = assemble(raw, esc); activityState = activity.length || ok ? 'ok' : 'error';
+  // Locks/releases with no transfer on another EVM chain (Solana legs, or a leg outside the window): ask LayerZero Scan.
+  const un = unpairedBridges(activity);
+  if (un.length) try {
+    const legs: Record<string, Leg> = {}; const need: string[] = [];
+    for (const k of un) { const c = await actKv.get('lz1:' + k.split(':')[1]); if (c) legs[k.split(':')[1]] = c; else need.push(k); }
+    for (let i = 0; i < need.length; i += 40) {
+      const r = await fetch(`${API}/activity/lz?txs=${need.slice(i, i + 40).join(',')}`, { signal: AbortSignal.timeout(30_000) }); if (!r.ok) break;
+      const j = await r.json(); for (const [t, l] of Object.entries(j.legs || {}) as [string, Leg][]) { legs[t] = l; if (l?.peerTx && (l.peer !== 'solana' || l.ts)) await actKv.put('lz1:' + t, l); }
+    }
+    activity = applyLegs(activity, legs);
+  } catch (e: any) { console.warn('[activity lz]', e?.message); }
   perf.activityMs = performance.now() - t; perf.newestTs = Math.max(0, ...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activity = activityState;
   if (st.tab === 'activity') render();
 }
@@ -437,14 +448,15 @@ function holdersView() {
 function activityView() {
   const rows = activity.filter(a => !st.chains.size || st.chains.has(a.chain) || (a.chain2 && st.chains.has(a.chain2))).sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const byId = new Map(items.map(i => [i.id, i]));
-  const cn = (k: string) => esc(chains[k]?.name || k);
+  const cn = (k: string) => (k === 'solana' ? 'Solana' : esc(chains[k]?.name || k));
+  const txUrl = (k: string, h: string) => (k === 'solana' ? `https://solscan.io/tx/${h}` : chains[k]?.explorer ? `${chains[k].explorer}/tx/${h}` : '');
   const label = (a: Row) => a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'bridge' ? 'Bridged' : 'Sent';
   const route = (a: Row) => a.type !== 'bridge' ? '' : `<small class="mut">${a.dir === 'out' ? `from ${cn(a.chain)}` : a.dir === 'in' ? `to ${cn(a.chain2!)}` : `${cn(a.chain)} → ${cn(a.chain2!)}`}</small>`;
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
-   ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const ex = chains[a.chain]?.explorer; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
+   ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const u = txUrl(a.chain, a.tx), u2 = a.tx2 && a.chain2 ? txUrl(a.chain2, a.tx2) : ''; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
      <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}</span></span>
      <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrLink(a.from)}</span><span>${addrLink(a.to)}</span>
-     <span>${ex ? `<a href="${ex}/tx/${a.tx}" target="_blank" rel="noopener">${ago(a.ts)} ↗</a>` : ago(a.ts)}</span></div>`; }).join('') || `<div class="empty">${activityState === 'loading' ? 'Loading on-chain activity…' : activityState === 'error' ? "Couldn't load activity. Try again in a minute." : 'No activity found'}</div>`}</div>`;
+     <span>${u ? `<a href="${u}" target="_blank" rel="noopener" title="${cn(a.chain)} transaction">${ago(a.ts)} ↗</a>` : ago(a.ts)}${u2 ? ` <a class="small mut" href="${u2}" target="_blank" rel="noopener" title="${cn(a.chain2!)} transaction">${cn(a.chain2!)} ↗</a>` : ''}</span></div>`; }).join('') || `<div class="empty">${activityState === 'loading' ? 'Loading on-chain activity…' : activityState === 'error' ? "Couldn't load activity. Try again in a minute." : 'No activity found'}</div>`}</div>`;
 }
 
 function chainsView() {

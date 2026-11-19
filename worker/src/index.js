@@ -19,6 +19,7 @@ import { makeSolanaLink } from './solanalink.js';
 import { makeWalletLink } from './walletlink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
+import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
 import LP from '../../config/launchpad.json';
@@ -269,6 +270,7 @@ let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
+let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
 let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
@@ -280,6 +282,7 @@ async function handle(req, env, url, ctx) {
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
+  { const a = await lzLegs()(req, env, url, p, M); if (a !== undefined) return a; }
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.

@@ -29,6 +29,8 @@ const u16le = (d, o) => d[o] | (d[o + 1] << 8);
 const ABI = parseAbi(['function omniEscrow() view returns (address)', 'function peers(uint32) view returns (bytes32)', 'function isSolana(uint32) view returns (bool)']);
 
 /** @returns {{ ok: boolean, problems: string[], store: string, store32: string }} */
+/** Public Solana RPCs in the order the Worker tries them (some refuse or rate-limit Cloudflare Worker IPs). */
+export const solRpcList = (LP, solRpc = LP?.solana?.rpc) => [...new Set([...(LP?.solana?.rpcFallbacks || []), 'https://solana.api.pocket.network', 'https://api.tatum.io/v3/blockchain/node/solana-mainnet', solRpc, 'https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'].filter(Boolean))];
 export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.solana.rpc, rpcOf = k => (chains[k]?.rpcs?.length ? chains[k].rpcs : [chains[k]?.rpc]), fetchFn = fetch }) {
   const SL = LP.solana, V2 = SL.v2, problems = []; solKey(programId);
   const keys = Object.keys(V2.escrows); const eidOf = k => LP.mainnet?.chains?.[k]?.eid ?? LP.eids?.[k];
@@ -36,7 +38,7 @@ export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.sol
   const accs = [programId, store, ...keys.map(k => peerPdaOf(programId, eidOf(k)))];
   // Batches of 10 (publicnode refuses getMultipleAccounts with more than 10). Several public RPCs in turn: some refuse or
   // rate-limit Cloudflare Worker IPs, so one failing RPC must not block the switch. Each failure is reported by name.
-  const rpcs = [...new Set([...(SL.rpcFallbacks || []), 'https://solana.api.pocket.network', 'https://api.tatum.io/v3/blockchain/node/solana-mainnet', solRpc, 'https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'])];
+  const rpcs = solRpcList(LP, solRpc);
   const parts = []; for (let i = 0; i < accs.length; i += 10) parts.push(accs.slice(i, i + 10));
   const tried = []; let vals = null, used = '';
   for (const u of rpcs) {
