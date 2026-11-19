@@ -1,0 +1,1 @@
+import{n as e}from"./safe-buffer-DX6CccDz.js";var t=e(),n=globalThis;n.Buffer??=t.Buffer,n.global??=n,n.process??={browser:!0,env:{},version:``,versions:{},argv:[],platform:`browser`,pid:1,nextTick:(e,...t)=>queueMicrotask(()=>e(...t)),emitWarning:()=>{},cwd:()=>`/`,on:()=>{},stdout:null,stderr:null};
