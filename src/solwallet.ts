@@ -1,8 +1,8 @@
 // Solana wallet (Phantom / Solflare) next to the thirdweb EVM connect. Used only by Solana drops (src/solui.ts), which stay
 // hidden until the mainnet program exists (config/launchpad.json solana.programId).
-import { Connection, PublicKey, Transaction, ComputeBudgetProgram, type TransactionInstruction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, type TransactionInstruction } from '@solana/web3.js';
 import LP from '../config/launchpad.json';
-import { addBroadcast } from './soltx';
+import { addBroadcast, sendWallet, priorityFee, budget, TxExpired } from './soltx';
 
 import { sol, onSol, connectSolWallet, disconnectSolWallet, solWalletOptions, type SolProv } from './solconnect';
 type Prov = SolProv;
@@ -46,14 +46,20 @@ export function bindSolConnect(root: HTMLElement, after: () => void, onErr: (m: 
   root.addEventListener('click', e => { const b = (e.target as HTMLElement).closest('[data-solact]') as HTMLElement | null; if (!b) return; e.preventDefault();
     (b.dataset.solact === 'connect' ? connectSol(b.dataset.solw!) : disconnectSol()).then(after).catch(x => onErr(x?.message || String(x))); });
 }
-/** Sign with the connected wallet and send; resolves to the signature once confirmed. */
-export async function sendSol(ixs: TransactionInstruction[], cu = 400_000): Promise<string> {
+/** Sign with the connected wallet and send it reliably (src/soltx.ts sendWallet): fresh blockhash fetched right before the
+ *  signature (after any slow quote / account building), priority fee + compute limit, signTransaction (never
+ *  signAndSendTransaction: a mobile wallet handoff can sit on it), then WE send to the main RPC + the broadcast RPC,
+ *  preflight with the real error, re-send until confirmed by signature-status polling (no confirmTransaction block-height
+ *  check: it reported landed transactions as "expired"). On expiry the chain is re-checked (`landed`) before asking again. */
+export async function sendSol(ixs: TransactionInstruction[], cu = 400_000, o: { onWait?: (m: string) => void; landed?: () => Promise<boolean> } = {}): Promise<string> {
   if (!solWallet.pubkey || !solWallet.prov) throw new Error('Connect Phantom or Solflare first.');
-  const { blockhash, lastValidBlockHeight } = await solConn.getLatestBlockhash('confirmed');
-  const tx = new Transaction({ feePayer: solWallet.pubkey, blockhash, lastValidBlockHeight }).add(ComputeBudgetProgram.setComputeUnitLimit({ units: cu }), ...ixs);
-  const signed = await solWallet.prov.signTransaction(tx);
-  const sig = await solConn.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  const r = await solConn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-  if (r.value.err) throw new Error('Solana transaction failed: ' + JSON.stringify(r.value.err));
-  return sig;
+  const fee = await priorityFee(solConn, [], 50_000).catch(() => 2_000);
+  const w = { publicKey: solWallet.pubkey, signTransaction: (t: Transaction) => solWallet.prov!.signTransaction(t) };
+  try { return await sendWallet(solConn, w, [...budget(cu, fee), ...ixs], [], { onWait: o.onWait }); }
+  catch (e: any) {
+    if (!(e instanceof TxExpired)) throw e;
+    if (o.landed) { if (await o.landed().catch(() => false)) return '';
+      throw new Error('The network did not confirm it in time and nothing changed on-chain. Tap the button again to retry.'); }
+    throw new Error('The network did not confirm it in time (no record of it on-chain). Check your wallet activity, then tap the button again if needed.');
+  }
 }

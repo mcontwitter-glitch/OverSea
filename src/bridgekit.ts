@@ -239,7 +239,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     s.busy = true; s.link = ''; s.status = 'Approve the move in your Solana wallet…'; s.cls = 'mut'; draw();
     try {
       const id = s.sel; const sig = await SX!.solToEvm(C().cid!, id, cfg.chains[s.to].eid, C().escrows[s.to], to);
-      s.link = `https://solscan.io/tx/${sig}`;
+      s.link = sig ? `https://solscan.io/tx/${sig}` : ''; // '' = confirmation timed out but the chain shows it landed
       s.status = `✓ #${id} locked on Solana. LayerZero is delivering it to ${cfg.chains[s.to].name} (usually a few minutes).`; s.cls = 'ok'; draw();
       const dpub = pubFor(cfg.chains[s.to]); const dtoken = C().contracts[s.to];
       for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 6000));

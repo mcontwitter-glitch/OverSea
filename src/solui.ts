@@ -45,7 +45,7 @@ export async function deploySolanaDrop(slug: string, onTx: (sig: string) => void
   const params: O.DropParams = { name: p.name, collectionUri: p.collectionUri, baseUri: p.baseUri, preRevealUri: p.preRevealUri, payout: new PublicKey(p.payout), royaltyBps: p.royaltyBps,
     maxSupply: p.maxSupply, hubEid: p.hubEid, eids: p.eids, phases: p.phases.map((x: any) => ({ start: BigInt(x.start), end: BigInt(x.end), maxPerWallet: x.maxPerWallet, maxSupply: x.maxSupply, merkleRoot: O.hex32(x.merkleRoot), price: BigInt(x.price) })) };
   const drop = O.dropPda(a.collectionId, PID());
-  if (!(await solConn.getAccountInfo(drop))) onTx(await sendSol([O.createDropIx({ creator: solWallet.pubkey, cid: a.collectionId, params, deadline: BigInt(a.deadline), sig, recoveryId }, PID())], 400_000));
+  if (!(await solConn.getAccountInfo(drop))) onTx(await sendSol([O.createDropIx({ creator: solWallet.pubkey, cid: a.collectionId, params, deadline: BigInt(a.deadline), sig, recoveryId }, PID())], 400_000, { landed: async () => !!(await solConn.getAccountInfo(drop)) }));
   await api('/launchpad/deployed/' + slug, { auth: true, body: { chain: 'solana', address: drop.toBase58() } });
   return drop.toBase58();
 }
@@ -81,7 +81,8 @@ export async function fromSolana(cid: string, id: number, k: string, evmTo: stri
   const st = await solConn.getAccountInfo(O.storePda(PID())); if (!st) throw new Error('Solana program not initialised.');
   const store = O.decodeStore(st.data); const eid = lzEid(k);
   const accts = await sendAccounts(solWallet.pubkey, eid, escrowOn(k));
-  onTx(await sendSol([O.moveOutIx({ holder: solWallet.pubkey, cid, tokenId: id, dstEid: eid, to: O.evmTo32(evmTo), nativeFee: MAX_LZ_FEE, feeRecipient: store.feeRecipient, sendAccounts: accts }, PID())], 400_000));
+  onTx(await sendSol([O.moveOutIx({ holder: solWallet.pubkey, cid, tokenId: id, dstEid: eid, to: O.evmTo32(evmTo), nativeFee: MAX_LZ_FEE, feeRecipient: store.feeRecipient, sendAccounts: accts }, PID())], 400_000,
+    { landed: async () => (await solOwner(cid, id)) === 'locked' }));
 }
 /** Owner of Solana copy `id` (null = not minted / not on Solana yet; the Store PDA = locked copy). */
 export async function solOwner(cid: string, id: number) { const a = await solConn.getAccountInfo(O.assetPda(cid, id, PID())); const o = a ? O.coreAssetOwner(a.data) : null; return o ? (o.equals(O.storePda(PID())) ? 'locked' : o.toBase58()) : null; }

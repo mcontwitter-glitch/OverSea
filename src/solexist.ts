@@ -45,5 +45,7 @@ export async function solToEvm(cid: string, id: number, dstEid: number, v1Escrow
   const st = await solConn.getAccountInfo(O.storePda(PID())); if (!st) throw new Error('Solana program not initialised.');
   const store = O.decodeStore(st.data);
   const accts = await sendAccounts(solWallet.pubkey, dstEid, v1Escrow);
-  return sendSol([O.moveOutIx({ holder: solWallet.pubkey, cid, tokenId: id, dstEid, to: O.evmTo32(evmTo), nativeFee: MAX_LZ_FEE, feeRecipient: store.feeRecipient, sendAccounts: accts }, PID())], 400_000);
+  // landed = the copy is locked in the Store again (move_out ran) even if confirmation timed out
+  return sendSol([O.moveOutIx({ holder: solWallet.pubkey, cid, tokenId: id, dstEid, to: O.evmTo32(evmTo), nativeFee: MAX_LZ_FEE, feeRecipient: store.feeRecipient, sendAccounts: accts }, PID())], 400_000,
+    { landed: async () => (await solCopies(cid, [id])).get(id) === 'locked' });
 }
