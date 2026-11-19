@@ -203,14 +203,18 @@ async function doTurnOn() {
   const wc = createWalletClient({ transport: custom(wallet.provider) });
   const signature = await wc.signMessage({ account: wallet.address as Hex, message });
   say('MultiSea is checking every contract on-chain…');
-  // Right after the last chain step, a public RPC can still be a block behind: on "Not ready" re-check (same signature,
-  // valid 15 minutes) a few times before showing the error.
+  // The server answers 409 "Not ready: a; b; c" naming every failing check. Read/RPC hiccups are re-checked (same signature,
+  // valid 15 minutes); a real setup problem is shown at once, check by check.
+  const list = (e: string) => `<ul class="small">${e.replace(/^Not ready:\s*/, '').split('; ').map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
   let j: any = {};
   for (let i = 0; ; i++) {
     const r = await fetch(API + '/launchpad/solana/enable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
     j = await r.json().catch(() => ({})); if (r.ok) break;
-    if (r.status !== 409 || i >= 5) throw new Error(j.error || `MultiSea answered ${r.status}`);
-    say(`Chains still confirming, re-checking in 20 s (${i + 1}/5)…<div class="mut small">${esc(j.error || '')}</div>`); await new Promise(res => setTimeout(res, 20_000));
+    const err = String(j.error || `MultiSea answered ${r.status}`);
+    const transient = r.status === 409 && err.replace(/^Not ready:\s*/, '').split('; ').every(x => /RPC did not answer|could not read the chain/i.test(x));
+    if (r.status === 409 && (!transient || i >= 4)) { say(`<span class="err">Not turned on. The server's check failed:</span>${list(err)}`); return; }
+    if (!transient) throw new Error(err);
+    say(`A chain read didn't answer, re-checking in 15 s (${i + 1}/4)…${list(err)}`); await new Promise(res => setTimeout(res, 15_000));
   }
   localStorage.setItem('msea-solana-v1', JSON.stringify({ programId }));
   say('<span class="ok">Solana is on for creators and collectors.</span>'); await readFlag();

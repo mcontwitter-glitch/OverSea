@@ -298,6 +298,12 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     if (p[0] === 'launchpad') {
       const K = env.COLLECTIONS;
       if (M === 'GET' && p[1] === 'solana' && p.length === 2) return { on: !!SOLP, programId: SOLP, store: solRec?.store || null, escrows: SOLP ? LP.solana?.v2?.escrows || null : null, enabledAt: solRec?.enabledAt || null, signer: LP.solana?.switchSigner || null };
+      // Read-only dry run of the switch's on-chain check (public data, no signature, writes nothing).
+      if (M === 'GET' && p[1] === 'solana' && p[2] === 'check' && p.length === 3) {
+        const pid = String(url.searchParams.get('program') || ''); try { solKey(pid); } catch { bad('bad program id'); }
+        if (!verifySolana) bad('on-chain check unavailable', 501);
+        const v = await verifySolana(pid); return { ok: !!v?.ok, problems: v?.problems || [], store: v?.store || null, rpcErrors: v?.tried || [], solanaRpc: v?.rpc || null };
+      }
       if (M === 'POST' && p[1] === 'solana' && p[2] === 'enable' && p.length === 3) {
         const b = await body(); const msg = String(b.message || ''); const sig = String(b.signature || '');
         if (msg.length > 400 || !/^0x[0-9a-fA-F]{130}$/.test(sig)) bad('message and signature required');

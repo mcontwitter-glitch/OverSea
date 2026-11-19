@@ -3,7 +3,7 @@
 // Solana: the program is a deployed upgradeable program; its Store PDA is initialised (owned by the program, local eid,
 // fee recipient, approver as configured); one Peer PDA per EVM chain pointing at that chain's V2 escrow.
 // EVM (every chain): factory.omniEscrow() == V2 escrow, escrowV2.peers(Solana) == Store PDA, escrowV2.isSolana(Solana).
-import { createPublicClient, http, parseAbi, getAddress } from 'viem';
+import { createPublicClient, http, fallback, parseAbi, getAddress } from 'viem';
 import { sha256 } from '@noble/hashes/sha256';
 import { ed25519 } from '@noble/curves/ed25519';
 import { solKey } from './solanadrop.js';
@@ -29,15 +29,31 @@ const u16le = (d, o) => d[o] | (d[o + 1] << 8);
 const ABI = parseAbi(['function omniEscrow() view returns (address)', 'function peers(uint32) view returns (bytes32)', 'function isSolana(uint32) view returns (bool)']);
 
 /** @returns {{ ok: boolean, problems: string[], store: string, store32: string }} */
-export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.solana.rpc, rpcOf = k => chains[k]?.rpc, fetchFn = fetch }) {
+export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.solana.rpc, rpcOf = k => (chains[k]?.rpcs?.length ? chains[k].rpcs : [chains[k]?.rpc]), fetchFn = fetch }) {
   const SL = LP.solana, V2 = SL.v2, problems = []; solKey(programId);
   const keys = Object.keys(V2.escrows); const eidOf = k => LP.mainnet?.chains?.[k]?.eid ?? LP.eids?.[k];
   const store = storePdaOf(programId), store32 = hex(solKey(store));
   const accs = [programId, store, ...keys.map(k => peerPdaOf(programId, eidOf(k)))];
-  // batches of 10: the public RPC (publicnode) refuses getMultipleAccounts with more than 10 accounts
+  // Batches of 10 (publicnode refuses getMultipleAccounts with more than 10). Several public RPCs in turn: some refuse or
+  // rate-limit Cloudflare Worker IPs, so one failing RPC must not block the switch. Each failure is reported by name.
+  const rpcs = [...new Set([...(SL.rpcFallbacks || []), 'https://solana.api.pocket.network', 'https://api.tatum.io/v3/blockchain/node/solana-mainnet', solRpc, 'https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'])];
   const parts = []; for (let i = 0; i < accs.length; i += 10) parts.push(accs.slice(i, i + 10));
-  const rs = await Promise.all(parts.map(p => fetchFn(solRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getMultipleAccounts', params: [p, { encoding: 'base64', commitment: 'confirmed' }] }) }).then(x => x.json()).catch(() => null)));
-  const vals = rs.every(r => Array.isArray(r?.result?.value)) ? rs.flatMap(r => r.result.value) : null; if (!vals) return { ok: false, problems: ['Solana RPC did not answer'], store, store32 };
+  const tried = []; let vals = null, used = '';
+  for (const u of rpcs) {
+    for (let attempt = 0; attempt < 2 && !vals; attempt++) {
+      try {
+        const rs = await Promise.all(parts.map(async p => {
+          const r = await fetchFn(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getMultipleAccounts', params: [p, { encoding: 'base64', commitment: 'confirmed' }] }), signal: AbortSignal.timeout(8000) });
+          const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { /* not JSON */ }
+          if (!r.ok || !Array.isArray(j?.result?.value)) throw new Error(`HTTP ${r.status}${j?.error ? ' ' + (j.error.message || JSON.stringify(j.error)) : txt ? ' ' + txt.slice(0, 60).replace(/\s+/g, ' ') : ''}`);
+          return j.result.value;
+        }));
+        vals = rs.flat();
+      } catch (e) { tried.push(`${new URL(u).host}: ${String(e?.message || e).slice(0, 90)}`); }
+    }
+    if (vals) { used = new URL(u).host; break; }
+  }
+  if (!vals) return { ok: false, problems: ['Solana RPC did not answer (' + tried.join(' | ') + ')'], store, store32, tried };
   const data = v => (v ? Uint8Array.from(atob(v.data[0]), c => c.charCodeAt(0)) : null);
   const [prog, st, ...peers] = vals;
   if (!prog || prog.owner !== LOADER || !prog.executable) problems.push('Solana: the program is not deployed');
@@ -53,12 +69,16 @@ export async function verifySolanaSetup({ programId, LP, chains, solRpc = LP.sol
     if (!v || v.owner !== programId || !d || d[0] !== 2 || u32le(d, 4) !== eidOf(k)) problems.push(`Solana: not linked to ${k} (step 3)`);
     else if (hex(d.subarray(8, 40)).toLowerCase() !== ('0x' + V2.escrows[k].slice(2).toLowerCase().padStart(64, '0'))) problems.push(`Solana: ${k} link points at the wrong escrow`); });
   await Promise.all(keys.map(async k => {
-    try { const pc = createPublicClient({ transport: http(rpcOf(k)) }); const fac = LP.mainnet?.chains?.[k]?.factory || LP.factories?.[k]; const esc = getAddress(V2.escrows[k]);
+    // Every configured RPC of the chain in turn (public RPCs rate-limit Cloudflare IPs now and then), whole read retried.
+    const urls = [].concat(rpcOf(k)).filter(Boolean);
+    const pc = createPublicClient({ transport: fallback(urls.map(u => http(u, { timeout: 8000, retryCount: 1 })), { retryCount: 2 }) });
+    for (let attempt = 0; ; attempt++) try { const fac = LP.mainnet?.chains?.[k]?.factory || LP.factories?.[k]; const esc = getAddress(V2.escrows[k]);
       const [oe, peer, isSol] = await Promise.all([pc.readContract({ address: fac, abi: ABI, functionName: 'omniEscrow' }), pc.readContract({ address: esc, abi: ABI, functionName: 'peers', args: [SL.eid] }), pc.readContract({ address: esc, abi: ABI, functionName: 'isSolana', args: [SL.eid] })]);
       if (getAddress(oe) !== esc) problems.push(`${k}: new drops do not use the new escrow yet (last step)`);
       if (String(peer).toLowerCase() !== store32.toLowerCase()) problems.push(`${k}: escrow not linked to this Solana program`);
       if (!isSol) problems.push(`${k}: Solana not enabled on the escrow`);
-    } catch (e) { const m = String(e?.shortMessage || e?.message || e); problems.push(/returned no data/.test(m) ? `${k}: the new escrow is not deployed yet` : `${k}: could not read the chain (${m.slice(0, 80)})`); }
+      return;
+    } catch (e) { if (attempt < 2 && !/returned no data/.test(String(e?.message || e))) { await new Promise(r => setTimeout(r, 1500)); continue; } const m = String(e?.shortMessage || e?.message || e); problems.push(/returned no data/.test(m) ? `${k}: the new escrow is not deployed yet` : `${k}: could not read the chain (${m.slice(0, 80)})`); return; }
   }));
-  return { ok: problems.length === 0, problems, store, store32 };
+  return { ok: problems.length === 0, problems, store, store32, tried, rpc: used };
 }
