@@ -52,6 +52,22 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
   const solMe = () => SW?.solWallet.pubkey?.toBase58() || '';
   const s: St = { col: 0, from: keys(0)[0], to: keys(0)[1], ids: [], loading: false, sel: null, recip: '', quote: null, status: '', cls: 'mut', busy: false, link: '', solAddr: '' };
   const C = () => cols[s.col];
+  // Recipient picker: the connected wallets + every wallet on their MultiSea profile (src/walletlinks.ts), filtered to the destination type.
+  type Pick = { addr: string; kind: 'evm' | 'sol'; label: string };
+  let picks: Pick[] = [];
+  const shortA = (a: string) => `${a.slice(0, a.startsWith('0x') ? 6 : 4)}…${a.slice(-4)}`;
+  const sameA = (a: string, b: string) => (a.startsWith('0x') ? a.toLowerCase() === b.toLowerCase() : a === b);
+  async function loadPicks() {
+    const evm = wallet.address || '', sw = solMe(); const out: Pick[] = [];
+    const add = (addr: string, kind: 'evm' | 'sol', label: string) => { if (addr && !out.some(x => sameA(x.addr, addr))) out.push({ addr, kind, label }); };
+    add(evm, 'evm', 'Connected'); add(sw, 'sol', 'Connected');
+    try { const { profileWallets } = await import('./walletlinks');
+      const ps = await Promise.all([evm, sw].filter(Boolean).map(a => profileWallets(a).catch(() => null)));
+      for (const p of ps) { if (!p) continue; add(p.profile, 'evm', 'Profile'); for (const w of p.wallets || []) add(w.addr, w.kind, 'Linked'); } } catch {}
+    picks = out; if (el.isConnected) draw();
+  }
+  const picksHtml = () => { const want = isSol(s.to) ? 'sol' : 'evm'; const list = picks.filter(p => p.kind === want); if (!list.length) return '';
+    return `<div class="bpicks">${list.map(p => `<button type="button" class="bpick ${s.recip && sameA(s.recip, p.addr) ? 'on' : ''}" data-pick="${esc(p.addr)}" title="${esc(p.addr)}"><span class="mono">${esc(shortA(p.addr))}</span><em>${esc(p.label)}</em></button>`).join('')}</div>`; };
   // Inbound-to-Solana messages that LayerZero verified but did not deliver (src/soldeliver.ts): any Solana wallet can deliver.
   type Stuck = import('./soldeliver').Pending;
   const D: { list: Stuck[]; msg: Record<string, string>; cls: Record<string, string>; busy: string } = { list: [], msg: {}, cls: {}, busy: '' };
@@ -98,6 +114,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
        : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img}${id}.webp" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')
        : `<p class="mut">No ${esc(C().name)} NFTs in this wallet on ${esc(cfg.chains[s.from].name)}.</p>`}</div>
      <label class="bl">Recipient on ${esc(cfg.chains[s.to].name)}<input data-k="recip" placeholder="${esc(isSol(s.to) ? solMe() || 'Solana address' : wallet.address || '0x…')}" value="${esc(s.recip)}"></label>
+     ${picksHtml()}
      ${isSol(s.to) && !solMe() && !s.recip ? '<p class="mut small">Enter a Solana address, or <button class="lnk small" data-act="solconnect">connect Phantom / Solflare</button> to receive it in that wallet.</p>' : ''}
      ${isSol(s.from) ? `<div class="bfee"><div><span>Move fee</span><b>${SX!.MOVE_FEE_SOL} SOL</b></div><div><span>LayerZero delivery</span><b>quoted at signing</b></div><p class="mut small">Paid in SOL from your Solana wallet. The LayerZero fee is charged at its live quote (capped at ${SX!.MAX_LZ_SOL} SOL).</p></div>` : `<div class="bfee"><div><span>Platform fee</span><b>${C().kind === 'omni' ? (q ? `${fmtE(q.p)} ${N()}` : '…') : `$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}`}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
       ${C().kind === 'omni' ? `<p class="mut small">The LayerZero fee is quoted by the ${isSol(s.to) ? 'Solana mover' : 'escrow'} and any excess is refunded.${isSol(s.to) ? ' First time: one extra approval lets the mover lock the NFT in the escrow.' : ''}</p>` : `<p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p>`}</div>`}
@@ -236,6 +253,8 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (k === 'from' || k === 'to') { const was = isSol(s.to); (s as any)[k] = t.value; if (was !== isSol(s.to)) s.recip = ''; loadIds(); quote(); }
     if (k === 'recip') { s.recip = t.value.trim(); quote(); } };
   el.onclick = e => { e.stopPropagation(); const t = e.target as HTMLElement; const a = t.closest('[data-act]') as HTMLElement | null; const n = t.closest('[data-id]') as HTMLElement | null;
+    const pk = t.closest('[data-pick]') as HTMLElement | null;
+    if (pk) { s.recip = pk.dataset.pick || ''; s.status = ''; quote(); return; }
     if (n) { s.sel = +n.dataset.id!; s.status = ''; draw(); quote(); return; }
     if (!a) return;
     if (a.dataset.act === 'swap') { [s.from, s.to] = [s.to, s.from]; if (isSol(s.from) || isSol(s.to)) s.recip = ''; loadIds(); quote(); }
@@ -244,8 +263,8 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (a.dataset.act === 'bridge') doBridge();
     if (a.dataset.act === 'deliver') doDeliver(a.dataset.guid || ''); };
   el.oninput = e => e.stopPropagation();
-  onWallet(() => { if (el.isConnected) { loadIds(); quote(); } });
+  onWallet(() => { if (el.isConnected) { loadIds(); quote(); loadPicks(); } });
   onSolanaFlag(() => { if (el.isConnected) draw(); });
-  SW?.onSolWallet(() => { if (!el.isConnected) return; if (isSol(s.from) || isSol(s.to)) { loadIds(); quote(); } else if (D.list.length) draw(); });
-  draw(); loadIds(); quote(); refreshStuck();
+  SW?.onSolWallet(() => { if (!el.isConnected) return; loadPicks(); if (isSol(s.from) || isSol(s.to)) { loadIds(); quote(); } else if (D.list.length) draw(); });
+  draw(); loadIds(); quote(); refreshStuck(); loadPicks();
 }
