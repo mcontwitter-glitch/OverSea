@@ -6,6 +6,7 @@
 //   per chain: LayerZero DVN config (2-of-2, same policy as the EVM chains) - ULN302 only
 //   per chain: set_mover (existing collections: the chain's MultiSeaSolanaMover + V1 escrow) + their nonces
 // Pure module (no DOM): the page and the local-validator test both use it.
+import './btc/polyfill';
 import { Connection, PublicKey, Transaction, type TransactionInstruction } from '@solana/web3.js';
 import { sendBatched } from './soltx';
 import { Buffer } from 'buffer';
