@@ -20,6 +20,7 @@ export const moverOf = (k: string) => (SL.v2?.movers?.[k] || '') as Address;
 export const MOVER = parseAbi(['function enabled(bytes32) view returns (bool)', 'function quoteToSolana(bytes32,uint256,bytes32) view returns (uint256,uint256)', 'function toSolana(bytes32,uint256,bytes32) payable returns (bytes32)']);
 export const DROP_CID = parseAbi(['function collectionId() view returns (bytes32)']);
 export const isSolAddr = (s: string) => { try { return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) && new PublicKey(s).toBytes().length === 32; } catch { return false; } };
+export const b58of = (hex: string) => new PublicKey(Uint8Array.from((hex.replace(/^0x/, '').match(/../g) || []).map(b => parseInt(b, 16)))).toBase58();
 export const sol32 = (s: string) => O.hexOf(new PublicKey(s).toBytes());
 
 export const collectionOf = (cid: string) => O.collectionPda(cid, PID()).toBase58();

@@ -495,8 +495,13 @@ function render() {
   window.scrollTo(0, y);
   applyBridgeFlag(); if (st.tab === 'items') { fwFill(); iwFill(); }
   const on = document.querySelector<HTMLElement>('.chips .chip.on'); if (on) { const r = on.parentElement!; r.scrollLeft = on.offsetLeft - r.offsetLeft - 12; }
-  if (st.tab === 'bridge') bridgeEnabled().then(on => { if (!on) { st.tab = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(document.getElementById('bridgebox')!, { slug: COL.slug })); });
+  if (st.tab === 'bridge') { const box = document.getElementById('bridgebox')!;
+    // Mounted once, then the same element is re-attached: the many async render() calls on this page must not wipe an
+    // in-flight bridge / Deliver status or restart its polling.
+    if (bridgeEl) { box.replaceWith(bridgeEl); return; }
+    bridgeEl = box; bridgeEnabled().then(on => { if (!on) { bridgeEl = null; st.tab = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(bridgeEl!, { slug: COL.slug })); }); }
 }
+let bridgeEl: HTMLElement | null = null;
 
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;

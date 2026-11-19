@@ -52,6 +52,34 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
   const solMe = () => SW?.solWallet.pubkey?.toBase58() || '';
   const s: St = { col: 0, from: keys(0)[0], to: keys(0)[1], ids: [], loading: false, sel: null, recip: '', quote: null, status: '', cls: 'mut', busy: false, link: '', solAddr: '' };
   const C = () => cols[s.col];
+  // Inbound-to-Solana messages that LayerZero verified but did not deliver (src/soldeliver.ts): any Solana wallet can deliver.
+  type Stuck = import('./soldeliver').Pending;
+  const D: { list: Stuck[]; msg: Record<string, string>; cls: Record<string, string>; busy: string } = { list: [], msg: {}, cls: {}, busy: '' };
+  const colCids = new Set(cols.map(c => (c.cid || '').toLowerCase()).filter(Boolean));
+  const word = (h: string, i: number) => h.replace(/^0x/, '').slice(i * 64, i * 64 + 64);
+  const stuckLabel = (m: Stuck) => { const id = parseInt(word(m.payload, 2) || '0', 16); const col = cols.find(c => (c.cid || '').replace(/^0x/, '').toLowerCase() === word(m.payload, 1).toLowerCase());
+    let to = ''; try { const w4 = m.payload.replace(/^0x/, "").slice(-64); if (SX && w4.length === 64) { const b = SX.b58of(w4); to = `${b.slice(0, 4)}…${b.slice(-4)}`; } } catch {}
+    return `${col ? esc(col.name) + ' ' : ''}${id ? '#' + id : 'Message'} from ${esc(cfg.chains[Object.keys(cfg.chains).find(k => cfg.chains[k].eid === m.srcEid) || '']?.name || m.srcChain)}${to ? ' to ' + to : ''}`; };
+  async function refreshStuck() {
+    if (!SOLANA_ON) return;
+    try { const all = await (await import('./soldeliver')).stuckInbound();
+      D.list = opts.slug ? all.filter(m => colCids.has('0x' + word(m.payload, 1).toLowerCase())) : all; } catch {}
+    draw();
+  }
+  const stuckHtml = () => !D.list.length ? '' : `<div class="bfee bstuck"><div class="gh">Waiting for delivery on Solana</div>
+     <p class="mut small">LayerZero verified ${D.list.length === 1 ? 'this move' : 'these moves'}, but its automatic delivery to Solana failed. Any Solana wallet can deliver it now (network fee about 0.00001 SOL); the NFT goes to the recipient, not to the wallet that pays.</p>
+     ${D.list.map(m => `<div class="bstk"><span>${stuckLabel(m)} · <a href="${esc(m.scan)}" target="_blank" rel="noopener">LayerZero Scan ↗</a></span>
+       <button class="bbtn" data-act="deliver" data-guid="${esc(m.guid)}" ${D.busy ? 'disabled' : ''}>${D.busy === m.guid ? 'Delivering…' : solMe() ? 'Deliver' : 'Connect Solana wallet to deliver'}</button>
+       ${D.msg[m.guid] ? `<p class="msg ${D.cls[m.guid] || 'mut'}">${D.msg[m.guid]}</p>` : ''}</div>`).join('')}</div>`;
+  async function doDeliver(guid: string) {
+    const m = D.list.find(x => x.guid === guid); if (!m || D.busy) return;
+    if (!solMe()) { (await import('./solmenu')).openSolConnect(); return; }
+    D.busy = guid; D.cls[guid] = 'mut'; D.msg[guid] = 'Checking the message on Solana…'; draw();
+    try { const r = await (await import('./soldeliver')).deliver(m, t => { D.msg[guid] = esc(t); draw(); });
+      D.cls[guid] = 'ok'; D.msg[guid] = r.already ? '✓ Already delivered.' : `✓ Delivered. <a href="https://solscan.io/tx/${r.sig}" target="_blank" rel="noopener">View transaction ↗</a>`;
+      D.busy = ''; draw(); setTimeout(() => { D.list = D.list.filter(x => x.guid !== guid); refreshStuck(); if (isSol(s.from) || isSol(s.to)) loadIds(); }, 4000);
+    } catch (e: any) { D.cls[guid] = 'err'; D.msg[guid] = esc(/reject|denied|cancel/i.test(e?.message || '') ? 'Rejected in wallet.' : (e?.message || String(e))); D.busy = ''; draw(); }
+  }
   const N = () => sym(cfg.chains[s.from]);
   const chainOpt = (sel: string, other: string) => keys(s.col).map(k => `<option value="${k}" ${k === sel ? 'selected' : ''} ${k === other ? 'disabled' : ''}>${esc(cfg.chains[k].name)}</option>`).join('');
   const lg = (k: string) => `<img class="cl" src="/logos/${cfg.chains[k].logo}.svg" alt="">`;
@@ -73,6 +101,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
      ${isSol(s.to) && !solMe() && !s.recip ? '<p class="mut small">Enter a Solana address, or <button class="lnk small" data-act="solconnect">connect Phantom / Solflare</button> to receive it in that wallet.</p>' : ''}
      ${isSol(s.from) ? `<div class="bfee"><div><span>Move fee</span><b>${SX!.MOVE_FEE_SOL} SOL</b></div><div><span>LayerZero delivery</span><b>quoted at signing</b></div><p class="mut small">Paid in SOL from your Solana wallet. The LayerZero fee is charged at its live quote (capped at ${SX!.MAX_LZ_SOL} SOL).</p></div>` : `<div class="bfee"><div><span>Platform fee</span><b>${C().kind === 'omni' ? (q ? `${fmtE(q.p)} ${N()}` : '…') : `$0.30${q ? ` ≈ ${fmtE(q.p)} ${N()}` : ''}`}</b></div><div><span>LayerZero delivery</span><b>${q ? fmtE(q.lz) + ' ' + N() : '…'}</b></div><div class="tot"><span>Total</span><b>${q ? fmtE(tot) + ' ' + N() : '…'}</b></div>
       ${C().kind === 'omni' ? `<p class="mut small">The LayerZero fee is quoted by the ${isSol(s.to) ? 'Solana mover' : 'escrow'} and any excess is refunded.${isSol(s.to) ? ' First time: one extra approval lets the mover lock the NFT in the escrow.' : ''}</p>` : `<p class="mut small">$0.30 is priced live from the ${esc(N())}/USD price feed on ${esc(cfg.chains[s.from].name)}. The LayerZero fee is quoted by the endpoint and any excess is refunded.</p>`}</div>`}
+     ${stuckHtml()}
      <p class="msg ${s.cls}">${s.status}${s.link ? ` <a href="${esc(s.link)}" target="_blank" rel="noopener">View transaction ↗</a>` : ''}</p>
      <button class="bbtn go" data-act="bridge" ${s.busy || ((isSol(s.from) ? solMe() : wallet.address) && s.sel == null) ? 'disabled' : ''}>${isSol(s.from) && !solMe() ? 'Connect Solana wallet' : !isSol(s.from) && !wallet.address ? 'Connect wallet' : s.sel == null ? 'Select an NFT' : s.busy ? 'Working…' : `Bridge #${s.sel} to ${esc(cfg.chains[s.to].name)}`}</button>
     </div>`;
@@ -178,7 +207,9 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       s.status = `✓ #${s.sel} locked on ${c.name}. LayerZero is delivering it to Solana (usually a few minutes).`; s.cls = 'ok'; draw();
       for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 6000));
         const o = (await SX!.solCopies(C().cid!, [Number(id)]).catch(() => null))?.get(Number(id));
-        if (o === to) { s.status = `✓ Delivered: #${s.sel} is now in ${to.slice(0, 4)}…${to.slice(-4)} on Solana.`; break; } }
+        if (o === to) { s.status = `✓ Delivered: #${s.sel} is now in ${to.slice(0, 4)}…${to.slice(-4)} on Solana.`; D.list = D.list.filter(m => m.srcTx.toLowerCase() !== h.toLowerCase()); break; }
+        if (i >= 9 && i % 5 === 0) { await refreshStuck(); // after ~1 min: verified on Solana but not delivered = the Deliver button below
+          if (D.list.some(m => m.srcTx.toLowerCase() === h.toLowerCase())) { s.status = `#${s.sel} is locked on ${c.name} and verified on Solana, but LayerZero's automatic delivery did not run. Press Deliver below to finish it with your Solana wallet.`; s.cls = 'mut'; draw(); } } }
     } catch (e: any) { s.status = e?.code === 4001 ? 'Rejected in wallet.' : (e.shortMessage || e.message || String(e)); s.cls = 'err'; }
     s.busy = false; await loadIds(); quote();
   }
@@ -210,10 +241,11 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (a.dataset.act === 'swap') { [s.from, s.to] = [s.to, s.from]; if (isSol(s.from) || isSol(s.to)) s.recip = ''; loadIds(); quote(); }
     if (a.dataset.act === 'connect') openConnect();
     if (a.dataset.act === 'solconnect') import('./solmenu').then(m => m.openSolConnect());
-    if (a.dataset.act === 'bridge') doBridge(); };
+    if (a.dataset.act === 'bridge') doBridge();
+    if (a.dataset.act === 'deliver') doDeliver(a.dataset.guid || ''); };
   el.oninput = e => e.stopPropagation();
   onWallet(() => { if (el.isConnected) { loadIds(); quote(); } });
   onSolanaFlag(() => { if (el.isConnected) draw(); });
-  SW?.onSolWallet(() => { if (el.isConnected && (isSol(s.from) || isSol(s.to))) { loadIds(); quote(); } });
-  draw(); loadIds(); quote();
+  SW?.onSolWallet(() => { if (!el.isConnected) return; if (isSol(s.from) || isSol(s.to)) { loadIds(); quote(); } else if (D.list.length) draw(); });
+  draw(); loadIds(); quote(); refreshStuck();
 }
