@@ -203,8 +203,15 @@ async function doTurnOn() {
   const wc = createWalletClient({ transport: custom(wallet.provider) });
   const signature = await wc.signMessage({ account: wallet.address as Hex, message });
   say('MultiSea is checking every contract on-chain…');
-  const r = await fetch(API + '/launchpad/solana/enable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
-  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `MultiSea answered ${r.status}`);
+  // Right after the last chain step, a public RPC can still be a block behind: on "Not ready" re-check (same signature,
+  // valid 15 minutes) a few times before showing the error.
+  let j: any = {};
+  for (let i = 0; ; i++) {
+    const r = await fetch(API + '/launchpad/solana/enable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
+    j = await r.json().catch(() => ({})); if (r.ok) break;
+    if (r.status !== 409 || i >= 5) throw new Error(j.error || `MultiSea answered ${r.status}`);
+    say(`Chains still confirming, re-checking in 20 s (${i + 1}/5)…<div class="mut small">${esc(j.error || '')}</div>`); await new Promise(res => setTimeout(res, 20_000));
+  }
   localStorage.setItem('msea-solana-v1', JSON.stringify({ programId }));
   say('<span class="ok">Solana is on for creators and collectors.</span>'); await readFlag();
 }
@@ -277,7 +284,8 @@ function existingHtml() {
     ${xfix ? `<p>Images: ${xfix.updated} of ${xfix.total} updated ${xfix.items.length ? btn('xfix', `Fix images · ${xfix.items.length} transaction${xfix.items.length > 1 ? 's' : ''} · 1 approval`, solWallet.pubkey?.toBase58() === xfix.owner, 'obtn') + (solWallet.pubkey?.toBase58() === xfix.owner ? '' : ` <span class="mut">(connect ${esc(short(xfix.owner, 6, 4))})</span>`) : '<b class="ok">✓</b>'}</p>` : ''}
     </div></details>`;
 }
-const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; render(); let again = false;
+let lastAct = '';
+const run = (key: string, f: () => Promise<void>) => { if (busy) return; busy = key; lastAct = key; render(); let again = false;
   f().catch(e => { const m = errText(e); const soft = RETRYABLE.test(m) && !/reject|denied|cancel/i.test(m);
     say(soft ? `<span class="warn">${esc(m)}</span>` : `<span class="err">${esc(m)}</span>`); again = key === 'deploy' && soft; })
     .finally(async () => { busy = ''; if (key === 'deploy') await refresh('sol'); render(); if (again) setTimeout(autoResume, 3000); }); };
@@ -347,13 +355,13 @@ function render() {
     { t: 'Turn Solana on', done: s5,
       p: 'When every step shows ✓, this button shows Solana to creators and collectors on multisea.io. Until then Solana stays visible but greyed out.',
       body: s5 ? `<div class="sdst"><span class="okc">✓ Solana is on</span>${flag?.enabledAt ? ` since ${esc(new Date(flag.enabledAt).toLocaleString())}` : ''}</div>`
-        : `${btn('on', 'Turn Solana on', s2 && s3 && s4)}${!(s2 && s3 && s4) ? `<div class="sdst mut">Waiting for: ${[!s2 && 'the program (step 2)', s2 && !s3 && 'program setup (step 3)', ...KEYS.filter(k => !chainDone(k)).map(k => NAMES[k] + (plans[k]?.steps.some(s => !s.done && s.readyAt) ? ' (48 h wait)' : ''))].filter(Boolean).join(', ')}</div>` : ''}`,
+        : `${btn('on', 'Turn Solana on', s2 && s3 && s4)}${lastAct === 'on' && msg ? `<div class="sdmsg">${msg}</div>` : ''}${!(s2 && s3 && s4) ? `<div class="sdst mut">Waiting for: ${[!s2 && 'the program (step 2)', s2 && !s3 && 'program setup (step 3)', ...KEYS.filter(k => !chainDone(k)).map(k => NAMES[k] + (plans[k]?.steps.some(s => !s.done && s.readyAt) ? ' (48 h wait)' : ''))].filter(Boolean).join(', ')}</div>` : ''}`,
       d: 'Signs a short message with your EVM wallet (no gas). The MultiSea server checks the program, its settings and links, and every chain\'s escrow, factory and Solana link on-chain, then switches Solana on for the site and the minting server.' },
   ];
   app.innerHTML = `${navHtml('admin')}<section class="page sdp"><h1>Turn on Solana</h1>
    <p class="sdlead">5 steps. You sign everything with your own wallets; MultiSea never holds a key. Each step shows ✓ when it is done, and the page picks up where you left off.</p>
    <div class="sdprog"><i style="width:${pct}%"></i></div>
-   ${msg ? `<div class="sdmsg">${msg}</div>` : ''}
+   ${msg && !(lastAct === 'on' && !s5) ? `<div class="sdmsg">${msg}</div>` : ''}
    ${steps.map((s, i) => `<div class="sdstep ${s.done ? 'done' : i === nowStep ? 'now' : ''}"><div class="sdnum">${s.done ? '✓' : i + 1}</div><div class="sdbody"><h3>${s.t}${s.cost ? `<span class="sdcost">${s.cost}</span>` : ''}</h3><p>${s.p}</p>${s.body}${det('s' + i, s.d)}</div></div>`).join('')}
    ${upgradeHtml()}
    ${existingHtml()}
