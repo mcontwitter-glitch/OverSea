@@ -13,6 +13,8 @@ import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
 import { encodeTraits, traitGas, traitsCard, primeCost, loadTraits, saveTraits, fetchTraits, type TraitEnc } from './agenttraits';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
+import { snapshotHolders, snapNote } from './lpholders';
+import { setPhasesCalldata, type RuleIn } from './lpmerkle';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; native: string; chainId: number }>;
 const path = location.pathname.replace(/\/+$/, '');
@@ -133,9 +135,9 @@ function mintBox(d: Drop) {
   const undeployed = R.remote && LP_LIVE ? d.chains.filter(c => !R.addresses?.[c.chain]) : [];
   const solTodo = SOLANA_ON && R.remote && LP_LIVE && !!R.raw?.solana && !R.raw.solana.drop;
   const dep = isCreator && (undeployed.length || solTodo) ? deployBox(d, [...undeployed.map(c => c.chain), ...(solTodo ? ['solana'] : [])]) : '';
-  if (comingSoon(d)) return dep || `${R.remote && LP_LIVE && !getSession() ? '<div class="fcard small" style="margin-bottom:10px">Creator? <button class="pill" data-act="lsignin">Sign in to deploy</button></div>' : ''}` + `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
+  if (comingSoon(d)) return (dep || `${R.remote && LP_LIVE && !getSession() ? '<div class="fcard small" style="margin-bottom:10px">Creator? <button class="pill" data-act="lsignin">Sign in to deploy</button></div>' : ''}` + `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
    <p class="mut small">This drop is approved. Minting opens once its contract is deployed and verified on-chain.</p>
-   <button class="bbtn" disabled>Minting opens soon</button></div>`;
+   <button class="bbtn" disabled>Minting opens soon</button></div>`) + holderRefreshBox(d);
   const st = dropState(d); const ai = activePhase(d); const p = d.phases[ai]; const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
   const left = isMulti(d) ? Math.max(0, d.maxSupply - minted(d)) : Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || MAX_PER_TX, left, MAX_PER_TX));
   if (qty > max) qty = max;
@@ -156,7 +158,7 @@ function mintBox(d: Drop) {
    ${qtyHint(d, c.chain)}${breakdown(d)}` : ''}
    ${btn}
    ${real ? (realMsg ? `<div class="okbox small">${realMsg}</div>` : '') : isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
-   ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}`;
+   ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}${holderRefreshBox(d)}`;
 }
 let mine = new Set<string>(); async function loadMine() { mine = new Set(); if (!LP_LIVE || !getSession() || !apiFeatures.includes('launchpad')) return; try { const j = await import('./auth').then(a => a.api('/launchpad/mine', { auth: true })); mine = new Set(j.drops.map((x: any) => x.slug)); } catch {} }
 // Reveal (delayed-reveal drops): creator + on-chain owner only, contract not revealed yet. ?mockreveal on localhost = UI preview.
@@ -200,9 +202,23 @@ function deployBox(d: Drop, todo: string[]) {
    ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
 }
 let solAddr = '';
+let hsMsg = ''; let hsBusy = false;
+function holderRefreshBox(d: Drop) {
+  const R = d as any; if (!getSession() || !mine.has(d.slug) || !R.remote) return '';
+  const phases = (R.raw?.phases || d.phases || []) as any[];
+  const auto = phases.filter((p: any) => p.kind === 'allowlist' && p.holderSources?.length);
+  if (!auto.length) return '';
+  const canSet = d.mode === 'single' && !isAgentDrop(d) && d.deployed && !!R.addresses;
+  const now = Math.floor(Date.now() / 1000);
+  const pending = auto.filter((p: any) => !p.holderFrozen && (!p.start || p.start > now));
+  return `<div class="fcard" style="margin-top:14px"><div class="gh">Holder allowlists</div>
+    <p class="mut small">${canSet ? 'Single-chain MultiSeaDrop can refresh a holder snapshot with setPhases, in the same phase order, before a phase starts. Don’t reorder phases after any mint.' : 'This drop has no setPhases (OmniDrop / Solana / not yet deployed). The holder list was frozen when MultiSea signed the deploy approval.'}</p>
+    ${pending.length && canSet ? `<button type="button" class="obtn sm" data-act="hsrefresh" ${hsBusy ? 'disabled' : ''}>${hsBusy ? '<span class="spin"></span> Snapshot…' : 'Refresh holder allowlists'}</button>` : auto.some((p: any) => p.holderFrozen) ? '<p class="mut small">The creator edited this list, so it stays frozen.</p>' : ''}
+    ${hsMsg ? `<p class="small" style="margin-top:8px">${hsMsg}</p>` : ''}</div>`;
+}
 function alBox(d: Drop) {
   const al = d.phases.filter(p => p.kind === 'allowlist'); if (!al.length) return '';
-  return `<div class="fcard"><div class="gh">Allowlist check</div><div class="ldal"><input data-al placeholder="0x… wallet address" value="${esc(alAddr || wallet.address || '')}"><button class="obtn sm" data-act="alcheck">Check</button></div>${alRes ? `<p class="small">${alRes}</p>` : '<p class="mut small">Checks every allowlist phase. In production the Worker returns your Merkle proof from /launchpad/proof.</p>'}</div>`;
+  return `<div class="fcard"><div class="gh">Allowlist check</div><div class="ldal"><input data-al placeholder="0x… or Solana wallet" value="${esc(alAddr || wallet.address || '')}"><button class="obtn sm" data-act="alcheck">Check</button></div>${alRes ? `<p class="small">${alRes}</p>` : '<p class="mut small">Checks every allowlist phase. In production the Worker returns your Merkle proof from /launchpad/proof.</p>'}</div>`;
 }
 // Shared-supply bar: one bar for the whole collection, segmented by the chain each token was minted on.
 function sharedBar(d: Drop) {
@@ -454,6 +470,34 @@ app.addEventListener('click', e => {
       import('./lpchain').then(m => m.revealOn(k, R.addresses[k], revURI, h => { revMsg = `Transaction sent: ${txLink(k, h)}`; render(); }))
         .then(() => { revCache[`${k}:${R.addresses[k]}`] = undefined as any; delete revCache[`${k}:${R.addresses[k]}`]; revMsg = '✓ Revealed. Marketplaces may take a few minutes to refresh metadata.'; revStep = ''; })
         .catch(e => { revMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { revBusy = false; render(); }); return; } }
+  if (el.dataset.act === 'hsrefresh') {
+    const R = d as any; const now = Math.floor(Date.now() / 1000); const phases = (R.raw?.phases || d.phases || []) as any[];
+    hsBusy = true; hsMsg = ''; render();
+    (async () => {
+      const rules: RuleIn[] = [];
+      for (const p of phases) {
+        let allowlist: string[] | undefined;
+        if (p.kind === 'allowlist' && p.holderSources?.length && !p.holderFrozen && (!p.start || p.start > now)) {
+          const snap = await snapshotHolders({ sources: p.holderSources, includeLinked: p.includeLinked !== false, includeSolana: false });
+          allowlist = snap.addresses;
+          hsMsg = (hsMsg ? hsMsg + ' · ' : '') + esc(p.name) + ': ' + esc(snapNote(snap));
+        }
+        rules.push({ name: p.name, start: p.start, end: p.end || 0, price: p.price ? (Number(p.price) >= 1e6 ? (Number(p.price) / 1e18).toString() : String(p.price)) : '0', maxPerWallet: p.maxPerWallet || 0, maxSupply: p.maxSupply || 0, allowlist: allowlist || (p.allowlist || undefined) });
+      }
+      // For already-started allowlist phases we don't have the stored addresses on the public drop; keep the existing root by reusing current on-chain phases via setPhases only for unstarted holder phases is unsafe if we can't reconstruct every phase's list.
+      // So we only call setPhases when EVERY allowlist phase either was re-snapshotted or is public.
+      if (phases.some((p: any, i: number) => p.kind === 'allowlist' && !rules[i].allowlist?.length)) {
+        hsMsg = 'Can\'t refresh: an allowlist phase has already started (or was frozen), and the live page does not have its wallet list. Leave phase order as-is.';
+        return;
+      }
+      const k = d.chains[0]?.chain; const addr = R.addresses?.[k]; if (!k || !addr) throw new Error('Drop is not deployed yet.');
+      const data = setPhasesCalldata(rules);
+      const m = await import('./lpchain');
+      await m.setPhasesOn(k, addr, data, h => { hsMsg = `Transaction sent: ${txLink(k, h)}`; render(); });
+      hsMsg = (hsMsg ? hsMsg + ' · ' : '') + '✓ setPhases confirmed on ' + esc(chains[k].name) + '.';
+    })().catch(e => { hsMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { hsBusy = false; render(); });
+    return;
+  }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
   if (el.dataset.deploy) { const list = el.dataset.deploy.split(','); const done: string[] = []; depMsg = '';
     const one = (k: string) => k === 'solana' ? import('./solui').then(m => m.deploySolanaDrop(d.slug, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}Solana transaction sent: ${txL(k, h)}`; render(); })) : (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })));

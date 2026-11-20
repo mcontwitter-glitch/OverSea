@@ -403,3 +403,22 @@ test('multichain listing excludes both the existing (V1) and the new (V2) escrow
   const col = JSON.parse(env.COLLECTIONS.m.get('col:omni-esc'));
   assert.deepEqual(col.escrow, [{ chain: 'base', address: ESC }, { chain: 'base', address: lc(LP0.solana.v2.escrows.base) }]);
 });
+
+test('Solana allowlist addresses are accepted on Solana drops, rejected on EVM-only, and proofs do not lowercase the key', async () => {
+  const SOLC = '85W3XVZqLs15MUEKZE3wRHE3gL1tEiwzkBYLQgrbbZSS', PID = 'Abu55rcZKUwUvuMDbpNrHy28RF9A8PBasZa5BGGNWiA7';
+  const SOLA = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  await assert.rejects(setup().call('POST', '/launchpad/submit', drop({ phases: [{ name: 'AL', kind: 'allowlist', start: 1800000000, end: 0, price: '1', maxPerWallet: 1, allowlist: [AL[0], SOLA] }] })), /0x addresses/);
+  const { call, as } = setup({ LP: { solana: { ...LP0.solana, programId: PID, eid: 30168 } } });
+  const body = drop({ slug: 'sol-al', mode: 'multichain', chains: ['base', 'bnb'], maxSupply: 100, creatorReserve: 0, solana: true, solanaCreator: SOLC,
+    phases: [{ name: 'Holders', kind: 'allowlist', start: 1800000000, end: 1800086400, price: '0', maxPerWallet: 1, allowlist: [AL[0], SOLA], prices: { base: '0', bnb: '0', solana: '0' } }, { name: 'Public', kind: 'public', start: 1800086400, end: 0, price: '1', maxPerWallet: 5, prices: { base: '1', bnb: '1', solana: '1' } }] });
+  await call('POST', '/launchpad/submit', body);
+  as(ADMIN); await call('POST', '/admin/launchpad/approve/sol-al');
+  const evm = await call('GET', `/launchpad/proof/sol-al/0/${AL[0]}`);
+  assert.equal(evm.eligible, true); assert.ok(evm.proof.length >= 1);
+  const sol = await call('GET', `/launchpad/proof/sol-al/0/${SOLA}`);
+  assert.equal(sol.eligible, true);
+  const { root, layers } = merkle([AL[0], SOLA]);
+  let h = leafOf(SOLA); for (const s of sol.proof) h = keccak256(h < s ? concat([h, s]) : concat([s, h]));
+  assert.equal(h, root);
+  assert.equal((await call('GET', `/launchpad/proof/sol-al/0/${AL[1]}`)).eligible, false);
+});

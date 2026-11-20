@@ -103,10 +103,10 @@ export function mountSolCard(el: HTMLElement, d: any) {
     const sel = `<select data-scf="evm">${evms.map(k => `<option value="${k}" ${k === S.evm ? 'selected' : ''}>${e((CFG.chains as any)[k]?.name || k)}</option>`).join('')}</select>`;
     let body = '';
     if (!deployed) body = '<p class="mut small">Not deployed on Solana yet.</p>';
-    else if (S.tab === 'mint') body = !ph ? '<p class="mut small">No phase is live right now.</p>' : ph.kind === 'allowlist' ? '<p class="mut small">Allowlist phases mint on the EVM chains only.</p>'
-      : `<p class="small">${e(ph.name)} · ${fmtSol(ph.prices?.solana || '0')} SOL each + LayerZero fee</p><label class="small">Quantity (1-${O.SOL_MAX_QTY})<input type="number" min="1" max="${O.SOL_MAX_QTY}" data-scf="qty" value="${S.qty}"></label>
+    else if (S.tab === 'mint') body = !ph ? '<p class="mut small">No phase is live right now.</p>'
+      : `<p class="small">${e(ph.name)}${ph.kind === 'allowlist' ? ' · allowlist' : ''} · ${fmtSol(ph.prices?.solana || '0')} SOL each + LayerZero fee</p><label class="small">Quantity (1-${O.SOL_MAX_QTY})<input type="number" min="1" max="${O.SOL_MAX_QTY}" data-scf="qty" value="${S.qty}"></label>
          <button type="button" class="bbtn ldmint" data-sc="mint" ${S.busy || !w ? 'disabled' : ''}>${S.busy ? '<span class="spin"></span> Minting…' : `Mint ${S.qty} on Solana`}</button>
-         <p class="mut small">Your SOL is held by the drop until Base confirms the token ids (about a minute); if the mint is rejected you can claim it back.</p>`;
+         <p class="mut small">${ph.kind === 'allowlist' ? 'Your connected Solana wallet must be on this allowlist (a Merkle proof is fetched before you sign). ' : ''}Your SOL is held by the drop until Base confirms the token ids (about a minute); if the mint is rejected you can claim it back.</p>`;
     else if (S.tab === 'to') body = `<label class="small">Token id<input data-scf="id" value="${e(S.id)}" placeholder="e.g. 42"></label><label class="small">From ${sel}</label>
          <button type="button" class="bbtn" data-sc="to" ${S.busy || !w ? 'disabled' : ''}>${S.busy ? '<span class="spin"></span> Moving…' : 'Move to my Solana wallet'}</button><p class="mut small">Your EVM wallet signs on that chain; the NFT arrives in the Solana wallet above.</p>`;
     else body = `<label class="small">Token id<input data-scf="id" value="${e(S.id)}" placeholder="e.g. 42"></label><label class="small">To ${sel}</label>
@@ -119,7 +119,14 @@ export function mountSolCard(el: HTMLElement, d: any) {
   el.onclick = ev => { const b = (ev.target as HTMLElement).closest('[data-sc]') as HTMLElement | null; if (!b) return; ev.preventDefault(); ev.stopPropagation(); const a = b.dataset.sc;
     if (a === 'connect') { import('./solwallet').then(m => m.connectSol(b.dataset.w!)).then(draw).catch(x => { S.msg = `<span class="err">${e(x?.message || x)}</span>`; draw(); }); return; }
     if (a === 'tab') { S.tab = b.dataset.t as any; S.msg = ''; draw(); return; }
-    if (a === 'mint') run(async () => { const r = await mintOnSolana(cid, ai, S.qty, [], sig => { S.msg = `Sent: ${solTxLink(sig)} · waiting for Base to confirm…`; draw(); });
+    if (a === 'mint') run(async () => { let proof: string[] = [];
+      if (ph?.kind === 'allowlist') {
+        const sw = solWallet.pubkey?.toBase58(); if (!sw) throw new Error('Connect Phantom or Solflare first.');
+        const r0 = await api(`/launchpad/proof/${d.slug}/${ai}/${encodeURIComponent(sw)}`);
+        if (!r0.eligible) throw new Error('This Solana wallet is not on the ' + ph.name + ' allowlist.');
+        proof = r0.proof || [];
+      }
+      const r = await mintOnSolana(cid, ai, S.qty, proof, sig => { S.msg = `Sent: ${solTxLink(sig)} · waiting for Base to confirm…`; draw(); });
       if (r.status === 'confirmed') S.msg = `✓ Minted ${S.qty} on Solana.`; else if (r.status === 'refunded') { S.refund = { cid, rid: r.rid }; S.msg = 'The hub rejected this mint (sold out or over the limit). Claim your SOL back below.'; } else S.msg = 'Still confirming. Check your wallet in a few minutes.'; });
     if (a === 'refund' && S.refund) run(async () => { const sig = await claimSolRefund(S.refund!.cid, S.refund!.rid); S.refund = undefined; S.msg = `✓ Refunded: ${solTxLink(sig)}`; });
     if (a === 'to') run(async () => { const id = BigInt(S.id || '0'); const q = await quoteToSolana(S.evm, cid, id, solWallet.pubkey!.toBase58());

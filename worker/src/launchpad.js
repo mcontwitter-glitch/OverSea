@@ -1,7 +1,7 @@
 // MultiSea Launchpad: drop submissions -> admin review -> EIP-712 deploy approval -> live drop.
 // KV keys (COLLECTIONS namespace):
 //   lpending:<slug>  submitted drop awaiting review      ldrop:<slug>   approved / deployed drop (public)
-//   lrejected:<slug> rejected drop (+reason)            lallow:<slug>:<phase>  allowlist addresses (lowercase, sorted)
+//   lrejected:<slug> rejected drop (+reason)            lallow:<slug>:<phase>  allowlist addresses (EVM lowercased, Solana base58 as-is, sorted)
 // Endpoints:
 //   GET  /launchpad/solana                    { on, programId, store, escrows } Solana switch (KV lp:solana)
 //   POST /launchpad/solana/enable             { message, signature } MC's signed "turn Solana on" -> on-chain check -> on
@@ -68,17 +68,22 @@ export const MEDIA_EXT_RE = /^\.(png|jpe?g|gif|webp|svg)$/i;
 export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
 export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
-export const leafOf = a => keccak256(keccak256(encodeAbiParameters([{ type: 'address' }], [a])));
+export const isSolAddr = a => { try { solKey(a); return true; } catch { return false; } };
+export const isEvmAddr = a => /^0x[0-9a-fA-F]{40}$/.test(a);
+export const normAllow = a => (isEvmAddr(a) ? a.toLowerCase() : a);
+export const leafOf = a => isEvmAddr(a)
+  ? keccak256(keccak256(encodeAbiParameters([{ type: 'address' }], [a])))
+  : keccak256(keccak256(solKey(a)));
 const hpair = (a, b) => keccak256(a < b ? concat([a, b]) : concat([b, a]));
 export function merkle(addrs) {
-  let lvl = [...new Set(addrs.map(a => a.toLowerCase()))].map(leafOf).sort();
+  let lvl = [...new Set(addrs.map(normAllow))].map(leafOf).sort();
   if (!lvl.length) return { root: ZH, layers: [[]] };
   const layers = [lvl];
   while (lvl.length > 1) { const n = []; for (let i = 0; i < lvl.length; i += 2) n.push(i + 1 < lvl.length ? hpair(lvl[i], lvl[i + 1]) : lvl[i]); layers.push(lvl = n); }
   return { root: lvl[0], layers };
 }
 export function proofFor(layers, addr) {
-  let i = layers[0].indexOf(leafOf(addr.toLowerCase())); if (i < 0) return null; const out = [];
+  let i = layers[0].indexOf(leafOf(normAllow(addr))); if (i < 0) return null; const out = [];
   for (let l = 0; l < layers.length - 1; l++) { const sib = i ^ 1; if (sib < layers[l].length) out.push(layers[l][sib]); i >>= 1; }
   return out;
 }
@@ -92,7 +97,7 @@ export const configHash = p => keccak256(encodeAbiParameters(INIT_T, [{ ...p, fe
 export const SOL_SWITCH_TITLE = 'MultiSea: turn Solana on';
 /** The text MC's wallet signs on /deploy-solana (free signature, no transaction). */
 export const solSwitchMessage = (programId, issued) => `${SOL_SWITCH_TITLE}\nProgram: ${programId}\nIssued: ${issued}`;
-export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed, verifySolana, now = () => Date.now() }) {
+export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, onDeployed, verifySolana, resnapAuto, now = () => Date.now() }) {
   // Solana switch: config/launchpad.json solana.programId (tests / staging) or the KV record written by POST /launchpad/solana/enable
   // after MC's signed "Turn Solana on" and the on-chain check. Until then SOLP is null: Solana drops are refused.
   let SOLP = LP.solana?.programId || null; let solAt = 0; let solRec = null;
@@ -214,16 +219,26 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const phases = ph.map((x, i) => {
       const start = int(x.start, 0, 2 ** 40, 'phase start'), end = int(x.end ?? 0, 0, 2 ** 40, 'phase end'); if (end && end <= start) bad(`phase ${i + 1}: end before start`);
       const kind = x.kind === 'allowlist' ? 'allowlist' : 'public'; let merkleRoot = ZH;
+      const holderSources = Array.isArray(x.holderSources) && x.holderSources.length ? x.holderSources : undefined;
+      const includeLinked = x.includeLinked !== false;
+      const holderFrozen = !!x.holderFrozen;
       if (kind === 'allowlist') {
-        const list = (Array.isArray(x.allowlist) ? x.allowlist : []).map(lc); if (!list.length || list.some(a => !ADDR.test(a))) bad(`phase ${i + 1}: allowlist needs valid 0x addresses`);
+        const raw = Array.isArray(x.allowlist) ? x.allowlist : [];
+        const list = [];
+        for (const a of raw) {
+          if (ADDR.test(a)) list.push(lc(a));
+          else if (solana && isSolAddr(a)) list.push(a);
+          else if (a) bad(`phase ${i + 1}: allowlist needs valid 0x addresses` + (solana ? ' or Solana wallets' : ''));
+        }
+        if (!list.length && !(holderSources && !holderFrozen)) bad(`phase ${i + 1}: allowlist needs valid 0x addresses` + (solana ? ' or Solana wallets' : '') + (holderSources ? ' (or a holder snapshot)' : ''));
         totalAllow += list.length; if (totalAllow > LP.maxAllowlist) bad(`allowlists capped at ${LP.maxAllowlist} addresses in this version`);
-        const u = [...new Set(list)].sort(); allowlists[i] = u; merkleRoot = merkle(u).root;
+        const u = [...new Set(list)].sort(); if (u.length) { allowlists[i] = u; merkleRoot = merkle(u).root; }
       }
       const price = wei(x.price, `phase ${i + 1} price`);
       // Multichain: one price per chain in that chain's native token (ETH / APE / BNB); defaults to `price` for ETH chains.
       const prices = mode === 'multichain' ? Object.fromEntries(chainsSel.map(k => [k, wei(x.prices?.[k] ?? (chains[k].native === 'ETH' ? price : undefined), `phase ${i + 1} price on ${k}`)])) : undefined;
       if (solana) prices.solana = wei(x.prices?.solana, `phase ${i + 1} price on Solana (lamports)`);
-      return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), maxSupply: int(x.maxSupply ?? 0, 0, maxSupply, `phase ${i + 1} max supply (0 = no cap, at most total supply)`), merkleRoot };
+      return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), maxSupply: int(x.maxSupply ?? 0, 0, maxSupply, `phase ${i + 1} max supply (0 = no cap, at most total supply)`), merkleRoot, ...(holderSources ? { holderSources, includeLinked, holderFrozen } : {}) };
     });
     const out = { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
       mode, copyMode, solana, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
@@ -256,7 +271,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     copyMode: d.copyMode === 'at-mint' ? 1 : 0, batchK: d.copyMode === 'at-mint' ? 0 : d.batchK ?? LP.batch.defaultK, batchT: d.copyMode === 'at-mint' ? 0 : (d.batchTMin ?? LP.batch.defaultTMin) * 60 });
 
   const solChains = d => (d.solana ? [...d.chains, 'solana'] : d.chains); // Solana is always the last chain
-  // The Solana program's DropParams (prices in lamports; allowlist roots are the EVM ones, so allowlist phases are EVM-only).
+  // The Solana program's DropParams (prices in lamports). Allowlist roots may mix EVM leaves and Solana-pubkey leaves; the program verifies the latter as keccak(keccak(32-byte pubkey)).
   const solParams = d => ({ name: solName(d.name), collectionUri: d.preRevealURI || '', baseUri: d.reveal === 'instant' ? d.baseURI : '', preRevealUri: d.reveal === 'delayed' ? d.preRevealURI : '',
     payout: d.solana.payout, royaltyBps: d.royaltyBps, maxSupply: d.maxSupply, hubEid: LP.eids[LP.hubChain], eids: solChains(d).map(k => (k === 'solana' ? LP.solana.eid : LP.eids[k])),
     phases: d.phases.map(p => ({ start: BigInt(p.start), end: BigInt(p.end), maxPerWallet: p.maxPerWallet, maxSupply: p.maxSupply ?? 0, merkleRoot: p.merkleRoot, price: BigInt(p.prices.solana) })) });
@@ -323,13 +338,17 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       if (M === 'GET' && p[1] === 'drops' && p.length === 2) { const l = await K.list({ prefix: 'ldrop:' }); return { drops: (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(Boolean).map(pub) }; }
       if (M === 'GET' && p[1] === 'drops' && p.length === 3) { const d = await K.get('ldrop:' + p[2], 'json'); if (!d) bad('not found', 404); return { drop: pub(d) }; }
       if (M === 'GET' && p[1] === 'proof' && p.length === 5) {
-        const ph = Number(p[3]); const a = lc(p[4]); if (!ADDR.test(a) || !Number.isInteger(ph)) bad('bad request');
+        const ph = Number(p[3]); const raw = decodeURIComponent(p[4] || '');
+        const a = ADDR.test(raw) ? lc(raw) : raw;
+        if ((!ADDR.test(a) && !isSolAddr(a)) || !Number.isInteger(ph)) bad('bad request');
         const list = await K.get(`lallow:${p[2]}:${ph}`, 'json'); if (!list) return { eligible: false, proof: [] };
         const pr = proofFor(merkle(list).layers, a); return { eligible: !!pr, proof: pr || [] };
       }
       if (M === 'POST' && p[1] === 'submit') {
-        const s = await requireSession(req, env); const d = validate(await body(), s.address);
+        const s = await requireSession(req, env); let d = validate(await body(), s.address);
         if ((await K.get('ldrop:' + d.slug)) || (await K.get('lpending:' + d.slug)) || (await K.get('col:' + d.slug))) bad('slug already used');
+        if (resnapAuto) d = await resnapAuto(env, d);
+        for (const [i, ph] of (d.phases || []).entries()) if (ph.kind === 'allowlist' && !(d.allowlists || {})[i]?.length) bad(`phase ${i + 1}: allowlist is empty`);
         await K.put('lpending:' + d.slug, JSON.stringify({ ...d, kind: 'drop', submitter: s.address, status: 'pending', submittedAt: new Date(now()).toISOString() }));
         return { ok: true, status: 'pending', slug: d.slug };
       }
@@ -404,9 +423,19 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         if (!p[3] && M === 'GET') { const l = await K.list({ prefix: 'ldrop:' }); const ds = (await Promise.all(l.keys.map(k => K.get(k.name, 'json')))).filter(d => d && d.kind !== 'ordinals' && d.mode !== 'ordinals' && d.status !== 'rejected');
           return { approver: LP.approver || null, drops: ds.filter(d => d.chains.some(c => LP.factories?.[c] && !(d.deployments || []).some(x => x.chain === c))).map(d => ({ slug: d.slug, name: d.name, mode: d.mode, chains: d.chains, submitter: d.submitter })) }; }
         if (!SLUG.test(p[3] || '')) bad('bad slug');
-        const d = await K.get('ldrop:' + p[3], 'json'); if (!d) bad('not an approved drop', 404); if (!LP.approver) bad('no approver configured', 501);
+        let d = await K.get('ldrop:' + p[3], 'json'); if (!d) bad('not an approved drop', 404); if (!LP.approver) bad('no approver configured', 501);
         const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
         if (M === 'GET') {
+          const sigKeys = [...d.chains.map(c => `lsig:${d.slug}:${c}`), ...(d.solana ? [`lsig:${d.slug}:solana`] : [])];
+          const anySig = (await Promise.all(sigKeys.map(k => K.get(k, 'json')))).some(Boolean);
+          if (resnapAuto && !anySig) {
+            const fresh = await resnapAuto(env, d);
+            if (fresh?._resnapped) {
+              const { allowlists, _resnapped, ...rest } = fresh;
+              d = rest; await K.put('ldrop:' + d.slug, JSON.stringify(d));
+              for (const [i, list] of Object.entries(allowlists || {})) await K.put(`lallow:${d.slug}:${i}`, JSON.stringify(list));
+            } else d = fresh;
+          }
           const out = [];
           for (const chain of d.chains) { if (!LP.factories?.[chain]) continue; const st = await K.get(`lsig:${d.slug}:${chain}`, 'json');
             const deadline = BigInt(Math.floor(now() / 1000) + LP.approvalTtlSec); const done = (d.deployments || []).some(x => x.chain === chain);

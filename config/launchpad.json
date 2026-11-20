@@ -18,7 +18,7 @@
   "maxPlatformFeeBps": 1500,
   "maxRoyaltyBps": 1000,
   "maxPhases": 8,
-  "maxAllowlist": 2000,
+  "maxAllowlist": 10000,
   "maxPerTx": 50,
   "approvalTtlSec": 604800,
   "mintGasUnits": {

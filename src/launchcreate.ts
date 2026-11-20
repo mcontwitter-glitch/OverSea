@@ -5,6 +5,7 @@
 import CFG from '../config/collections.json';
 import { parseEther, parseUnits } from 'viem';
 import { merkle, parseAllowlist, setPhasesCalldata, thirdwebClaimConditions, onchainPhases, PHASE_T, type RuleIn } from './lpmerkle';
+import { holderCollections, snapshotHolders, srcLabel, snapNote, type HolderSrc, type HolderCol, type HolderSnap } from './lpholders';
 import { encodeAbiParameters } from 'viem';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
@@ -18,7 +19,7 @@ const app = document.getElementById('app')!; document.title = 'Create a drop · 
 const chains = CFG.chains as Record<string, { name: string; native: string }>;
 const STEPS = ['Project', 'Art & metadata', 'Chains & supply', 'Mint phases', 'Royalties & payout', 'Review'];
 const SKEY = 'multisea-lp-draft';
-type PhaseIn = { name: string; kind: 'allowlist' | 'public'; start: string; end: string; price: string; maxPerWallet: string; maxSupply?: string; allowlist: string; prices?: Record<string, string>; usd?: string }; // multichain: one USD price (usd), converted live to each chain's native (price = ETH, prices = APE / BNB)
+type PhaseIn = { name: string; kind: 'allowlist' | 'public'; start: string; end: string; price: string; maxPerWallet: string; maxSupply?: string; allowlist: string; prices?: Record<string, string>; usd?: string; holderSources?: HolderSrc[]; includeLinked?: boolean; autoHolders?: boolean; holderFrozen?: boolean; holderNote?: string }; // multichain: one USD price (usd), converted live to each chain's native (price = ETH, prices = APE / BNB)
 type St = { step: number; mode: 'single' | 'multichain' | 'ordinals'; ordPrice?: string; ordLimit?: string; copyMode: 'batched' | 'at-mint'; batchK: string; batchT: string; total: string; name: string; symbol: string; slug: string; description: string; website: string; x: string; storage: 'ipfs' | 'arweave' | 'own'; baseURI: string; reveal: 'instant' | 'delayed'; preRevealURI: string; phOwn?: boolean; deathURI?: string; traitRows?: number; traitsURI?: string; deathOwn?: boolean; mediaBase?: string; mediaExt?: string; phName?: string; phDesc?: string; files: number;
   chains: Record<string, string>; reserve: string; phases: PhaseIn[]; royalty: string; payout: string; royaltyReceiver: string; agree: boolean; bridge?: boolean; solana?: boolean; solCreator?: string;
   nftType: NftType; ag: AgentOpts };
@@ -26,17 +27,31 @@ type NftType = 'erc721' | 'erc6551' | 'erc463n7';
 type AgentOpts = { revenueSplit: boolean; starvation: boolean; starveDays: string; floorBuyback: boolean; capBps: string; tip: string; brain: boolean; breeding: boolean; market: boolean; leaderboard: boolean; deathSkill: boolean; skillPct: string; graceH: string; fertility: boolean; fertPct: string; twinPct: string; mutation: boolean; mutPct: string; mutSkillPct: string; infect: boolean; infPct: string; infCooldownH: string; infMaxEth: string; infScore: string; repo: boolean; repoPct: string; queen: boolean; queenPct: string; queenCap: string; tribEth: string; tribDays: string; zombie: boolean; zombiePct: string };
 const AG0 = (): AgentOpts => ({ revenueSplit: true, starvation: true, starveDays: '30', floorBuyback: false, capBps: '1000', tip: '0.001', brain: false, breeding: false, market: false, leaderboard: true, deathSkill: false, skillPct: '5', graceH: '48', fertility: false, fertPct: '10', twinPct: '20', mutation: false, mutPct: '5', mutSkillPct: '15', infect: false, infPct: '5', infCooldownH: '1', infMaxEth: '0.05', infScore: '25', repo: false, repoPct: '5', queen: false, queenPct: '2', queenCap: '10', tribEth: '0.0005', tribDays: '7', zombie: false, zombiePct: '1' });
 const iso = (ms: number) => new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+const publicPhase = (): PhaseIn => ({ name: 'Public', kind: 'public', start: iso(Date.now() + 4 * 86400e3), end: '', price: '0.003', maxPerWallet: '10', allowlist: '' });
+const islandPhase = (over: Partial<PhaseIn> = {}): PhaseIn => ({ name: "Island's holders", kind: 'allowlist', start: iso(Date.now() + 3 * 86400e3), end: iso(Date.now() + 4 * 86400e3), price: '0', usd: '0', maxPerWallet: '1', allowlist: '', holderSources: [{ slug: 'multi-islands', min: 1 }], includeLinked: true, autoHolders: true, holderFrozen: false, ...over });
+const genericAllow = (): PhaseIn => ({ name: 'Allowlist', kind: 'allowlist', start: iso(Date.now() + 3 * 86400e3), end: iso(Date.now() + 4 * 86400e3), price: '0.002', maxPerWallet: '2', allowlist: '' });
 const blank = (): St => ({ step: 0, mode: 'single', copyMode: 'batched', batchK: String(BATCH.defaultK), batchT: String(BATCH.defaultTMin), total: '', name: '', symbol: '', slug: '', description: '', website: '', x: '', storage: 'ipfs', baseURI: '', reveal: 'instant', preRevealURI: '', files: 0, chains: { base: '' }, reserve: '0',
-  phases: [{ name: 'Allowlist', kind: 'allowlist', start: iso(Date.now() + 3 * 86400e3), end: iso(Date.now() + 4 * 86400e3), price: '0.002', maxPerWallet: '2', allowlist: '' }, { name: 'Public', kind: 'public', start: iso(Date.now() + 4 * 86400e3), end: '', price: '0.003', maxPerWallet: '10', allowlist: '' }],
+  phases: [islandPhase(), publicPhase()],
   royalty: '5', payout: '', royaltyReceiver: '', agree: false, nftType: 'erc721', ag: AG0() });
 let st: St = (() => { try { return { ...blank(), ...JSON.parse(sessionStorage.getItem(SKEY) || 'null') }; } catch { return blank(); } })();
 if ((st.storage as string) === 'arweave') st.storage = 'ipfs'; if (!st.ag) st.ag = AG0(); st.ag = { ...AG0(), ...st.ag }; if (!st.nftType) st.nftType = 'erc721';
-let msg = ''; let msgCls = 'mut'; let done = '';
+let msg = ''; let msgCls = 'mut'; let done = ''; let hsCols: HolderCol[] = []; let hsBusy = -1;
 const save = () => sessionStorage.setItem(SKEY, JSON.stringify(st));
 const isOrd = () => st.mode === 'ordinals';
 const ORD_LIMIT_MAX = 100, ORD_FEE_PCT = 0.5, ORD_HOURS = 6;
 const supply = () => (st.mode === 'multichain' || st.mode === 'ordinals' ? parseInt(st.total) || 0 : Object.values(st.chains).reduce((a, v) => a + (parseInt(v) || 0), 0));
-const addrs = (s: string) => parseAllowlist(s).ok;
+const addrs = (s: string) => parseAllowlist(s, solOn()).ok;
+function ensureIslandDefault() {
+  if (isOrd()) {
+    st.phases = st.phases.map(p => (p.autoHolders && !p.holderFrozen && p.name === "Island's holders" && !p.allowlist.trim() ? genericAllow() : p));
+    if (!st.phases.length) st.phases = [genericAllow(), publicPhase()];
+    return;
+  }
+  const first = st.phases[0];
+  const looksBlank = first?.kind === 'allowlist' && first.name === 'Allowlist' && !first.allowlist.trim() && !first.holderSources?.length;
+  if (!st.phases.some(p => p.autoHolders || p.name === "Island's holders") && looksBlank) st.phases[0] = islandPhase({ start: first.start, end: first.end });
+}
+
 const ADDR = /^0x[0-9a-f]{40}$/;
 const isMc = () => st.mode === 'multichain';
 // MultiSea bridge listing for standard drops: the creator prepays the gas-only listing fee when signing for review.
@@ -86,7 +101,7 @@ function validate(step: number): string {
       if (st.copyMode === 'batched' && !solOn()) { const k = +st.batchK, t = +st.batchT; if (!(Number.isInteger(k) && k >= BATCH.minK && k <= BATCH.maxK)) return `Batch size K: ${BATCH.minK}-${BATCH.maxK} IDs.`; if (!(Number.isInteger(t) && t >= BATCH.minTMin && t <= BATCH.maxTMin)) return `Batch window T: ${BATCH.minTMin}-${BATCH.maxTMin} minutes.`; } }
     else { for (const [k, v] of Object.entries(st.chains)) if (!(parseInt(v) > 0)) return `Set the supply for ${chains[k].name}.`; if ((parseInt(st.reserve) || 0) > supply()) return 'Creator reserve exceeds supply.'; } }
   if (step === 2 && st.storage !== 'own' && media.rows.length && supply() !== media.rows.length) return `Total supply (${supply().toLocaleString()}) must equal the ${media.rows.length.toLocaleString()} rows in your metadata CSV.`;
-  if (step === 3) { if (!st.phases.length) return 'Add at least one phase.'; for (const [i, p] of st.phases.entries()) { if (!p.start) return `Phase ${i + 1}: set a start time.`; if (p.end && ts(p.end) <= ts(p.start)) return `Phase ${i + 1}: end must be after start.`; if (isMc()) { const u = p.usd ?? ''; if (u === '' || !(+u >= 0)) return `Phase ${i + 1}: set the mint price in USD (0 or more).`; if (+u > 0 && ratesErr) return "Couldn't load live prices to convert USD. Refresh and try again."; if (+u > 0 && !rates) return 'Loading live prices… try again in a second.'; syncUsd(p); } if (!(+p.price >= 0)) return `Phase ${i + 1}: price must be 0 or more.`; const ms = p.maxSupply || '0'; if (!/^\d+$/.test(ms) || (supply() && +ms > supply())) return `Phase ${i + 1}: phase max supply must be 0-${supply().toLocaleString()}.`; if (i && ts(p.start) < ts(st.phases[i - 1].start)) return `Phase ${i + 1}: starts before phase ${i}.`; if (isMc()) for (const k of Object.keys(st.chains).filter(NON_ETH)) if (priceOn(p, k) === '' || !(+priceOn(p, k) >= 0)) return `Phase ${i + 1}: couldn't convert the price to ${chains[k].native}. Refresh and try again.`; if (p.kind === 'allowlist') { const l = addrs(p.allowlist); if (!l.length) return `Phase ${i + 1}: paste allowlist addresses.`; const badA = parseAllowlist(p.allowlist).bad[0] || l.find(a => !ADDR.test(a) && /^0x/.test(a)); if (badA) return `Phase ${i + 1}: "${badA.slice(0, 20)}" is not an address.`; } } }
+  if (step === 3) { if (!st.phases.length) return 'Add at least one phase.'; for (const [i, p] of st.phases.entries()) { if (!p.start) return `Phase ${i + 1}: set a start time.`; if (p.end && ts(p.end) <= ts(p.start)) return `Phase ${i + 1}: end must be after start.`; if (isMc()) { const u = p.usd ?? ''; if (u === '' || !(+u >= 0)) return `Phase ${i + 1}: set the mint price in USD (0 or more).`; if (+u > 0 && ratesErr) return "Couldn't load live prices to convert USD. Refresh and try again."; if (+u > 0 && !rates) return 'Loading live prices… try again in a second.'; syncUsd(p); } if (!(+p.price >= 0)) return `Phase ${i + 1}: price must be 0 or more.`; const ms = p.maxSupply || '0'; if (!/^\d+$/.test(ms) || (supply() && +ms > supply())) return `Phase ${i + 1}: phase max supply must be 0-${supply().toLocaleString()}.`; if (i && ts(p.start) < ts(st.phases[i - 1].start)) return `Phase ${i + 1}: starts before phase ${i}.`; if (isMc()) for (const k of Object.keys(st.chains).filter(NON_ETH)) if (priceOn(p, k) === '' || !(+priceOn(p, k) >= 0)) return `Phase ${i + 1}: couldn't convert the price to ${chains[k].native}. Refresh and try again.`; if (p.kind === 'allowlist') { const l = addrs(p.allowlist); if (!l.length && !(p.autoHolders && p.holderSources?.length && !p.holderFrozen)) return `Phase ${i + 1}: paste allowlist addresses or snapshot collection holders.`; const badA = parseAllowlist(p.allowlist, solOn()).bad[0]; if (badA) return `Phase ${i + 1}: "${badA.slice(0, 20)}" is not an address.`; } } }
   if (step === 1 && st.nftType === 'erc463n7') { if (st.reveal === 'delayed') return 'Agent drops reveal instantly (the image is rendered onchain): pick Instant reveal.'; if (st.deathOwn && st.deathURI && !DEATH_RE.test(st.deathURI)) return 'Death image URI: one image file, e.g. ipfs://CID/death.png (png, jpg, gif, webp, svg), not a folder or JSON.'; }
   if (step === 2 && st.nftType === 'erc463n7') { const c = +st.ag.capBps, t = +st.ag.tip, d = +st.ag.starveDays; if (!(Number.isInteger(c) && c >= 0 && c <= 10000)) return 'Daily spend cap: 0-10,000 bps.'; if (!(t >= 0 && t <= 0.01)) return 'Keeper tip: 0-0.01 ETH max.'; if (!(d >= 1 && d <= 365)) return 'Starvation period: 1-365 days.';
     if (!AGENT_UI) return 'ERC-463N7 agent drops are not open yet.';
@@ -230,8 +245,8 @@ function stepHtml(): string {
     <div class="two">${isMc() ? `<label>Mint price <span class="mut small">USD, converted on every chain</span><input type="number" step="0.01" min="0" placeholder="e.g. 10" data-ph="${i}" data-f="usd" value="${esc(p.usd ?? '')}"><span class="mut small" data-conv="${i}">${convLine(p)}</span></label>` : `<label>Price per token${isOrd() ? ' <span class="mut small">USDC on Base</span>' : ''}<input type="number" step="0.0001" min="0" data-ph="${i}" data-f="price" value="${esc(p.price)}"></label>`}<label>Max per wallet <span class="mut small">0 = no limit</span><input type="number" min="0" data-ph="${i}" data-f="maxPerWallet" value="${esc(p.maxPerWallet)}"></label></div>
     ${isOrd() ? '' : `<div class="two"><label>Max supply in this phase <span class="mut small">0 = up to the total</span><input type="number" min="0" data-ph="${i}" data-f="maxSupply" value="${esc(p.maxSupply || '0')}"></label><span></span></div>`}
 
-    ${p.kind === 'allowlist' ? `<label>Allowlist <span class="mut small">${addrs(p.allowlist).length} addresses · one per line or comma-separated</span><textarea rows="3" data-ph="${i}" data-f="allowlist" placeholder="0x…">${esc(p.allowlist)}</textarea></label>
-      <div class="ldcsv small"><label class="pill">Upload CSV<input type="file" accept=".csv,.txt,text/csv,text/plain" data-csv="${i}" hidden></label> <span class="mut" data-root="${i}">${rootLine(p.allowlist)}</span></div>` : ''}</div>`).join('')}
+    ${p.kind === 'allowlist' ? `<label>Allowlist <span class="mut small">${addrs(p.allowlist).length} addresses · one per line or comma-separated</span><textarea rows="3" data-ph="${i}" data-f="allowlist" placeholder="${solOn() ? '0x… or Solana address' : '0x…'}">${esc(p.allowlist)}</textarea></label>
+      <div class="ldcsv small"><label class="pill">Upload CSV<input type="file" accept=".csv,.txt,text/csv,text/plain" data-csv="${i}" hidden></label> <span class="mut" data-root="${i}">${rootLine(p.allowlist)}</span></div>${isOrd() ? '' : holderBox(i, p)}` : ''}</div>`).join('')}
    ${st.phases.length < 8 ? '<button type="button" class="pill" data-act="addph">+ Add phase</button>' : ''}`;
   if (s === 4) return `<div class="two">${inp('royalty', 'Creator royalty % <span class="mut small">ERC-2981, max 10%</span>', 'type="number" step="0.1" min="0" max="10"')}${inp('royaltyReceiver', 'Royalty receiver <span class="mut small">default: payout</span>', 'placeholder="0x…"')}</div>
    ${inp('payout', 'Mint proceeds payout address <span class="mut small">default: your wallet</span>', `placeholder="${esc(wallet.address || '0x…')}"`)}
@@ -242,7 +257,28 @@ function stepHtml(): string {
    ${st.nftType === 'erc463n7' ? agentTraitsHtml() : ''}${txBox()}${bridgeCard()}
    <label class="ldagree"><input type="checkbox" data-agree ${st.agree ? 'checked' : ''}> I own or have licensed the rights to this art and metadata.</label>`;
 }
-function rootLine(text: string) { const { ok, bad } = parseAllowlist(text); if (!ok.length) return 'Merkle root appears here once you add addresses.';
+function holderBox(i: number, p: PhaseIn) {
+  if (!hsCols.length) holderCollections().then(c => { hsCols = c; render(); }).catch(() => {});
+  const srcs = p.holderSources || [];
+  const opts = ['<option value="">MultiSea collection…</option>'].concat(hsCols.map(c => `<option value="${esc(c.slug)}">${esc(c.name)} (${(c.supply || 0).toLocaleString() || '—'})</option>`)).join('');
+  const rows = srcs.map((s, j) => `<li><span>${esc(srcLabel(s, hsCols))}</span><button type="button" class="x" data-hsrm="${i}:${j}" aria-label="Remove">✕</button></li>`).join('');
+  return `<div class="ldhold">
+    <label class="ldchk"><input type="checkbox" data-hsauto="${i}" ${p.autoHolders ? 'checked' : ''}> Fill from collection holders</label>
+    ${p.autoHolders ? `<p class="mut small">Counts unique live tokens per MultiSea profile. Escrow and the collection contract are excluded. This is a snapshot (not live).</p>
+      <label class="ldchk"><input type="checkbox" data-hslink="${i}" ${p.includeLinked !== false ? 'checked' : ''}> Include linked wallets <span class="mut">(on by default)</span></label>
+      ${rows ? `<ul class="ldholdsrcs">${rows}</ul>` : '<p class="mut small">Add at least one collection.</p>'}
+      <div class="two"><label>Add a MultiSea collection<select data-hsslug="${i}">${opts}</select></label><label>Min held<input type="number" min="1" value="1" data-hsmin="${i}"></label></div>
+      <button type="button" class="pill sm" data-act="hsadd" data-i="${i}">Add collection</button>
+      <div class="ldholdx"><div class="two"><label>Or a contract not on MultiSea<select data-hschain="${i}"><option value="base">Base</option><option value="ethereum">Ethereum</option><option value="apechain">ApeChain</option><option value="bnb">BNB Chain</option><option value="robinhood">Robinhood</option><option value="solana">Solana</option></select></label>
+        <label>Contract or Solana collection / mint<input data-hsaddr="${i}" placeholder="0x… or Solana address" spellcheck="false"></label></div>
+        <button type="button" class="pill sm" data-act="hsaddext" data-i="${i}">Add external collection</button></div>
+      <p><button type="button" class="obtn sm" data-act="hssnap" data-i="${i}" ${hsBusy === i ? 'disabled' : ''}>${hsBusy === i ? '<span class="spin"></span> Snapshot…' : 'Preview snapshot'}</button>
+        ${p.holderFrozen ? ' <button type="button" class="pill sm" data-act="hsunfreeze" data-i="${i}">Use auto snapshot again</button>' : ''}</p>
+      ${p.holderNote ? `<p class="small">${esc(p.holderNote)}</p>` : ''}
+      ${p.holderFrozen ? '<p class="mut small">You edited the list, so this snapshot is frozen and will not auto-refresh at submit.</p>' : '<p class="mut small">We’ll take a fresh snapshot when you submit, and again when MultiSea signs the deploy approval (unless you edit the list). OmniDrop and the Solana program have no setPhases, so the approval-time list is final.</p>'}
+    ` : ''}</div>`;
+}
+function rootLine(text: string) { const { ok, bad } = parseAllowlist(text, solOn()); if (!ok.length) return 'Merkle root appears here once you add addresses.';
   return `Merkle root <code class="mono" data-rootv>${merkle(ok).root}</code> · ${ok.length} unique${bad.length ? ` · <b class="err">${bad.length} invalid</b>` : ''}`; }
 const rules = (): RuleIn[] => st.phases.map(p => ({ name: p.name, start: ts(p.start), end: ts(p.end), price: p.price, maxPerWallet: parseInt(p.maxPerWallet) || 0, maxSupply: parseInt(p.maxSupply || '0') || 0, allowlist: p.kind === 'allowlist' ? addrs(p.allowlist) : undefined }));
 function txBox() {
@@ -276,12 +312,12 @@ app.addEventListener('input', e => {
   if (t.dataset.k) { (st as any)[t.dataset.k] = t.value; if (t.dataset.k === 'slug') { t.value = st.slug = t.value.toLowerCase().replace(/[^a-z0-9-]/g, ''); } if (t.dataset.k === 'name' && !st.slug) { /* keep user-typed slug */ } save(); }
   if (t.dataset.ord) { (st as any)[t.dataset.ord] = t.value; save(); }
   if (t.dataset.sup) { st.chains[t.dataset.sup] = t.value; save(); const tot = app.querySelector('input[data-total]') as HTMLInputElement | null; if (tot) tot.value = supply().toLocaleString(); }
-  if (t.dataset.ph) { (st.phases[+t.dataset.ph] as any)[t.dataset.f!] = t.value; save(); if (t.dataset.f === 'usd') { const p = st.phases[+t.dataset.ph]; syncUsd(p); const c = app.querySelector(`[data-conv="${t.dataset.ph}"]`); if (c) c.innerHTML = convLine(p); } if (t.dataset.f === 'allowlist') { const r = app.querySelector(`[data-root="${t.dataset.ph}"]`); if (r) r.innerHTML = rootLine(t.value); } }
+  if (t.dataset.ph) { (st.phases[+t.dataset.ph] as any)[t.dataset.f!] = t.value; save(); if (t.dataset.f === 'usd') { const p = st.phases[+t.dataset.ph]; syncUsd(p); const c = app.querySelector(`[data-conv="${t.dataset.ph}"]`); if (c) c.innerHTML = convLine(p); } if (t.dataset.f === 'allowlist') { const p = st.phases[+t.dataset.ph]; if (p.autoHolders && !p.holderFrozen) { p.holderFrozen = true; p.holderNote = (p.holderNote ? p.holderNote + ' · ' : '') + 'List edited — snapshot frozen.'; } const r = app.querySelector(`[data-root="${t.dataset.ph}"]`); if (r) r.innerHTML = rootLine(t.value); } }
   if (t.dataset.agv) { (st.ag as any)[t.dataset.agv] = t.value; save(); }
   });
 app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
-  if (t.name === 'mode') { st.mode = t.value as any; if (isMc()) { st.reserve = '0'; st.chains.base ??= ''; if (!st.total) st.total = String(Object.values(st.chains).reduce((a, v) => a + (parseInt(v) || 0), 0) || ''); } save(); render(); }
+  if (t.name === 'mode') { st.mode = t.value as any; if (isMc()) { st.reserve = '0'; st.chains.base ??= ''; if (!st.total) st.total = String(Object.values(st.chains).reduce((a, v) => a + (parseInt(v) || 0), 0) || ''); } ensureIslandDefault(); save(); render(); }
   if (t.name === 'nftType') { st.nftType = t.value as NftType; save(); render(); }
   if (t.dataset.ag) { (st.ag as any)[t.dataset.ag] = t.checked; save(); render(); }
   if (t.dataset.solchain !== undefined) { st.solana = (t as HTMLInputElement).checked; if (st.solana) st.copyMode = 'at-mint'; syncUsd(); save(); render(); return; }
@@ -298,7 +334,9 @@ app.addEventListener('change', e => {
   if (t.dataset.own != null) { st.storage = t.checked ? 'own' : 'ipfs'; if (!t.checked) st.baseURI = ''; save(); render(); }
   if (t.dataset.agree != null) { st.agree = t.checked; save(); }
   if (t.dataset.bridge != null) { st.bridge = t.checked; save(); }
-  if (t.dataset.csv != null && t.files?.[0]) { const i = +t.dataset.csv; t.files[0].text().then(txt => { const { ok, bad } = parseAllowlist(txt); const p = st.phases[i]; p.allowlist = [...new Set([...addrs(p.allowlist), ...ok])].join('\n'); msg = `CSV: added ${ok.length} addresses${bad.length ? `, skipped ${bad.length} invalid` : ''}.`; msgCls = bad.length ? 'err' : 'ok'; save(); render(); }); }
+  if (t.dataset.hsauto != null) { const p = st.phases[+t.dataset.hsauto]; p.autoHolders = t.checked; if (t.checked && !p.holderSources?.length) p.holderSources = [{ slug: 'multi-islands', min: 1 }]; p.includeLinked = p.includeLinked !== false; save(); render(); }
+  if (t.dataset.hslink != null) { st.phases[+t.dataset.hslink].includeLinked = t.checked; save(); render(); }
+  if (t.dataset.csv != null && t.files?.[0]) { const i = +t.dataset.csv; t.files[0].text().then(txt => { const { ok, bad } = parseAllowlist(txt, solOn()); const p = st.phases[i]; p.allowlist = [...new Set([...addrs(p.allowlist), ...ok])].join('\n'); if (p.autoHolders) p.holderFrozen = true; msg = `CSV: added ${ok.length} addresses${bad.length ? `, skipped ${bad.length} invalid` : ''}.`; msgCls = bad.length ? 'err' : 'ok'; save(); render(); }); }
 });
 async function submit() {
   const err = [0, 1, 2, 3, 4, 5].map(validate).find(Boolean); if (err) { msg = err; msgCls = 'err'; render(); return; }
@@ -321,7 +359,18 @@ async function submit() {
   }
   const me = (wallet.address || '').toLowerCase();
   syncUsd();
-  const phases = st.phases.map(p => ({ name: p.name, priceUsd: isMc() ? p.usd || '0' : undefined, kind: p.kind, start: ts(p.start), end: ts(p.end), maxPerWallet: parseInt(p.maxPerWallet) || 0, maxSupply: parseInt(p.maxSupply || '0') || 0, merkleRoot: p.kind === 'allowlist' ? merkle(addrs(p.allowlist)).root : undefined, price: p.price, prices: isMc() ? Object.fromEntries([...Object.keys(st.chains).map(k => [k, priceOn(p, k) || '0'] as [string, string]), ...(solOn() ? [['solana', p.prices?.solana || '0'] as [string, string]] : [])]) : undefined, allowlist: p.kind === 'allowlist' ? addrs(p.allowlist) : undefined }));
+    for (const p of st.phases) {
+    if (p.kind !== 'allowlist' || !p.autoHolders || p.holderFrozen || !p.holderSources?.length) continue;
+    try {
+      msg = `Snapshotting holders for ${p.name}…`; msgCls = 'mut'; render();
+      const snap = await snapshotHolders({ sources: p.holderSources, includeLinked: p.includeLinked !== false, includeSolana: solOn() });
+      p.allowlist = snap.addresses.join('\n');
+      p.holderNote = snapNote(snap) + (snap.warning ? ' · ' + snap.warning : '') + (snap.notes?.length ? ' · ' + snap.notes.join(' ') : '');
+      if (snap.truncated) { msg = snap.warning || p.holderNote; msgCls = 'err'; }
+      save();
+    } catch (er: any) { msg = 'Holder snapshot failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+  }
+  const phases = st.phases.map(p => ({ name: p.name, priceUsd: isMc() ? p.usd || '0' : undefined, kind: p.kind, start: ts(p.start), end: ts(p.end), maxPerWallet: parseInt(p.maxPerWallet) || 0, maxSupply: parseInt(p.maxSupply || '0') || 0, merkleRoot: p.kind === 'allowlist' ? merkle(addrs(p.allowlist)).root : undefined, price: p.price, prices: isMc() ? Object.fromEntries([...Object.keys(st.chains).map(k => [k, priceOn(p, k) || '0'] as [string, string]), ...(solOn() ? [['solana', p.prices?.solana || '0'] as [string, string]] : [])]) : undefined, allowlist: p.kind === 'allowlist' ? addrs(p.allowlist) : undefined, holderSources: p.autoHolders && p.holderSources?.length ? p.holderSources : undefined, includeLinked: p.autoHolders ? p.includeLinked !== false : undefined, holderFrozen: p.autoHolders ? !!p.holderFrozen : undefined }));
   if (apiFeatures.includes('launchpad')) {
     if (!wallet.address) { openConnect(); return; }
     let bridgePrepay: { chain: string; dropId: string; eids: number[]; tx: string } | undefined;
@@ -359,13 +408,30 @@ app.addEventListener('click', e => {
   const sa = (e.target as HTMLElement).closest('[data-solact]') as HTMLElement | null;
   if (sa) { e.preventDefault(); if (sa.dataset.solact === 'disconnect') { st.solCreator = ''; save(); render(); return; }
     import('./solwallet').then(m => m.connectSol(sa.dataset.solw!)).then(pk => { st.solCreator = pk.toBase58(); msg = ''; save(); render(); }).catch(x => { msg = x?.message || String(x); msgCls = 'err'; render(); }); return; }
-  const t = e.target as HTMLElement; const el = t.closest('[data-act],[data-go],[data-rmph]') as HTMLElement | null; if (!el) return;
+  const rm = (e.target as HTMLElement).closest('[data-hsrm]') as HTMLElement | null;
+  if (rm) { e.preventDefault(); const [i, j] = rm.dataset.hsrm!.split(':').map(Number); const p = st.phases[i]; p.holderSources = (p.holderSources || []).filter((_, k) => k !== j); save(); render(); return; }
+  const t2 = e.target as HTMLElement; const el = t2.closest('[data-act],[data-go],[data-rmph]') as HTMLElement | null; if (!el) return;
   if (el.dataset.go) { st.step = +el.dataset.go; msg = ''; save(); render(); return; }
   if (el.dataset.rmph) { st.phases.splice(+el.dataset.rmph, 1); save(); render(); return; }
   const a = el.dataset.act;
   if (a === 'next') { const er = validate(st.step); if (er) { msg = er; msgCls = 'err'; render(); return; } st.step++; msg = ''; save(); render(); window.scrollTo(0, 0); }
   if (a === 'back') { st.step--; msg = ''; save(); render(); }
   if (a === 'addph') { st.phases.push({ name: 'Public', kind: 'public', start: st.phases[st.phases.length - 1]?.end || iso(Date.now() + 86400e3), end: '', price: '0.003', maxPerWallet: '10', allowlist: '' }); save(); render(); }
+  if (a === 'hsadd') { const i = +el.dataset.i!; const slug = (app.querySelector(`[data-hsslug="${i}"]`) as HTMLSelectElement)?.value; const min = Math.max(1, parseInt((app.querySelector(`[data-hsmin="${i}"]`) as HTMLInputElement)?.value || '1') || 1); const p = st.phases[i]; if (!slug) { msg = 'Pick a MultiSea collection.'; msgCls = 'err'; render(); return; } p.holderSources = p.holderSources || []; if (p.holderSources.some(s => s.slug === slug)) { msg = 'That collection is already on this phase.'; msgCls = 'err'; render(); return; } p.holderSources.push({ slug, min }); p.autoHolders = true; save(); render(); }
+  if (a === 'hsaddext') { const i = +el.dataset.i!; const chain = (app.querySelector(`[data-hschain="${i}"]`) as HTMLSelectElement)?.value; const address = ((app.querySelector(`[data-hsaddr="${i}"]`) as HTMLInputElement)?.value || '').trim(); const min = Math.max(1, parseInt((app.querySelector(`[data-hsmin="${i}"]`) as HTMLInputElement)?.value || '1') || 1); const p = st.phases[i];
+    if (chain === 'solana') { if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) { msg = 'Paste a Solana collection or mint address.'; msgCls = 'err'; render(); return; } }
+    else if (!/^0x[0-9a-fA-F]{40}$/.test(address)) { msg = 'Paste a contract address.'; msgCls = 'err'; render(); return; }
+    p.holderSources = p.holderSources || []; p.holderSources.push(chain === 'solana' ? { chain, address, min } : { chain, address: address.toLowerCase(), min }); p.autoHolders = true; save(); render(); }
+  if (a === 'hsunfreeze') { const p = st.phases[+el.dataset.i!]; p.holderFrozen = false; save(); render(); }
+  if (a === 'hssnap') {
+    const i = +el.dataset.i!; const p = st.phases[i];
+    if (!p.holderSources?.length) { msg = 'Add a collection first.'; msgCls = 'err'; render(); return; }
+    hsBusy = i; msg = ''; render();
+    snapshotHolders({ sources: p.holderSources, includeLinked: p.includeLinked !== false, includeSolana: solOn() }).then(snap => {
+      p.allowlist = snap.addresses.join('\n'); p.holderNote = snapNote(snap) + (snap.warning ? ' · ' + snap.warning : '') + (snap.notes?.length ? ' · ' + snap.notes.join(' ') : ''); p.holderFrozen = false;
+      msg = p.holderNote; msgCls = snap.truncated || snap.notes?.length ? 'err' : 'ok'; hsBusy = -1; save(); render();
+    }).catch(er => { msg = 'Holder snapshot failed: ' + (er?.message || er); msgCls = 'err'; hsBusy = -1; render(); });
+  }
   if (a === 'submit') submit();
   if (a === 'csvtpl') downloadTemplate();
   if (a === 'clrmedia') { clearMedia(); render(); }

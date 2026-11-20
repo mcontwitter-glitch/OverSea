@@ -10,6 +10,7 @@ import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeOffers } from './offers.js';
 import { makeGrowth } from './growth.js';
 import { makeLaunchpad } from './launchpad.js';
+import { makeHolderAllow } from './holderallow.js';
 import { verifySolanaSetup } from './solswitch.js';
 import { makeBridgeAuto } from './bridgeauto.js';
 import { makeBtcRoutes } from './btc.js';
@@ -255,8 +256,8 @@ const TCH = Object.fromEntries(Object.entries(LPT0.chains).map(([k, c]) => [k, {
 const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
   return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
 const launchpad = env => env?.LP_NETWORK === 'testnet'
-  ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet }))
-  : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr) }));
+  ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet, resnapAuto }))
+  : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr), resnapAuto }));
 let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto());
 // EVM message check shared with SIWE: EOA first, then ERC-1271 smart wallets on each chain.
 async function verifyEvmMessage(address, message, signature) {
@@ -265,6 +266,8 @@ async function verifyEvmMessage(address, message, signature) {
   return false;
 }
 let _wl; const walletLink = () => (_wl ??= makeWalletLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage }));
+let _ha; const holderAllow = () => (_ha ??= makeHolderAllow({ CFG, chains, lc, bad, ADDR, rpcFanout, LP, getCollection, walletLink: walletLink() }));
+const resnapAuto = (env, d) => holderAllow().resnapDrop(env, d);
 let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage, wl: walletLink() }));
 let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch, wl: walletLink() }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
@@ -299,6 +302,10 @@ async function handle(req, env, url, ctx) {
     if (M === 'GET' && p[2] === 'status') return bridgeAuto().status(env);
     if (M === 'POST' && p[2] === 'run') return { results: await bridgeAuto().run(env) };
     if (M === 'POST' && p[2] === 'retry' && p[3]) { const j = await bridgeAuto().retry(env, p[3]); if (!j) bad('no job', 404); return { job: j.step }; }
+  }
+  if (p[0] === 'launchpad' && (p[1] === 'holder-allowlist' || p[1] === 'holder-collections')) {
+    if (M === 'POST' && limited('ha:' + (req.headers.get('cf-connecting-ip') || 'local'), 20)) bad('rate limited', 429);
+    const h = await holderAllow().handle(req, env, url, p, M, body); if (h !== undefined) return h;
   }
   { const l = await launchpad(env).handle(req, env, url, p, M, body); if (l !== undefined) return l; }
 

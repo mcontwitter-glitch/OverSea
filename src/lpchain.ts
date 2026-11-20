@@ -147,3 +147,10 @@ export async function revealOn(k: string, addr: Address, uri: string, onTx: (h: 
   const hash = await w.writeContract({ ...sim.request, chain: vchain(k), account: wallet.address as Address }); onTx(hash);
   const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('reveal transaction reverted');
 }
+
+export async function setPhasesOn(k: string, addr: Address, data: `0x${string}`, onTx: (h: string) => void) {
+  const pub = readClient(k); const w = await walletOn(k);
+  const hash = await w.sendTransaction({ to: addr, data, chain: vchain(k), account: wallet.address as Address }); onTx(hash);
+  const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('setPhases transaction reverted');
+}
+
