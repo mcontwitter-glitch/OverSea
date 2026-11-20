@@ -39,3 +39,13 @@ crons = ["*/15 * * * *"]
 
 [limits]
 cpu_ms = 1000
+
+# Flood cap: ~200 req/s per IP (2000 per 10s). WAF rate-limit rules are not available on this
+# zone/token (Free plan; token has worker + zone read/settings only), so this Workers binding
+# is the enforcement point. Applied first in fetch().
+[[unsafe.bindings]]
+name = "FLOOD"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 2000, period = 10 }
+

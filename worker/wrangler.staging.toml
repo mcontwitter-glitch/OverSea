@@ -20,3 +20,10 @@ SIWE_DOMAINS = "localhost:4300"
 # admin wallet + the testnet deployer (staging only, so a scripted smoke test can approve its own test drop)
 ADMIN_ADDRESSES = "0xca89ae48a5c61d13e78236daa4ac29ee588ea475,0x0f84abc1ce26fca7ed8c733603bd91a88032be4f"
 STATIC_EDITORS = '{}'
+
+[[unsafe.bindings]]
+name = "FLOOD"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 2000, period = 10 }
+

@@ -23,6 +23,7 @@ import { makeActivity } from './activity.js';
 import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
+import { edgeTtl, edgeCacheKey, floodBlock } from './flood.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -647,20 +648,34 @@ export default {
     if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
   },
   async fetch(req, env, ctx) {
-    const url = new URL(req.url); const ch = corsHeaders(req, env);
-    // Public marketplace metadata/images (solmeta.js): any origin, no per-IP limit (edge-cached, immutable; ME's CDN fetches in bursts).
+    const url = new URL(req.url); const ch = corsHeaders(req, env); const H = ch || {};
+    // Flood cap first (~200 req/s per IP via the FLOOD ratelimit binding). CORS headers stay on 429.
+    const blocked = await floodBlock(env, req, H); if (blocked) return blocked;
+    const ip = req.headers.get('cf-connecting-ip') || 'local';
+    // Public marketplace metadata/images (solmeta.js): any origin, no per-minute IP budget (edge-cached, immutable; ME's CDN fetches in bursts). Still counted in FLOOD.
     if (url.pathname.startsWith('/sol/meta/') || url.pathname.startsWith('/sol/img/')) { const r = await solMeta()(req, env, url, ctx); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
-    const H = ch || {};
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
-    const ip = req.headers.get('cf-connecting-ip') || 'local';
     // Separate buckets: RPC/media traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
     const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/');
-    if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', ...H } });
+    if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '10', ...H } });
+    const ttl = edgeTtl(url, req);
+    const cache = globalThis.caches?.default;
+    if (ttl && cache) {
+      const hit = await cache.match(edgeCacheKey(url)).catch(() => null);
+      if (hit) { const r = new Response(hit.body, hit); r.headers.set('cache-control', `public, max-age=${ttl}`); for (const [k, v] of Object.entries(H)) r.headers.set(k, v); return r; }
+    }
     try {
       const out = await handle(req, env, url, ctx);
-      if (out instanceof Response) { for (const [k, v] of Object.entries(H)) out.headers.set(k, v); return out; }
-      return new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json', ...H } });
+      const res = out instanceof Response ? out : new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json' } });
+      for (const [k, v] of Object.entries(H)) res.headers.set(k, v);
+      if (ttl && res.ok && !res.headers.has('cache-control')) res.headers.set('cache-control', `public, max-age=${ttl}`);
+      if (ttl && res.ok && cache) {
+        const store = new Response(res.clone().body, { headers: { 'content-type': res.headers.get('content-type') || 'application/json', 'cache-control': `public, max-age=${ttl}`, 'x-ms-cached-at': String(Date.now()) } });
+        const put = cache.put(edgeCacheKey(url), store).catch(() => {});
+        if (ctx?.waitUntil) ctx.waitUntil(put); else await put;
+      }
+      return res;
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
       return new Response(JSON.stringify({ error: e instanceof HttpError ? e.message : 'internal', ...(e.extra || {}), ...(status === 500 ? { message: String(e).slice(0, 200) } : {}) }), { status, headers: { 'content-type': 'application/json', ...H } });
