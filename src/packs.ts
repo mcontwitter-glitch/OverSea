@@ -158,6 +158,12 @@ export function packFactoryOn(k: string): Address | null {
   return (LP as any).packDrops?.factories?.[k] || null;
 }
 
+/** True once at least one chain has a pack factory address in config. */
+export function packFactoriesConfigured(): boolean {
+  const fac = (LP as any).packDrops?.factories || {};
+  return Object.values(fac).some((a: any) => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a) && a.toLowerCase() !== zeroAddress);
+}
+
 const HUB = (LP as any).hubChain || 'base';
 const LZ_BUF_NUM = 13n;
 const LZ_BUF_DEN = 10n; // +30% safety buffer on the hub return-path drop, same as omni mints
@@ -307,6 +313,14 @@ export function packMintBox(d: Drop, chain: string, _phaseId: number, qty: numbe
 export async function myPacksPage() {
   const app = document.getElementById('app')!;
   document.title = 'My packs · MultiSea';
+  if (!packFactoriesConfigured()) {
+    app.innerHTML = `${navHtml('launchpad')}<main class="page ld"><h1>My packs</h1>
+      <div class="fcard"><div class="gh">Card packs: Coming soon</div>
+        <p class="mut">Sealed packs you buy will show here to open.</p></div>
+    </main>`;
+    bindNav();
+    return;
+  }
   let busy = '';
   let pulled: { name?: string; image?: string; rarity?: string }[] = [];
   let msg = '';
