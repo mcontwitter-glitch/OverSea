@@ -8,6 +8,7 @@ import { openFounder, isFounder, founderBtn } from './founder';
 import { logo } from './gx';
 import { parseAbi, type Hex } from 'viem';
 import type { LiveStats } from './liveowners';
+import { imageSrc } from './datauri';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; openseaSlug: string | null; explorer?: string }>;
 const slug = location.pathname.split('/')[2];
@@ -27,7 +28,7 @@ function render() {
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${listings.length}</b><span>Listings</span></div>${(() => { const sup = v.reduce((a, x) => a + (x.total_supply || 0), 0) || col.supply || 0; return mcapStatHtml(mcapUsd(fl?.price, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
   <div class="chips dchips">${listings.length ? '<button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button>' : ''}${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>
-  <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${it.image ? `<img src="${esc(it.image)}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
+  <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${imageSrc(it.image) ? `<img src="${esc(imageSrc(it.image))}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
   ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}${chainsBlock()}</div>`;
 }
 function isLiveCountsCol() { return !!(col?.escrow?.length || col?.source === 'launchpad' || col?.mode === 'multichain'); }

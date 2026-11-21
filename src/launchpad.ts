@@ -6,7 +6,8 @@ import { shareBtnsFor } from './share';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures, API } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { gasPrice } from './txgas';
-import { LP_LIVE, factoryOn } from './lpchain';
+import { LP_LIVE, factoryOn, factoryForDrop } from './lpchain';
+import { readProgress, writeBatch, finalizeOn, planBatches, mimeOf, fmtBytes, attrsJson, type ArtRow, ONCHAIN_ACCEPT, ONCHAIN_MAX } from './onchainart';
 import { SOLANA_ON, SOL_SOON, solSoonChip, onSolanaFlag } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
@@ -37,7 +38,7 @@ let remote: Drop[] = [];
 const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries((d.deployments || []).map((x: any) => [x.chain, x.address])), raw: d, mode: d.mode === 'multichain' ? 'multichain' : d.mode === 'ordinals' ? 'ordinals' : 'single', ordinals: d.ordinals, slug: d.slug, name: d.name, symbol: d.symbol, creator: d.submitter || '', description: d.description || '', website: d.website, x: d.x, status: d.status,
   // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
   deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
-  chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
+  chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal, storage: d.storage || d.metadataHost, metadataHost: d.metadataHost || d.storage, onchainArt: d.onchainArt, onchainStore: d.onchainArt?.store || d.onchainStore,
   nftType: d.nftType, packs: d.packs, cardAddresses: Object.fromEntries((d.deployments || []).filter((x: any) => x.cards).map((x: any) => [x.chain, x.cards])),
   phases: (d.phases || []).map((p: any) => ({ ...p, price: Number(BigInt(p.price)) / 1e18, prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, Number(BigInt(v as string)) / 1e18])) : undefined })), img: d.logo ? API + d.logo : CFG.collections.some(c => c.slug === d.slug) ? `/img/${d.slug}/s/1.webp` : '/brand/icon-128.webp', art: d.banner ? [API + d.banner] : CFG.collections.some(c => c.slug === d.slug) ? [1, 2, 3, 4, 5, 6, 7, 8].map(i => `/img/${d.slug}/s/${i}.webp`) : [] });
 // Agent-drop local preview (VITE_AGENT_DROPS=1 only, flag OFF in config): one labeled demo drop, nothing on-chain.
@@ -140,14 +141,17 @@ function mintBox(d: Drop) {
   const dep = isCreator && (undeployed.length || solTodo) ? deployBox(d, [...undeployed.map(c => c.chain), ...(solTodo ? ['solana'] : [])]) : '';
   if (comingSoon(d)) return (dep || `${R.remote && LP_LIVE && !getSession() ? '<div class="fcard small" style="margin-bottom:10px">Creator? <button class="pill" data-act="lsignin">Sign in to deploy</button></div>' : ''}` + `<div class="fcard ldmintbox"><div class="gh">Mint</div><span class="ldst soon">Coming soon</span>
    <p class="mut small">This drop is approved. Minting opens once its contract is deployed and verified on-chain.</p>
-   <button class="bbtn" disabled>Minting opens soon</button></div>`) + holderRefreshBox(d);
+   <button class="bbtn" disabled>Minting opens soon</button></div>`) + artBox(d) + holderRefreshBox(d);
   const st = dropState(d); const ai = activePhase(d); const p = d.phases[ai]; const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
   const left = isMulti(d) ? Math.max(0, d.maxSupply - minted(d)) : Math.max(0, c.supply - c.minted); const max = Math.max(1, Math.min(p?.maxPerWallet || MAX_PER_TX, left, MAX_PER_TX));
   if (qty > max) qty = max;
   const al = p?.kind === 'allowlist'; const eligible = !al || (!!wallet.address && (R.remote ? true : !!p.allowlist?.includes(wallet.address.toLowerCase())));
   const real = R.remote && LP_LIVE && !!R.addresses?.[c.chain];
-  if (isPackDrop(d)) return dep + packMintBox(d, c.chain, ai, qty, !!realBusy) + `<p class="mut small" style="margin-top:10px"><a href="/my-packs">Open packs you’ve minted →</a></p>` + holderRefreshBox(d);
+  if (isPackDrop(d)) return dep + packMintBox(d, c.chain, ai, qty, !!realBusy) + `<p class="mut small" style="margin-top:10px"><a href="/my-packs">Open packs you’ve minted →</a></p>` + artBox(d) + holderRefreshBox(d);
+  if (isOnchainDrop(d) && R.addresses) loadArtProg(d);
+  const artReady = !isOnchainDrop(d) || !R.addresses?.[c.chain] || !!artProg[artKey(c.chain, R.addresses[c.chain])]?.finalized;
   const btn = st !== 'live' ? `<button class="bbtn" disabled>${st === 'upcoming' ? 'Not started' : 'Minting ended'}</button>`
+    : isOnchainDrop(d) && !artReady ? `<button class="bbtn" disabled>On-chain art not finalized yet</button>`
     : !eligible ? `<button class="bbtn" disabled>${wallet.address ? 'Not on this allowlist' : 'Connect to check allowlist'}</button>`
     : left <= 0 ? `<button class="bbtn" disabled>Sold out</button>`
     : isMulti(d) && pend && !pend.done ? `<button class="bbtn" disabled><span class="spin"></span> Minting… confirming across chains</button>`
@@ -162,7 +166,7 @@ function mintBox(d: Drop) {
    ${qtyHint(d, c.chain)}${breakdown(d)}` : ''}
    ${btn}
    ${real ? (realMsg ? `<div class="okbox small">${realMsg}</div>` : '') : isMulti(d) && pend ? pendBox(d) : demoMsg ? `<div class="okbox small">${demoMsg}</div>` : ''}
-   ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}${holderRefreshBox(d)}`;
+   ${real ? '<p class="mut small">Real transaction: the price is quoted on-chain, gas is estimated (+25%), then your wallet asks you to sign. MultiSea fee 0.5% is included in the price.</p>' : '<p class="mut small">Demo / testnet stub: this preview never sends a transaction. In production the button simulates the mint, sets an explicit gas limit (+25%), then asks your wallet to sign.</p>'}</div>${dep}${artBox(d)}${holderRefreshBox(d)}`;
 }
 let mine = new Set<string>(); async function loadMine() { mine = new Set(); if (!LP_LIVE || !getSession() || !apiFeatures.includes('launchpad')) return; try { const j = await import('./auth').then(a => a.api('/launchpad/mine', { auth: true })); mine = new Set(j.drops.map((x: any) => x.slug)); } catch {} }
 // Reveal (delayed-reveal drops): creator + on-chain owner only, contract not revealed yet. ?mockreveal on localhost = UI preview.
@@ -196,11 +200,51 @@ const EXPL: Record<string, string> = Object.fromEntries(Object.entries(CFG.chain
 const txLink = (k: string, h: string) => `<a href="${EXPL[k]}/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>`;
 const cn = (k: string) => (k === 'solana' ? 'Solana' : chains[k]?.name || k);
 const txL = (k: string, h: string) => (k === 'solana' ? `<a href="https://solscan.io/tx/${h}" target="_blank" rel="noopener" class="mono">${h.slice(0, 10)}…</a>` : txLink(k, h));
+export const isOnchainDrop = (d: Drop) => d.metadataHost === 'onchain' || d.storage === 'onchain' || !!d.onchainArt || d.raw?.metadataHost === 'onchain' || !!d.raw?.onchainArt;
+let artMsg = ''; let artBusy = ''; let artProg: Record<string, { finalized: boolean; written: number; storeLocal: boolean; flags: boolean[] }> = {};
+let artFiles: File[] = []; let artRows: { tokenID: string; name: string; description: string; file_name: string; attrs: { trait_type: string; value: string }[] }[] = [];
+function artKey(k: string, addr: string) { return k + ':' + addr.toLowerCase(); }
+function loadArtProg(d: Drop) {
+  const R = d as any; if (!isOnchainDrop(d) || !R.addresses) return;
+  for (const c of d.chains) {
+    const addr = R.addresses[c.chain]; if (!addr) continue;
+    const key = artKey(c.chain, addr);
+    if (artProg[key]) continue;
+    artProg[key] = { finalized: false, written: 0, storeLocal: true, flags: [] };
+    readProgress(c.chain, addr, d.maxSupply).then(p => { artProg[key] = p; render(); }).catch(() => {});
+  }
+}
+function artBox(d: Drop) {
+  if (!isOnchainDrop(d) || !getSession() || !mine.has(d.slug)) return '';
+  const R = d as any; const addrs = R.addresses || {};
+  const deployed = d.chains.filter(c => addrs[c.chain]);
+  if (!deployed.length) return '';
+  loadArtProg(d);
+  const home = d.onchainArt?.homeChain || d.raw?.onchainArt?.homeChain || (isMulti(d) ? HUB : d.chains[0]?.chain);
+  const every = (d.onchainArt?.store || d.raw?.onchainArt?.store || d.onchainStore) === 'every';
+  const rows = deployed.map(c => {
+    const p = artProg[artKey(c.chain, addrs[c.chain])] || { finalized: false, written: 0, storeLocal: true, flags: [] };
+    return { c: c.chain, addr: addrs[c.chain], p };
+  });
+  const needLocal = rows.filter(r => r.p.storeLocal && !r.p.finalized);
+  const needRemote = rows.filter(r => !r.p.storeLocal && !r.p.finalized);
+  const allDone = rows.every(r => r.p.finalized);
+  const remaining = (r: typeof rows[0]) => r.p.flags.length ? r.p.flags.map((w, i) => w ? 0 : i + 1).filter(Boolean) : [];
+  return `<div class="fcard" style="margin-top:14px"><div class="gh">On-chain art</div>
+    <p class="mut small">${allDone ? 'Art is finalized. Minting is open on every chain where this is complete.' : every ? 'Write every token on each selected chain, then finalize that chain. Minting on a chain is blocked until that chain is finalized.' : `Art is stored on ${esc(cn(home))} (home chain). Other chains only need a finalize (their tokenURI uses the MultiSea renderer and is not fully on-chain).`}</p>
+    ${rows.map(r => `<p class="small">${esc(cn(r.c))}: ${r.p.finalized ? '<span class="ok">finalized ✓</span>' : r.p.storeLocal ? `${r.p.written} / ${d.maxSupply} written${remaining(r).length ? ` · remaining ${remaining(r).slice(0, 12).join(', ')}${remaining(r).length > 12 ? '…' : ''}` : ''}` : 'pointer chain · finalize when ready'}</p>`).join('')}
+    ${allDone ? '' : `<label class="lmdrop" style="margin-top:8px"><input type="file" class="fin" data-artfiles multiple accept="${ONCHAIN_ACCEPT}"><b>Select images to write</b><span class="mut small">Name them 1.png, 2.svg… or also drop the metadata CSV. 24 KB max. Already-written tokens are skipped if you resume.</span></label>
+      ${artFiles.length ? `<p class="small">${artFiles.length} file(s) selected (${fmtBytes(artFiles.reduce((a, f) => a + f.size, 0))})</p>` : ''}
+      ${needLocal.length ? `<button type="button" class="bbtn sm" data-art="upload" ${artBusy ? 'disabled' : ''}>${artBusy === 'upload' ? '<span class="spin"></span> Uploading…' : 'Upload next batch'}</button>` : ''}
+      ${rows.some(r => !r.p.finalized && (r.p.storeLocal ? r.p.written >= d.maxSupply : true)) ? `<button type="button" class="obtn sm" data-art="finalize" ${artBusy ? 'disabled' : ''}>${artBusy === 'finalize' ? '<span class="spin"></span> Finalizing…' : 'Finalize'}</button>` : ''}
+      ${artMsg ? `<p class="small" style="margin-top:8px">${artMsg}</p>` : ''}`}
+  </div>`;
+}
 function deployBox(d: Drop, todo: string[]) {
-  const ok = todo.filter(k => k === 'solana' || factoryOn(k)).sort((a, b) => (b === HUB ? 1 : 0) - (a === HUB ? 1 : 0) + (a === 'solana' ? 1 : 0) - (b === 'solana' ? 1 : 0)); // Solana last
+  const ok = todo.filter(k => k === 'solana' || factoryForDrop(d, k)).sort((a, b) => (b === HUB ? 1 : 0) - (a === HUB ? 1 : 0) + (a === 'solana' ? 1 : 0) - (b === 'solana' ? 1 : 0)); // Solana last
   return `<div class="fcard ldmintbox" style="margin-top:14px"><div class="gh">Deploy your drop <span class="mut small">you are the creator</span></div>
    <p class="mut small">MultiSea approved this drop. Deploying creates your contract through the MultiSea factory with MultiSea's signed approval; you pay the gas and own the contract.${isMulti(d) ? ' Deploy on every chain (Base, the supply hub, first).' : ''}</p>
-   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(cn(depBusy))}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(cn(ok[0]))}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(cn(k))).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : '')}
+   ${!getSession() ? '<button class="bbtn sm" data-act="lsignin">Sign in to deploy</button>' : (ok.length ? `<button class="bbtn sm" data-deploy="${ok.join(',')}" ${depBusy ? 'disabled' : ''} style="margin:4px 4px 0 0">${depBusy ? `<span class="spin"></span> Deploying on ${esc(cn(depBusy))}…` : ok.length > 1 ? 'Deploy on all chains' : `Deploy on ${esc(cn(ok[0]))}`}</button>${ok.length > 1 ? `<p class="mut small" style="margin-top:6px">${ok.map(k => esc(cn(k))).join(' → ')}. Your wallet asks you to confirm once per chain.</p>` : ''}` : (isOnchainDrop(d) && !todo.every(k => k === 'solana' || factoryForDrop(d, k)) ? '<p class="mut small">On-chain art factories are not deployed yet. MultiSea enables them from /deploy-onchain-factories, then records the addresses in config.</p>' : ''))}
    ${ok.includes('solana') && getSession() ? `<p class="small" style="margin-top:8px">Solana wallet (the one you entered when creating the drop): ${solAddr ? `<span class="mono">${esc(solAddr.slice(0, 4))}…${esc(solAddr.slice(-4))}</span>` : '<button type="button" class="obtn sm" data-solact="connect" data-solw="phantom">Phantom</button> <button type="button" class="obtn sm" data-solact="connect" data-solw="solflare">Solflare</button>'}</p>` : ''}
    ${solSoon(d) ? `<p class="mut small" style="margin-top:6px"><img class="cl" src="/logos/solana.svg" alt=""> ${SOL_SOON} (deploys last)</p>` : ''}
    ${depMsg ? `<p class="small" style="margin-top:8px">${depMsg}</p>` : ''}</div>`;
@@ -447,7 +491,7 @@ app.addEventListener('click', e => {
   if (sa && !t.closest('[data-solcard]')) { e.preventDefault(); import('./solwallet').then(m => m.connectSol(sa.dataset.solw!)).then(pk => { solAddr = pk.toBase58(); render(); }).catch(x => { depMsg = `<span class="err">${esc(x?.message || x)}</span>`; render(); }); return; }
   const ag = t.closest('[data-agfeed],[data-agatk],[data-agdo],[data-agcancel],[data-agload],[data-agtrib],[data-agtr],[data-agclaim],[data-agadd]') as HTMLElement | null;
   if (ag) { const d = findDrop(slug); if (d) (ag.hasAttribute('data-agclaim') || ag.hasAttribute('data-agadd') ? onGrowth(d, ag) : onAgent(d, ag)); return; }
-  const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst],[data-deploy]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
+  const el = t.closest('[data-tab],[data-ch],[data-q],[data-act],[data-move],[data-dst],[data-deploy],[data-art]') as HTMLElement | null; if (!el) { if (t.classList.contains('ldmodal')) { moveId = 0; moveMsg = ''; render(); } return; }
   if (el.dataset.tab) { tab = el.dataset.tab as any; render(); return; }
   const d = findDrop(slug); if (!d) return;
   if (el.dataset.move) { moveId = +el.dataset.move; moveDst = ''; moveMsg = ''; const h = held.find(x => x.id === moveId); if (h && gp[h.active] === undefined) loadGas({ ...d, chains: [{ chain: h.active, supply: 0, minted: 0 }] }).then(render); render(); return; }
@@ -507,6 +551,58 @@ app.addEventListener('click', e => {
     return;
   }
   if (el.dataset.act === 'lsignin') { (wallet.address ? signIn('Sign in to MultiSea to deploy your drop') : Promise.resolve(openConnect()).then(() => { throw new Error('Connect your wallet, then sign in.'); })).then(loadMine).then(render).catch(e => { depMsg = `<span class="err">${esc(e?.message || e)}</span>`; render(); }); return; }
+  if (el.dataset.art === 'upload' || el.dataset.art === 'finalize') {
+    const R = d as any; const addrs = R.addresses || {};
+    (async () => {
+      if (el.dataset.art === 'finalize') {
+        artBusy = 'finalize'; artMsg = ''; render();
+        for (const c of d.chains) {
+          const addr = addrs[c.chain]; if (!addr) continue;
+          const key = artKey(c.chain, addr);
+          const pr = artProg[key] || await readProgress(c.chain, addr, d.maxSupply);
+          artProg[key] = pr;
+          if (pr.finalized) continue;
+          if (pr.storeLocal && pr.written < d.maxSupply) continue;
+          await finalizeOn(c.chain, addr, h => { artMsg = `Finalize sent on ${esc(cn(c.chain))}: ${txLink(c.chain, h)}`; render(); });
+          artProg[key] = await readProgress(c.chain, addr, d.maxSupply);
+        }
+        artMsg = (artMsg ? artMsg + ' · ' : '') + 'Finalize complete on every chain that was ready.';
+        return;
+      }
+      artBusy = 'upload'; artMsg = ''; render();
+      if (!artFiles.length) throw new Error('Select image files first (named 1.png, 2.svg… or listed in a metadata CSV).');
+      const home = d.onchainArt?.homeChain || d.raw?.onchainArt?.homeChain || (isMulti(d) ? HUB : d.chains[0]?.chain);
+      const targets = d.chains.filter(c => addrs[c.chain]);
+      for (const c of targets) {
+        const addr = addrs[c.chain];
+        const key = artKey(c.chain, addr);
+        const pr = await readProgress(c.chain, addr, d.maxSupply);
+        artProg[key] = pr;
+        if (pr.finalized || !pr.storeLocal) continue;
+        const flags = pr.flags.length ? pr.flags : Array(d.maxSupply).fill(false);
+        const recOf = new Map(artRows.map(r => [r.file_name, r]));
+        const rows: ArtRow[] = [];
+        for (const f of artFiles) {
+          const mime = mimeOf(f); if (mime == null) throw new Error(f.name + ' must be SVG, PNG, WebP, or GIF.');
+          if (f.size > ONCHAIN_MAX) throw new Error(f.name + ' is over 24 KB.');
+          const rec = recOf.get(f.name);
+          const id = rec ? +rec.tokenID : +(f.name.match(/(\d+)\.(svg|png|webp|gif)$/i)?.[1] || 0);
+          if (!id || id > d.maxSupply) throw new Error('Name ' + f.name + ' as tokenID.ext (e.g. 1.png) or include it in the metadata CSV.');
+          if (flags[id - 1]) continue;
+          rows.push({ id, name: rec?.name || `${d.name} #${id}`, description: rec?.description || '', attributes: attrsJson(rec?.attrs || []), mime, bytes: new Uint8Array(await f.arrayBuffer()), size: f.size, fileName: f.name });
+        }
+        const batches = planBatches(rows.sort((a, b) => a.id - b.id));
+        if (!batches.length) { artMsg = (artMsg ? artMsg + ' · ' : '') + esc(cn(c.chain)) + ': nothing new to write (already on-chain or no matching files).'; continue; }
+        for (let i = 0; i < batches.length; i++) {
+          artMsg = `${esc(cn(c.chain))}: uploading batch ${i + 1} of ${batches.length} (${batches[i].length} image${batches[i].length > 1 ? 's' : ''})…`; render();
+          await writeBatch(c.chain, addr, batches[i], h => { artMsg = `${esc(cn(c.chain))} batch ${i + 1}/${batches.length} sent: ${txLink(c.chain, h)}`; render(); });
+        }
+        artProg[key] = await readProgress(c.chain, addr, d.maxSupply);
+        artMsg = `${esc(cn(c.chain))}: ${artProg[key].written} / ${d.maxSupply} written.`;
+      }
+    })().catch(e => { artMsg = `<span class="err">${esc(e?.shortMessage || e?.message || e)}</span>`; }).finally(() => { artBusy = ''; render(); });
+    return;
+  }
   if (el.dataset.deploy) { const list = el.dataset.deploy.split(','); const done: string[] = []; depMsg = '';
     const one = (k: string) => k === 'solana' ? import('./solui').then(m => m.deploySolanaDrop(d.slug, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}Solana transaction sent: ${txL(k, h)}`; render(); })) : (isAgentDrop(d) ? import('./agentdrop').then(m => m.deployAgentOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })) : import('./lpchain').then(m => m.deployOn(d.slug, k, h => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')}. ` : ''}${esc(cn(k))} transaction sent: ${txL(k, h)}`; render(); })));
     (async () => { for (const k of list) { depBusy = k; render(); const a = await one(k); if (k !== 'solana') (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; done.push(k); }
@@ -631,6 +727,22 @@ app.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.name === 'pay') { pay = t.value as any; render(); }
   if (t.dataset.qin != null) { qty = Math.max(1, Math.floor(+t.value || 1)); render(); }
+  if (t.dataset.artfiles != null && t.files?.length) {
+    const fs = Array.from(t.files);
+    const csv = fs.find(f => /\.csv$/i.test(f.name) || f.type === 'text/csv');
+    artFiles = fs.filter(f => f !== csv && f.size <= ONCHAIN_MAX && !!mimeOf(f));
+    const skipped = fs.filter(f => f !== csv && !artFiles.includes(f));
+    artMsg = skipped.length ? `Skipped ${skipped.length} file(s) over 24 KB or not SVG/PNG/WebP/GIF.` : '';
+    if (csv) csv.text().then(txt => {
+      const lines = txt.replace(/^\ufeff/, '').split(/\r?\n/).filter(l => l.trim());
+      const head = lines.shift()?.split(',').map(x => x.trim()) || [];
+      const iId = head.findIndex(h => /^tokenid$/i.test(h)), iName = head.findIndex(h => /^name$/i.test(h));
+      const iDesc = head.findIndex(h => /^description$/i.test(h)), iFile = head.findIndex(h => /^file_name$/i.test(h));
+      artRows = lines.map(line => { const c = line.split(','); return { tokenID: (c[iId] || '').trim(), name: (c[iName] || '').trim(), description: (c[iDesc] || '').trim(), file_name: (c[iFile] || '').trim(), attrs: [] }; }).filter(r => r.tokenID && r.file_name);
+      render();
+    });
+    else render();
+  }
   if (t.dataset.trcsv != null && t.files?.[0]) { const d = findDrop(slug); t.files[0].text().then(async txt => { const lm = await import('./lpmedia'); lm.loadCsv(t.files![0].name, txt);
     const e = lm.media.csvErr || encodeTraits(lm.media.rows); lm.media.rows = [];
     if (typeof e === 'string' || !e) { trMsg = `<span class="err">${esc(e || 'No trait columns in that CSV.')}</span>`; } else { trEnc = e; if (d) saveTraits(d.slug, e); trMsg = ''; } render(); }); }

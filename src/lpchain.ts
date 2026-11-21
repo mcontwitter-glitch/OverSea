@@ -12,6 +12,8 @@ import { api } from './auth';
 const LP = LPC as any;
 export const LP_LIVE: boolean = !!LP.mainnet?.deployed && !!LP.mainnet?.dropApprovals;
 export const factoryOn = (k: string): Address | null => LP.factories?.[k] || null;
+export const onchainFactoryOn = (k: string): Address | null => LP.onchainDrops?.factories?.[k] || null;
+export const factoryForDrop = (d: { metadataHost?: string; storage?: string; onchainArt?: unknown }, k: string): Address | null => (d.metadataHost === 'onchain' || d.storage === 'onchain' || d.onchainArt) ? onchainFactoryOn(k) : factoryOn(k);
 export const escrowOn = (k: string): Address | null => LP.omniEscrows?.[k] || null;
 export const HUB: string = LP.hubChain;
 const F = ABI.factory as Abi, D = ABI.drop as Abi, O = ABI.omni as Abi;
@@ -57,11 +59,23 @@ export async function signApprovals(slug: string, log: (s: string) => void) {
 }
 
 /** Creator: deploy the drop contract on one chain. Returns the new drop address (already reported to the Worker). */
+const ONCHAIN_EXTRA = [{ name: 'storeLocal', type: 'bool' }, { name: 'rendererBase', type: 'string' }];
+function factoryAbi(onchain: boolean, multi: boolean): Abi {
+  if (!onchain) return F;
+  const fn = multi ? 'createOmniDrop' : 'createDrop';
+  const item = structuredClone((F as any[]).find(x => x.name === fn));
+  item.inputs[0].components = [...item.inputs[0].components, ...ONCHAIN_EXTRA];
+  const ev = (F as any[]).filter(x => x.type === 'event');
+  return [item, ...ev] as Abi;
+}
+
 export async function deployOn(slug: string, k: string, onTx: (h: string) => void): Promise<Address> {
   const a = await api('/launchpad/approval/' + slug, { auth: true, body: { chain: k } });
   if (a.kind === 'packs' || a.mode === 'packs') return deployPackOn(slug, k, a, onTx);
+  const onchain = a.kind === 'onchain';
   const multi = a.mode === 'multichain'; const fn = multi ? 'createOmniDrop' : 'createDrop';
-  const item = (F as any[]).find(x => x.name === fn); const params = fromAbi(item.inputs[0], a.params);
+  const abi = factoryAbi(onchain, multi);
+  const item = (abi as any[]).find(x => x.name === fn); const params = fromAbi(item.inputs[0], a.params);
   const args = [params, multi ? a.collectionId : a.salt, BigInt(a.deadline), a.signature] as const;
   const pub = readClient(k);
   if (multi && (await pub.readContract({ address: a.factory, abi: FX, functionName: 'usedSalt', args: [a.collectionId] }))) { // already created (e.g. an earlier tap landed but was not recorded)
@@ -72,14 +86,14 @@ export async function deployOn(slug: string, k: string, onTx: (h: string) => voi
     return drop;
   }
   const w = await walletOn(k);
-  const sim = await pub.simulateContract({ address: a.factory, abi: F, functionName: fn, args, account: wallet.address as Address });
-  const gas = await pub.estimateContractGas({ address: a.factory, abi: F, functionName: fn, args, account: wallet.address as Address });
+  const sim = await pub.simulateContract({ address: a.factory, abi, functionName: fn, args, account: wallet.address as Address });
+  const gas = await pub.estimateContractGas({ address: a.factory, abi, functionName: fn, args, account: wallet.address as Address });
   const hash = await w.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address });
   onTx(hash);
   const r = await pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success') throw new Error('deploy transaction reverted');
   let drop: Address | null = null;
-  for (const l of r.logs) { if (l.address.toLowerCase() !== a.factory.toLowerCase()) continue; try { const e: any = decodeEventLog({ abi: F, data: l.data, topics: l.topics }); if (e.eventName === 'DropCreated' || e.eventName === 'OmniDropCreated') drop = e.args.drop; } catch {} }
+  for (const l of r.logs) { if (l.address.toLowerCase() !== a.factory.toLowerCase()) continue; try { const e: any = decodeEventLog({ abi, data: l.data, topics: l.topics }); if (e.eventName === 'DropCreated' || e.eventName === 'OmniDropCreated') drop = e.args.drop; } catch {} }
   if (!drop) throw new Error('no DropCreated event in the receipt');
   await api('/launchpad/deployed/' + slug, { auth: true, body: { chain: k, address: drop } });
   return drop;
@@ -100,14 +114,14 @@ export async function quote(multi: boolean, k: string, drop: Address, phaseId: n
   return { value: price + lz, price, lz, hubValue };
 }
 // Contract errors, so a revert reads as a reason instead of a raw selector.
-const MINT_ERR = parseAbi(['error IsPaused()', 'error PhaseNotActive()', 'error NotAllowlisted()', 'error WalletLimit()', 'error PhaseSoldOut()', 'error PhaseSoldOut(uint256 left)', 'error SoldOut()', 'error SoldOut(uint256 left)', 'error WrongPayment(uint256 required)', 'error BadParams()']);
+const MINT_ERR = parseAbi(['error IsPaused()', 'error PhaseNotActive()', 'error NotAllowlisted()', 'error WalletLimit()', 'error PhaseSoldOut()', 'error PhaseSoldOut(uint256 left)', 'error SoldOut()', 'error SoldOut(uint256 left)', 'error WrongPayment(uint256 required)', 'error BadParams()', 'error NotFinalized()']);
 function mintError(e: any, qty: number): Error {
   const r = e?.walk?.((x: any) => x?.data?.errorName) || e?.cause; const n = r?.data?.errorName; const a = r?.data?.args;
   const msg: Record<string, string> = {
     WalletLimit: `That is over this wallet's mint limit for the phase (it counts mints on every chain). Lower the quantity.`,
     SoldOut: a?.[0] ? `Only ${a[0]} left. Lower the quantity.` : 'Sold out.', PhaseSoldOut: a?.[0] ? `Only ${a[0]} left in this phase. Lower the quantity.` : 'This phase is sold out.',
     PhaseNotActive: "This mint phase isn't open right now.", NotAllowlisted: 'This wallet is not on the allowlist.', IsPaused: 'Minting is paused.',
-    WrongPayment: 'The price changed. Refresh the page and try again.', BadParams: qty > 50 ? 'At most 50 per transaction.' : 'The mint was rejected. Refresh the page and try again.',
+    WrongPayment: 'The price changed. Refresh the page and try again.', NotFinalized: 'The creator has not finished uploading on-chain art yet.', BadParams: qty > 50 ? 'At most 50 per transaction.' : 'The mint was rejected. Refresh the page and try again.',
   };
   return n && msg[n] ? new Error(msg[n]) : e;
 }

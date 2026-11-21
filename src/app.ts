@@ -18,6 +18,7 @@ else if (path === '/offer-test' && import.meta.env.VITE_OFFERS_TEST === '1') imp
 else if (path === '/launchpad/testnet' && import.meta.env.VITE_LP_TESTNET === '1') import('./launchtestnet'); // staging build only
 else if (path === '/my-packs' || path === '/packs') import('./packs').then(m => m.myPacksPage());
 else if (path === '/deploy-pack-factories') import('./packdeploy');
+else if (path === '/deploy-onchain-factories') import('./onchaindeploy');
 else if (path === '/launchpad' || /^\/launchpad\/[a-z0-9-]{3,40}$/.test(path)) import('./launchpad');
 else if (/^\/r\/[0-9a-fA-F]{8}$/.test(path)) { const code = path.slice(3).toLowerCase(); if (!localStorage.getItem('multisea-ref')) localStorage.setItem('multisea-ref', JSON.stringify({ code, at: Date.now() })); location.replace('/?ref=' + code); }
 else if (path === '/referrals') import('./referrals');

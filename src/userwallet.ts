@@ -12,6 +12,7 @@ import { ownedNfts, insightOn, walletTransfers, collectionTransfers, type OwnedN
 import { sol, onSol, shortSol, signSolMessage } from './solconnect';
 import { openSolConnect } from './solmenu';
 import { profileWallets, authorizeLink, finishLink, unlinkWallet, MAX_LINKED, type ProfileWallets } from './walletlinks';
+import { imageSrc } from './datauri';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
 const ERC1155 = parseAbi(['function safeTransferFrom(address,address,uint256,uint256,bytes)', 'function balanceOf(address,uint256) view returns (uint256)']);
@@ -20,7 +21,7 @@ type Bal = { k: string; bal: ChainBal; usd: number | null };
 type Asset = { key: string; k: string; kind: 'native' | 'erc20' | 'nft'; label: string; bal: bigint; decimals: number; token?: Hex; nft?: Nft };
 type Tx = { to: Hex; value: bigint; data: Hex };
 const fmt = (n: bigint, d = 18) => Number(formatUnits(n, d)).toLocaleString(undefined, { maximumFractionDigits: 6 });
-const imageUrl = (s: string | null) => !s ? '' : s.startsWith('ipfs://') ? 'https://ipfs.filebase.io/ipfs/' + s.slice(7) : /^(https:\/\/|\/img\/|\/media\/)/.test(s) ? (s.startsWith('/media/') ? API + s : s) : '';
+const imageUrl = (s: string | null) => imageSrc(s, API);
 // MultiSea's own collections use the site's thumbnails (animated for Island's), whatever image the indexer returned.
 const OWN = new Map(CFG.collections.flatMap(c => c.deployments.map(d => [d.chain + ':' + d.address.toLowerCase(), c] as const)));
 const ownCol = (n: Nft) => { const c = OWN.get(n.chain + ':' + String(n.contract).toLowerCase()); const id = Number(n.id); return c && Number.isInteger(id) && id >= c.idStart && id <= c.idEnd ? { c, id } : null; };

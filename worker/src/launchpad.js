@@ -35,6 +35,21 @@ export const OMNI_T = [{ type: 'tuple', components: [
   { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
   { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' },
   { name: 'copyMode', type: 'uint8' }, { name: 'batchK', type: 'uint16' }, { name: 'batchT', type: 'uint32' }] }];
+export const ONCHAIN_INIT_T = [{ type: 'tuple', components: [
+  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' },
+  { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' }, { name: 'creatorReserve', type: 'uint32' },
+  { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
+  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'storeLocal', type: 'bool' }, { name: 'rendererBase', type: 'string' }] }];
+export const ONCHAIN_OMNI_T = [{ type: 'tuple', components: [
+  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' },
+  { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' }, { name: 'maxSupply', type: 'uint32' },
+  { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'baseURI', type: 'string' }, { name: 'preRevealURI', type: 'string' },
+  { name: 'phases', type: 'tuple[]', components: PHASE_T }, { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' },
+  { name: 'copyMode', type: 'uint8' }, { name: 'batchK', type: 'uint16' }, { name: 'batchT', type: 'uint32' },
+  { name: 'storeLocal', type: 'bool' }, { name: 'rendererBase', type: 'string' }] }];
+export const onchainConfigHash = p => keccak256(encodeAbiParameters(ONCHAIN_INIT_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
+export const onchainOmniConfigHash = p => keccak256(encodeAbiParameters(ONCHAIN_OMNI_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
+
 export const OMNI_APPROVAL_TYPES = { OmniDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'collectionId', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const APPROVAL_TYPES = { DropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 const ZERO = '0x0000000000000000000000000000000000000000', ZH = '0x' + '0'.repeat(64);
@@ -222,10 +237,17 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const royaltyBps = int(b.royaltyBps ?? 0, 0, LP.maxRoyaltyBps, 'royalty bps');
     const payout = lc(b.payout || creator); if (!ADDR.test(payout)) bad('payout must be an address');
     const royaltyReceiver = lc(b.royaltyReceiver || payout); if (!ADDR.test(royaltyReceiver)) bad('royalty receiver must be an address');
-    const reveal = b.reveal === 'delayed' ? 'delayed' : 'instant';
-    const baseURI = uri(b.baseURI, 'base URI'), preRevealURI = uri(b.preRevealURI, 'pre-reveal URI');
-    if (!isAgent && reveal === 'instant' && !baseURI) bad('instant reveal needs the final base URI (ipfs://CID/ or ar://TX/)');
-    if (!isAgent && reveal === 'delayed' && !preRevealURI) bad('delayed reveal needs a placeholder URI');
+    const onchain = b.metadataHost === 'onchain' || b.storage === 'onchain';
+    if (onchain) {
+      if (solana) bad('Fully on-chain art is EVM only (not available with Solana)');
+      if (isAgent) bad('Agent drops cannot use fully on-chain art');
+      if (isPack) bad('Card packs cannot use fully on-chain art in this release');
+      if (b.reveal === 'delayed') bad('On-chain art must be uploaded and finalized before minting (no delayed reveal)');
+    }
+    const reveal = onchain ? 'instant' : (b.reveal === 'delayed' ? 'delayed' : 'instant');
+    const baseURI = onchain ? '' : uri(b.baseURI, 'base URI'), preRevealURI = onchain ? '' : uri(b.preRevealURI, 'pre-reveal URI');
+    if (!isAgent && !onchain && reveal === 'instant' && !baseURI) bad('instant reveal needs the final base URI (ipfs://CID/ or ar://TX/)');
+    if (!isAgent && !onchain && reveal === 'delayed' && !preRevealURI) bad('delayed reveal needs a placeholder URI');
     if (preRevealURI && !/^https:\/\//.test(preRevealURI) && !/\.json$/i.test(preRevealURI)) bad('pre-reveal URI must point to one .json file (e.g. ipfs://CID/placeholder.json), not a folder');
     const ph = Array.isArray(b.phases) ? b.phases : []; if (!ph.length || ph.length > LP.maxPhases) bad(`1-${LP.maxPhases} phases`);
     const allowlists = {}; let totalAllow = 0;
@@ -254,7 +276,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       return { name: str(x.name, 40) || (kind === 'allowlist' ? 'Allowlist' : 'Public'), kind, start, end, price, prices, maxPerWallet: int(x.maxPerWallet ?? 0, 0, 1_000_000, 'per-wallet limit'), maxSupply: int(x.maxSupply ?? 0, 0, maxSupply, `phase ${i + 1} max supply (0 = no cap, at most total supply)`), merkleRoot, ...(holderSources ? { holderSources, includeLinked, holderFrozen } : {}) };
     });
     const out = { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
-      mode, copyMode, solana, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
+      mode, copyMode, solana, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: onchain ? 'onchain' : str(b.metadataHost, 20) };
+    if (onchain) out.onchainArt = { store: b.onchainStore === 'every' ? 'every' : 'home', homeChain: mode === 'multichain' ? (LP.hubChain || 'base') : chainsSel[0] };
     if (isAgent) { out.nftType = 'erc463n7'; out.agent = validateAgent(b, out); }
     if (isPack) { if (solana) bad('Card packs are EVM only in this release');
       out.nftType = 'packs'; out.packs = validatePacks(b, out); out.maxSupply = out.packs.rarities.reduce((a, r) => a + r.cap, 0); }
@@ -370,6 +393,24 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
       const message = { creator, configHash: cfg, collectionId, deadline };
       return { typed: { domain: { name: 'MultiSeaPacks', version: '1', chainId: chains[chain].chainId, verifyingContract: pf }, types: PACK_APPROVAL_TYPES, primaryType: 'PackDropApproval', message }, out: { kind: 'packs', mode: d.mode === 'multichain' ? 'packs' : 'packs', chain, factory: pf, collectionId, deadline: deadline.toString(), configHash: cfg, params: ser(ip), slug: d.slug } };
     }
+    const isOnchain = d.metadataHost === 'onchain' || d.storage === 'onchain' || d.onchainArt;
+    if (isOnchain) {
+      const of = LP.onchainDrops?.factories?.[chain]; if (!d.chains.includes(chain) || !of || !chains[chain]) bad('no on-chain art factory on that chain yet — MultiSea will deploy it first', 501);
+      const domain = { name: 'MultiSeaOnchain', version: '1', chainId: chains[chain].chainId, verifyingContract: of };
+      const home = d.onchainArt?.homeChain || (d.mode === 'multichain' ? (LP.hubChain || 'base') : d.chains[0]);
+      const storeLocal = (d.onchainArt?.store || 'home') === 'every' || chain === home;
+      const rendererBase = storeLocal ? '' : `https://api.multisea.io/onchain-uri/${collectionIdOf(d.slug, creator)}/`;
+      if (d.mode === 'multichain') {
+        if (!LP.omniEscrows?.[chain] && !LP.solana?.v2?.escrows?.[chain]) bad('no multichain escrow on that chain yet', 501);
+        const ip = { ...omniParams(d, creator), storeLocal, rendererBase }; const cfg = onchainOmniConfigHash(ip); const collectionId = collectionIdOf(d.slug, creator);
+        const message = { creator, configHash: cfg, collectionId, deadline };
+        return { typed: { domain, types: OMNI_APPROVAL_TYPES, primaryType: 'OmniDropApproval', message }, out: { kind: 'onchain', mode: 'multichain', chain, factory: of, collectionId, deadline: deadline.toString(), configHash: cfg, params: ser(ip) } };
+      }
+      const ip = { ...initParams(d, creator, chain), storeLocal, rendererBase }; const cfg = onchainConfigHash(ip);
+      const salt = keccak256(encodeAbiParameters([{ type: 'string' }, { type: 'string' }, { type: 'address' }], [d.slug, chain, creator]));
+      const message = { creator, configHash: cfg, salt, deadline };
+      return { typed: { domain, types: APPROVAL_TYPES, primaryType: 'DropApproval', message }, out: { kind: 'onchain', chain, factory: of, salt, deadline: deadline.toString(), configHash: cfg, params: ser(ip) } };
+    }
     const factory = LP.factories?.[chain]; if (!d.chains.includes(chain) || !factory || !chains[chain]) bad('no factory on that chain yet', 501);
     const domain = { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory };
     if (d.nftType === 'erc463n7') {
@@ -483,10 +524,16 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
           return { ok: true, drop: pub(live) };
         }
         if (!d.chains.includes(chain) || !ADDR.test(address)) bad('bad chain/address');
-        const fac = d.nftType === 'erc463n7' ? (AG.enabled && AG.factories?.[chain]) : d.nftType === 'packs' ? (LP.packDrops?.factories?.[chain]) : LP.factories[chain];
+        const fac = d.nftType === 'erc463n7' ? (AG.enabled && AG.factories?.[chain]) : d.nftType === 'packs' ? (LP.packDrops?.factories?.[chain]) : (d.metadataHost === 'onchain' || d.onchainArt) ? LP.onchainDrops?.factories?.[chain] : LP.factories[chain];
         if (!fac || !(await isDropOnChain(chain, fac, address))) bad('address is not a MultiSea launchpad drop on ' + chain);
         const deployments = [...(d.deployments || []).filter(x => x.chain !== chain), { chain, address, ...(b.cards && ADDR.test(lc(b.cards)) ? { cards: lc(b.cards) } : {}) }];
         const live = { ...d, deployments, status: 'live' }; await K.put('ldrop:' + d.slug, JSON.stringify(live));
+        if (d.metadataHost === 'onchain' || d.onchainArt) {
+          const cid = collectionIdOf(d.slug, lc(d.submitter)).toLowerCase();
+          const homeChain = d.onchainArt?.homeChain || (d.mode === 'multichain' ? (LP.hubChain || 'base') : d.chains[0]);
+          const home = (deployments.find(x => x.chain === homeChain) || deployments[0] || {}).address;
+          if (home) await K.put('onchaincid:' + cid, JSON.stringify({ slug: d.slug, homeChain, home, collectionId: cid }));
+        }
         // Auto-list on MultiSea: the drop becomes a normal approved collection page /c/<slug> (trading uses the 0.5% marketplace fee).
         const col = (await K.get('col:' + d.slug, 'json')) || { slug: d.slug, name: d.name, description: d.description, website: d.website, x: d.x, logo: d.logo, banner: d.banner, escrow: [], submitter: d.submitter, status: 'approved', approvedAt: new Date(now()).toISOString(), source: 'launchpad' };
         col.deployments = deployments;

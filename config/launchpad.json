@@ -278,5 +278,11 @@
     "_note": "EVM card packs (MultiSeaPackFactory + MultiSeaPackEscrow). MC deploys factories from /deploy-pack-factories or contracts/script/DeployPackFactory.s.sol. Empty until those addresses are recorded. Existing launchpad factories are unchanged. Solana is out of scope.",
     "factories": {},
     "escrows": {}
+  },
+  "onchainDrops": {
+    "_note": "Fully on-chain art drops (MultiSeaOnchainFactory + MultiSeaOnchainDrop / MultiSeaOnchainOmniDrop). MC deploys factories from /deploy-onchain-factories or contracts/script/DeployOnchainFactory.s.sol, then records addresses here and rebuilds. Existing IPFS launchpad factories are unchanged. Omni mode reuses the live OmniEscrowV2 addresses (solana.v2.escrows). Solana and Ordinals are out of scope.",
+    "factories": {},
+    "impls": {},
+    "omniImpls": {}
   }
 }

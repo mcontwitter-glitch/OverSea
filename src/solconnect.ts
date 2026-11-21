@@ -54,9 +54,9 @@ const B58 = { A: '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz',
   enc(u: Uint8Array) { let n = 0n; for (const x of u) n = n * 256n + BigInt(x); let s = ''; while (n > 0n) { s = this.A[Number(n % 58n)] + s; n /= 58n; } for (const x of u) { if (x) break; s = '1' + s; } return s; } };
 
 const injected: Record<string, { name: string; get: () => SolProv | undefined; url: string; deep: () => string; icon: string }> = {
-  phantom: { name: 'Phantom', get: () => W.phantom?.solana, url: 'https://phantom.app/', deep: () => walletBrowseLink('phantom', location.href, location.origin),
+  phantom: { name: 'Phantom', get: () => W.phantom?.solana, url: 'https://phantom.app/', deep: () => walletBrowseLink('phantom', location.href, location.origin, navigator.userAgent),
     icon: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><rect width="28" height="28" rx="7" fill="#ab9ff2"/><text x="14" y="19.5" font-family="Arial" font-weight="900" font-size="15" fill="#fff" text-anchor="middle">P</text></svg>') },
-  solflare: { name: 'Solflare', get: () => detectSolflare(W), url: 'https://solflare.com/', deep: () => walletBrowseLink('solflare', location.href, location.origin),
+  solflare: { name: 'Solflare', get: () => detectSolflare(W), url: 'https://solflare.com/', deep: () => walletBrowseLink('solflare', location.href, location.origin, navigator.userAgent),
     icon: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fc7227"/><stop offset="1" stop-color="#fec80b"/></linearGradient></defs><rect width="28" height="28" rx="7" fill="url(#g)"/><text x="14" y="19.5" font-family="Arial" font-weight="900" font-size="15" fill="#111" text-anchor="middle">S</text></svg>') },
 };
 /** Phantom + Solflare always (installed or "open app"), then any other Wallet Standard Solana wallet in this browser. */

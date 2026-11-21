@@ -23,6 +23,7 @@ import { makeActivity } from './activity.js';
 import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
+import { handleOnchainUri } from './onchainuri.js';
 import { edgeTtl, edgeCacheKey, floodBlock } from './flood.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
@@ -658,6 +659,7 @@ export default {
     const ip = req.headers.get('cf-connecting-ip') || 'local';
     // Public marketplace metadata/images (solmeta.js): any origin, no per-minute IP budget (edge-cached, immutable; ME's CDN fetches in bursts). Still counted in FLOOD.
     if (url.pathname.startsWith('/sol/meta/') || url.pathname.startsWith('/sol/img/')) { const r = await solMeta()(req, env, url, ctx); if (r) return r; }
+    if (url.pathname.startsWith('/onchain-uri/')) { const r = await handleOnchainUri(req, env, url, { chains: { ...chains, ...(LP.mainnet?.chains || {}) }, kv: env.COLLECTIONS }); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
     // Separate buckets: RPC/media traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.

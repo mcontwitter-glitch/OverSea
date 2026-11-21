@@ -6,6 +6,9 @@ import { THIRDWEB_CLIENT_ID } from './embedded';
 
 export const MEDIA_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,audio/mpeg,audio/wav,model/gltf-binary,.glb,.gltf';
 const MAX_FILE = 100 * 1024 * 1024; // per file
+export const ONCHAIN_MAX = 24 * 1024;
+export const ONCHAIN_ACCEPT = 'image/png,image/gif,image/webp,image/svg+xml,.svg,.png,.webp,.gif';
+export const ONCHAIN_MIME = /^(image\/(png|gif|webp|svg\+xml))$/;
 export const CSV_BASE = ['tokenID', 'name', 'description', 'file_name', 'external_url'];
 export type Row = { line: number; tokenID: string; name: string; description: string; file_name: string; external_url: string; attrs: { trait_type: string; value: string }[]; errs: string[] };
 export const PH_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,video/mp4,video/webm';
@@ -14,9 +17,9 @@ export function setPlaceholder(f: File | null) { if (ph.url) URL.revokeObjectURL
 export const media = { files: new Map<string, File>(), rows: [] as Row[], csvName: '', csvErr: '', thumbs: new Map<string, string>() };
 
 const isVid = (f: File) => /^(video|audio)\//.test(f.type) || /\.(mp4|webm|mov|mp3|wav)$/i.test(f.name);
-export function addMedia(list: FileList | File[]) {
+export function addMedia(list: FileList | File[], maxBytes = MAX_FILE) {
   const skipped: string[] = [];
-  for (const f of Array.from(list)) { if (f.size > MAX_FILE) { skipped.push(f.name); continue; } media.files.set(f.name, f); }
+  for (const f of Array.from(list)) { if (f.size > maxBytes) { skipped.push(f.name); continue; } media.files.set(f.name, f); }
   validateRows(); return skipped;
 }
 export function clearMedia() { for (const u of media.thumbs.values()) URL.revokeObjectURL(u); media.files.clear(); media.thumbs.clear(); validateRows(); }
@@ -89,14 +92,35 @@ function cell(r: Row) {
   return `<div class="lmcell ${r.errs.length ? 'bad' : ''}">${pv}<div class="lmmeta"><b>#${esc(r.tokenID || '?')} ${esc(r.name || '(no name)')}</b><span class="mut mono">${esc(r.file_name || '—')}</span>${r.attrs.length ? `<span class="mut">${r.attrs.slice(0, 3).map(a => `${esc(a.trait_type)}: ${esc(a.value)}`).join(' · ')}</span>` : ''}${r.errs.map(e => `<span class="err">Row ${r.line}: ${esc(e)}</span>`).join('')}</div></div>`;
 }
 /** Media + CSV sections. */
-export function uploadHtml(supply: number) {
+export function onchainMediaProblem(): string {
+  const used = new Set(media.rows.map(r => r.file_name));
+  const files = [...media.files.entries()].filter(([n]) => !media.rows.length || used.has(n));
+  for (const [n, f] of files) {
+    const okType = ONCHAIN_MIME.test(f.type) || /\.(svg|png|webp|gif)$/i.test(n);
+    if (!okType) return `"${n}" must be SVG, PNG, WebP, or GIF for on-chain storage (no video or 3D).`;
+    if (f.size > ONCHAIN_MAX) return `"${n}" is ${fmtSize(f.size)} — on-chain art is capped at 24 KB per image. Use SVG, pixel art, or compressed WebP.`;
+    if (f.size < 1) return `"${n}" is empty.`;
+  }
+  return '';
+}
+const fmtSize = (n: number) => n >= 1024 ? (n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1) + ' KB' : n + ' B';
+
+export function uploadHtml(supply: number, opts?: { onchain?: boolean }) {
+  const onchain = !!opts?.onchain;
   const n = media.files.size; const bad = badRows();
   const total = [...media.files.values()].reduce((a, f) => a + f.size, 0);
   const sample = [...bad.slice(0, 4), ...media.rows.filter(r => !r.errs.length).slice(0, Math.max(0, 6 - Math.min(bad.length, 4)))].sort((a, b) => a.line - b.line);
   const used = new Set(media.rows.map(r => r.file_name)); const unused = media.rows.length ? [...media.files.keys()].filter(k => !used.has(k)) : [];
-  return `<div class="fcard ldup"><div class="gh">1. Media</div><p class="mut small">Images, GIFs, video (mp4/webm), audio or 3D (glb). Up to 100 MB per file. File names must match the <span class="mono">file_name</span> column of your CSV.</p>
-   <label class="lmdrop" data-drop><input type="file" class="fin" data-media multiple accept="${MEDIA_ACCEPT}"><b>Drag &amp; drop media here</b><span class="mut small">or <u>browse files</u></span></label>
-   <div class="lmsum small">${n ? `<b>${n.toLocaleString()}</b> file${n > 1 ? 's' : ''} · ${(total / 1048576).toFixed(1)} MB <button type="button" class="pill sm" data-act="clrmedia">Clear</button>` : '<span class="mut">No media yet.</span>'}</div></div>
+  const sizes = onchain && n ? `<div class="small" style="margin-top:6px">${[...media.files.entries()].map(([name, f]) => {
+    const over = f.size > ONCHAIN_MAX; const typ = ONCHAIN_MIME.test(f.type) || /\.(svg|png|webp|gif)$/i.test(name);
+    return `<div class="${over || !typ ? 'err' : ''}">${esc(name)} · ${fmtSize(f.size)}${over ? ' — over 24 KB' : !typ ? ' — use SVG, PNG, WebP, or GIF' : ''}</div>`;
+  }).join('')}</div>` : '';
+  const hint = onchain
+    ? 'SVG, pixel art, PNG, WebP or GIF. <b>24 KB max per image</b> (enforced here and on-chain). File names must match the <span class="mono">file_name</span> column of your CSV. After deploy you will upload these bytes in batched wallet transactions.'
+    : 'Images, GIFs, video (mp4/webm), audio or 3D (glb). Up to 100 MB per file. File names must match the <span class="mono">file_name</span> column of your CSV.';
+  return `<div class="fcard ldup"><div class="gh">1. Media</div><p class="mut small">${hint}</p>
+   <label class="lmdrop" data-drop><input type="file" class="fin" data-media multiple accept="${onchain ? ONCHAIN_ACCEPT : MEDIA_ACCEPT}"><b>Drag &amp; drop media here</b><span class="mut small">or <u>browse files</u></span></label>
+   <div class="lmsum small">${n ? `<b>${n.toLocaleString()}</b> file${n > 1 ? 's' : ''} · ${onchain ? fmtSize(total) : (total / 1048576).toFixed(1) + ' MB'} <button type="button" class="pill sm" data-act="clrmedia">Clear</button>` : '<span class="mut">No media yet.</span>'}${sizes}</div></div>
   <div class="fcard ldup"><div class="gh">2. Metadata CSV</div><p class="mut small">One row per token: <span class="mono">${CSV_BASE.join(', ')}</span>, plus one <span class="mono">attributes[Trait]</span> column per trait. <button type="button" class="pill sm" data-act="csvtpl">Download CSV template</button></p>
    <label class="lmdrop" data-drop="csv"><input type="file" class="fin" data-mcsv accept=".csv,text/csv"><b>${media.csvName ? 'Replace metadata CSV' : 'Drag &amp; drop metadata CSV here'}</b><span class="mut small">${media.csvName ? esc(media.csvName) : 'or <u>browse files</u>'}</span></label>
    ${media.csvErr ? `<p class="err small">${esc(media.csvErr)}</p>` : ''}
