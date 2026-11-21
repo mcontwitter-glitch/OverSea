@@ -1,19 +1,24 @@
 // Solana parts of the shared wallet UI. ADD-ONLY: the EVM connect window, EVM wallet menu and thirdweb Google/X EVM sign-in
 // (src/wallet.ts, src/embedded.ts) render exactly as before; these functions append a Solana section / block / nav button.
 import { sol, onSol, shortSol, solWalletOptions, connectSolWallet, disconnectSolWallet, restoreSol, setSol, PRIVY_ON } from './solconnect';
+import { isSolMobile } from './soldetect';
 import { wallet, overlay, esc, API } from './wallet';
 import { profileWallets } from './walletlinks';
 
 const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || 'https://solana-rpc.publicnode.com';
 const SOL_ICON = '/logos/solana.svg';
-const isMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const isMobile = () => isSolMobile(navigator.userAgent, navigator.maxTouchPoints || 0);
 
 /** Solana section at the bottom of the connect window. */
 export function solConnectSection() {
   const opts = solWalletOptions();
   const row = (o: ReturnType<typeof solWalletOptions>[number]) => {
     const tag = sol.id === o.id && sol.address ? '<span class="r">Connected</span>' : o.installed ? '<span class="r">Detected</span>' : `<span class="r m">${isMobile() ? 'Open app' : 'Install'}</span>`;
-    return `<button class="wopt sol" data-solw="${esc(o.id)}">${o.icon ? `<img src="${esc(o.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(o.name)}${tag}</button>`;
+    const inner = `${o.icon ? `<img src="${esc(o.icon)}" alt="">` : '<span class="wdot"></span>'}${esc(o.name)}${tag}`;
+    // Solflare (and Phantom) browse universal links only open the app when the user clicks a real <a href>.
+    // A button that sets location.href is ignored by iOS/Android Universal Links.
+    if (!o.installed && (o.deep || o.url)) return `<a class="wopt sol" href="${esc(o.deep || o.url)}">${inner}</a>`;
+    return `<button class="wopt sol" data-solw="${esc(o.id)}">${inner}</button>`;
   };
   return `<div class="solsec"><div class="gh solgh"><img src="${SOL_ICON}" alt="">Solana wallets <em>new</em></div>
     ${sol.address ? `<p class="mut small">Connected: <b>${esc(sol.name)}</b> <span class="mono">${esc(shortSol(sol.address))}</span></p>` : ''}

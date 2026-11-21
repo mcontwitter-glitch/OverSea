@@ -744,7 +744,7 @@ img.cl.solsoon{filter:grayscale(.4)}
 /* Solana wallet (add-only next to the EVM wallet UI) */
 .solsec{margin-top:6px;border-top:1px solid #222;padding-top:4px}.solgh{display:flex;align-items:center;gap:8px}.solgh img{width:16px;height:16px}
 .solgh em{font-style:normal;font-size:11px;font-weight:600;color:#b48cff;background:#9945ff1c;border:1px solid #9945ff55;border-radius:999px;padding:1px 8px}
-.wopt.sol{border-color:#9945ff44}.wopt .r{margin-left:auto;font-size:11px;font-weight:600;color:#3ddc97}.wopt .r.m{color:#8a8a93}
+a.wopt{font:inherit;box-sizing:border-box}.wopt.sol{border-color:#9945ff44}.wopt .r{margin-left:auto;font-size:11px;font-weight:600;color:#3ddc97}.wopt .r.m{color:#8a8a93}
 .solsoc .wopt.soc{border-color:#9945ff66}.solnote{margin:6px 0 2px}.wopt.solmini{margin-top:12px;padding:10px 12px}.wopt.solmini img{width:22px;height:22px}
 .acct{background:#171717;border:1px solid #262626;border-radius:14px;padding:12px;margin:12px 0 0}.acct.solacct{border-color:#9945ff55}
 .acct .h{display:flex;align-items:center;gap:8px;font-weight:700}.acct .h img{width:18px;height:18px}.acct .h .b{margin-left:auto;font-size:11px;color:#3ddc97;font-weight:600}.acct .h .b a{color:#b48cff}
