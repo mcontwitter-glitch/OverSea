@@ -11,7 +11,7 @@ import { SOLANA_ON, SOL_SOON, solSoonChip, onSolanaFlag } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
-import { isPackDrop, packMintBox, mintPack } from './packs';
+import { isPackDrop, packMintBox, mintPack, fillPackMintQuote } from './packs';
 import { encodeTraits, traitGas, traitsCard, primeCost, loadTraits, saveTraits, fetchTraits, type TraitEnc } from './agenttraits';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
 import { snapshotHolders, snapNote } from './lpholders';
@@ -436,6 +436,10 @@ function render() {
   if (!d) { app.innerHTML = `${navHtml('launchpad')}<section class="page"><h2>Drop not found</h2><p><a href="/launchpad">Back to Launchpad</a></p></section>`; return; }
   dropPage(d);
   const sc = app.querySelector<HTMLElement>('[data-solcard]'); if (sc) import('./solui').then(m => m.mountSolCard(sc, d as any)).catch(() => {});
+  if (isPackDrop(d)) {
+    const c = d.chains.find(x => x.chain === chainSel) || d.chains[0];
+    fillPackMintQuote(d, c.chain, activePhase(d)).catch(() => {});
+  }
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;

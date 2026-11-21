@@ -1,6 +1,7 @@
 // EVM card packs: create-flow fields, drop mint, and the My packs / open-reveal page.
-import { decodeEventLog, type Address, type Abi } from 'viem';
+import { decodeEventLog, formatEther, zeroAddress, type Address, type Abi } from 'viem';
 import LP from '../config/launchpad.json';
+import CFG from '../config/collections.json';
 import { wallet, onWallet, openConnect, ensureChain, vchain, readClient, friendly, API } from './wallet';
 import { navHtml, bindNav, esc } from './shell';
 import { type Drop } from './launchdata';
@@ -116,10 +117,17 @@ export function applyPackClick(p: PackState, act: string, rm?: string): boolean 
 
 // ---- on-chain ABI (subset) ----
 const PACKS_ABI = [
-  { type: 'function', name: 'quoteMint', stateMutability: 'view', inputs: [{ type: 'uint256' }, { type: 'uint16' }, { type: 'uint32' }], outputs: [{ type: 'uint256' }, { type: 'uint256' }] },
-  { type: 'function', name: 'mint', stateMutability: 'payable', inputs: [{ type: 'address' }, { type: 'uint256' }, { type: 'uint16' }, { type: 'uint32' }, { type: 'bytes32[]' }], outputs: [] },
+  { type: 'function', name: 'quoteMint', stateMutability: 'view', inputs: [{ type: 'uint256' }, { type: 'uint16' }, { type: 'uint32' }, { type: 'uint128' }], outputs: [{ type: 'uint256' }, { type: 'uint256' }] },
+  { type: 'function', name: 'mint', stateMutability: 'payable', inputs: [{ type: 'address' }, { type: 'uint256' }, { type: 'uint16' }, { type: 'uint32' }, { type: 'bytes32[]' }, { type: 'uint128' }], outputs: [] },
   { type: 'function', name: 'open', stateMutability: 'nonpayable', inputs: [{ type: 'uint16' }, { type: 'uint16' }], outputs: [] },
-  { type: 'function', name: 'reveal', stateMutability: 'payable', inputs: [{ type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'quoteReveal', stateMutability: 'view', inputs: [{ type: 'uint256' }, { type: 'uint128' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'reveal', stateMutability: 'payable', inputs: [{ type: 'uint256' }, { type: 'uint128' }], outputs: [] },
+  { type: 'function', name: 'isHub', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'collectionId', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] },
+  { type: 'function', name: 'hubEid', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint32' }] },
+  { type: 'function', name: 'localEid', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint32' }] },
+  { type: 'function', name: 'escrow', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { type: 'function', name: 'cardsInPack', stateMutability: 'view', inputs: [{ type: 'uint16' }, { type: 'uint32' }], outputs: [{ type: 'uint32' }] },
   { type: 'function', name: 'recommit', stateMutability: 'nonpayable', inputs: [{ type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'tierCount', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
@@ -150,14 +158,92 @@ export function packFactoryOn(k: string): Address | null {
   return (LP as any).packDrops?.factories?.[k] || null;
 }
 
+const HUB = (LP as any).hubChain || 'base';
+const LZ_BUF_NUM = 13n;
+const LZ_BUF_DEN = 10n; // +30% safety buffer on the hub return-path drop, same as omni mints
+const ESCROW_ABI = [
+  { type: 'function', name: 'quoteMintReturn', stateMutability: 'view', inputs: [{ type: 'bytes32' }, { type: 'uint32' }, { type: 'uint32' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'quoteRevealReturn', stateMutability: 'view', inputs: [{ type: 'bytes32' }, { type: 'uint32' }, { type: 'uint32' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'refundOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'claimRefund', stateMutability: 'nonpayable', inputs: [{ type: 'address' }], outputs: [] },
+] as const satisfies Abi;
+
+function packEscrowOn(k: string): Address | null {
+  const a = (LP as any).packDrops?.escrows?.[k];
+  return a && a !== zeroAddress ? a as Address : null;
+}
+function natOf(k: string) { return (CFG.chains as any)?.[k]?.native || 'ETH'; }
+function fmtAmt(w: bigint) { const s = formatEther(w); return s.replace(/(\.[0-9]*?)0+$/, '$1').replace(/\.$/, ''); }
+
+async function hubValueFor(kind: 'mint' | 'reveal', origin: string, drop: Address, qtyOrCards: number): Promise<bigint> {
+  const pub = readClient(origin);
+  const [isHub, escrow] = await Promise.all([
+    pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'isHub' }) as Promise<boolean>,
+    pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'escrow' }) as Promise<Address>,
+  ]);
+  if (isHub || !escrow || escrow === zeroAddress) return 0n;
+  const [cid, localEid] = await Promise.all([
+    pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'collectionId' }) as Promise<`0x${string}`>,
+    pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'localEid' }) as Promise<number>,
+  ]);
+  const hubEsc = packEscrowOn(HUB);
+  if (!hubEsc) throw new Error('No pack escrow on the hub chain yet. Pack factories have not been recorded.');
+  const fn = kind === 'mint' ? 'quoteMintReturn' : 'quoteRevealReturn';
+  const raw = await readClient(HUB).readContract({ address: hubEsc, abi: ESCROW_ABI, functionName: fn, args: [cid, localEid, qtyOrCards] }) as bigint;
+  return (raw * LZ_BUF_NUM) / LZ_BUF_DEN;
+}
+
+export async function packMintQuote(k: string, drop: Address, phaseId: number, tierId: number, qty: number) {
+  const hubValue = await hubValueFor('mint', k, drop, qty);
+  const [price, lz] = await readClient(k).readContract({ address: drop, abi: PACKS_ABI, functionName: 'quoteMint', args: [BigInt(phaseId), tierId, qty, hubValue] }) as [bigint, bigint];
+  return { price, lz, hubValue, value: price + lz };
+}
+
+export async function packRevealQuote(k: string, drop: Address, commitId: bigint) {
+  const pub = readClient(k);
+  const c: any = await pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'commits', args: [commitId] });
+  const nCards = Number(await pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'cardsInPack', args: [c[2], c[3]] }));
+  const hubValue = await hubValueFor('reveal', k, drop, nCards || 1);
+  const lz = await pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'quoteReveal', args: [commitId, hubValue] }) as bigint;
+  return { lz, hubValue, value: lz, cards: nCards };
+}
+
+export async function fillPackMintQuote(d: Drop, chain: string, phaseId: number) {
+  const box = document.querySelector<HTMLElement>('.ldpackmint');
+  const el = document.querySelector<HTMLElement>('[data-packprice]');
+  if (!box || !el) return;
+  const addr = (d as any).addresses?.[chain] as Address | undefined;
+  const run = async () => {
+    if (!addr) { el.innerHTML = ''; return; }
+    const tier = +((box.querySelector('[data-tier]') as HTMLSelectElement)?.value || 1);
+    const qty = Math.max(1, Math.min(20, parseInt((box.querySelector('[data-qty]') as HTMLInputElement)?.value || '1') || 1));
+    el.innerHTML = '<span class="spin"></span> Quoting…';
+    try {
+      const q = await packMintQuote(chain, addr, phaseId, tier, qty);
+      const nat = natOf(chain);
+      el.innerHTML = q.lz
+        ? `<div>Packs <b>${fmtAmt(q.price)} ${esc(nat)}</b></div><div>LayerZero (round trip) <b>${fmtAmt(q.lz)} ${esc(nat)}</b><i class="usd">Your payment funds the confirm (and card copies on reveal) with a 30% buffer. Leftover is claimable on the hub chain.</i></div><div>Total <b>${fmtAmt(q.value)} ${esc(nat)}</b></div>`
+        : `<div>Total <b>${fmtAmt(q.price)} ${esc(nat)}</b></div>`;
+    } catch (e: any) {
+      el.innerHTML = `<span class="err">${esc(friendly(e) || e?.shortMessage || e?.message || 'Could not quote')}</span>`;
+    }
+  };
+  await run();
+  if (box.dataset.qbound) return;
+  box.dataset.qbound = '1';
+  box.addEventListener('change', () => { run(); });
+  box.addEventListener('input', ev => { if ((ev.target as HTMLElement)?.hasAttribute?.('data-qty')) run(); });
+}
+
 export async function mintPack(k: string, drop: Address, to: Address, phaseId: number, tierId: number, qty: number, proof: `0x${string}`[], onTx: (h: string) => void) {
   const pub = readClient(k);
-  const [price, lz] = await pub.readContract({ address: drop, abi: PACKS_ABI, functionName: 'quoteMint', args: [BigInt(phaseId), tierId, qty] }) as [bigint, bigint];
+  const q = await packMintQuote(k, drop, phaseId, tierId, qty);
   const { walletOn } = await import('./lpchain') as any;
   const ww = await walletOn(k);
-  const sim = await pub.simulateContract({ address: drop, abi: PACKS_ABI, functionName: 'mint', args: [to, BigInt(phaseId), tierId, qty, proof], account: wallet.address as Address, value: price + lz });
-  const gas = await pub.estimateContractGas({ address: drop, abi: PACKS_ABI, functionName: 'mint', args: [to, BigInt(phaseId), tierId, qty, proof], account: wallet.address as Address, value: price + lz });
-  const hash = await ww.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address, value: price + lz });
+  const args = [to, BigInt(phaseId), tierId, qty, proof, q.hubValue] as const;
+  const sim = await pub.simulateContract({ address: drop, abi: PACKS_ABI, functionName: 'mint', args, account: wallet.address as Address, value: q.value });
+  const gas = await pub.estimateContractGas({ address: drop, abi: PACKS_ABI, functionName: 'mint', args, account: wallet.address as Address, value: q.value });
+  const hash = await ww.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address, value: q.value });
   onTx(hash);
   const r = await pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success') throw new Error('mint reverted');
@@ -181,11 +267,18 @@ export async function openPack(k: string, drop: Address, tierId: number, qty: nu
   return commitId;
 }
 
-export async function revealPack(k: string, drop: Address, commitId: bigint, value: bigint, onTx: (h: string) => void, fn: 'reveal' | 'recommit' = 'reveal') {
+export async function revealPack(k: string, drop: Address, commitId: bigint, onTx: (h: string) => void, fn: 'reveal' | 'recommit' = 'reveal') {
   const { walletOn } = await import('./lpchain') as any;
   const ww = await walletOn(k);
   const pub = readClient(k);
-  const args = { address: drop, abi: PACKS_ABI, functionName: fn, args: [commitId], account: wallet.address as Address, ...(fn === 'reveal' ? { value } : {}) } as any;
+  let value = 0n;
+  let hubValue = 0n;
+  if (fn === 'reveal') {
+    const q = await packRevealQuote(k, drop, commitId);
+    value = q.value;
+    hubValue = q.hubValue;
+  }
+  const args = { address: drop, abi: PACKS_ABI, functionName: fn, args: fn === 'reveal' ? [commitId, hubValue] : [commitId], account: wallet.address as Address, ...(fn === 'reveal' ? { value } : {}) } as any;
   const sim = await pub.simulateContract(args);
   const gas = await pub.estimateContractGas(args);
   const hash = await ww.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address, ...(fn === 'reveal' ? { value } : {}) });
@@ -202,7 +295,7 @@ export function packMintBox(d: Drop, chain: string, _phaseId: number, qty: numbe
   const addrs = d.addresses || {};
   const live = !!addrs[chain];
   return `<div class="fcard ldmintbox ldpackmint"><div class="gh">Buy a pack</div>
-    <p class="mut small">Sealed packs are ERC-1155 and tradable. Open them from <a href="/my-packs">My packs</a> — a later transaction reveals the cards with a short animation.</p>
+    <p class="mut small">Sealed packs are ERC-1155 and tradable. Open them from <a href="/my-packs">My packs</a> — a later transaction reveals the cards with a short animation. On a non-hub chain the mint total includes the LayerZero round-trip fee so the confirm is paid from your payment, not a pre-funded escrow.</p>
     <label>Pack tier<select data-tier>${opts}</select></label>
     <div class="two"><label>Quantity<input type="number" min="1" max="20" data-qty value="${qty}"></label><div class="mut small" data-packprice></div></div>
     ${live ? (wallet.address ? `<button class="bbtn ldmint" data-act="mintpack" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span> Minting…' : 'Mint packs'}</button>` : '<button class="bbtn ldmint" data-act="connect">Connect wallet to mint</button>')
@@ -262,12 +355,38 @@ export async function myPacksPage() {
         } catch {}
       }
     }
-    list.innerHTML = rows.join('') || '<p class="mut">No sealed packs in this wallet. Mint one from a <a href="/launchpad">Card packs</a> drop.</p>';
+    let claimHtml = '';
+    const hubEsc = packEscrowOn(HUB);
+    if (hubEsc && wallet.address) {
+      try {
+        const due = await readClient(HUB).readContract({ address: hubEsc, abi: ESCROW_ABI, functionName: 'refundOf', args: [me] }) as bigint;
+        if (due > 0n) claimHtml = `<div class="fcard"><p>Unspent LayerZero buffer on the hub: <b>${fmtAmt(due)} ${esc(natOf(HUB))}</b>.</p><button class="bbtn sm" data-claimhub ${busy ? 'disabled' : ''}>Claim leftover</button></div>`;
+      } catch {}
+    }
+    list.innerHTML = (rows.join('') || '<p class="mut">No sealed packs in this wallet. Mint one from a <a href="/launchpad">Card packs</a> drop.</p>') + claimHtml;
   }
 
   app.addEventListener('click', async e => {
     const t = e.target as HTMLElement;
     if (t.closest('[data-act="connect"]')) { openConnect(); return; }
+    const cl = t.closest<HTMLElement>('[data-claimhub]');
+    if (cl && !busy) {
+      const hubEsc = packEscrowOn(HUB);
+      if (!hubEsc || !wallet.address) return;
+      busy = 'Claiming leftover…'; msg = ''; render();
+      try {
+        const { walletOn } = await import('./lpchain') as any;
+        const ww = await walletOn(HUB);
+        const pub = readClient(HUB);
+        const sim = await pub.simulateContract({ address: hubEsc, abi: ESCROW_ABI, functionName: 'claimRefund', args: [wallet.address as Address], account: wallet.address as Address });
+        const gas = await pub.estimateContractGas({ ...sim.request });
+        const hash = await ww.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(HUB), account: wallet.address as Address });
+        busy = 'Claim sent ' + hash.slice(0, 10) + '…'; render();
+        await pub.waitForTransactionReceipt({ hash });
+        busy = ''; msg = 'Claimed leftover LayerZero buffer on the hub.'; render();
+      } catch (er: any) { msg = friendly(er) || er?.message || String(er); busy = ''; render(); }
+      return;
+    }
     const o = t.closest<HTMLElement>('[data-open]');
     if (!o || busy) return;
     const [slug, chain, addr, tier] = o.dataset.open!.split(':');
@@ -283,8 +402,13 @@ export async function myPacksPage() {
         const c: any = await pub.readContract({ address: addr as Address, abi: PACKS_ABI, functionName: 'commits', args: [id] });
         const bn = await pub.getBlockNumber();
         if (bn > BigInt(c[1])) {
-          busy = 'Revealing…'; render();
-          const rec = await revealPack(chain, addr as Address, id, 0n, h => { busy = 'Reveal sent ' + h.slice(0, 10) + '…'; render(); });
+          let feeNote = '';
+          try {
+            const q = await packRevealQuote(chain, addr as Address, id);
+            if (q.value) feeNote = ` LayerZero ${fmtAmt(q.value)} ${natOf(chain)}.`;
+          } catch {}
+          busy = 'Revealing…' + feeNote; render();
+          const rec = await revealPack(chain, addr as Address, id, h => { busy = 'Reveal sent ' + h.slice(0, 10) + '…'; render(); });
           let first = 0n, n = 0;
           for (const l of rec.logs) {
             try { const ev: any = decodeEventLog({ abi: PACKS_ABI, data: l.data, topics: l.topics }); if (ev.eventName === 'Revealed') { first = ev.args.firstId; n = Number(ev.args.cards); } } catch {}

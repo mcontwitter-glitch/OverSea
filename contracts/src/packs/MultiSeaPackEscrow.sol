@@ -17,6 +17,7 @@ interface IPacksHub {
     function releaseCardKnown(bytes32 to, uint256 tokenId) external;
     function eids() external view returns (uint32[] memory);
     function hubEid() external view returns (uint32);
+    function cardsInPack(uint16 tierId, uint32 qty) external view returns (uint32);
 }
 
 /// @title MultiSeaPackEscrow
@@ -101,8 +102,12 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
     }
 
     function optionsFor(uint8 kind, uint256 qty) public view returns (bytes memory) {
+        return optionsFor(kind, qty, 0);
+    }
+
+    function optionsFor(uint8 kind, uint256 qty, uint128 nativeDrop) public view returns (bytes memory) {
         Gas memory g = gasOf[kind];
-        return OptionsBuilder.newOptions().addExecutorLzReceiveOption(uint128(g.base + g.perId * qty), 0);
+        return OptionsBuilder.newOptions().addExecutorLzReceiveOption(uint128(g.base + g.perId * qty), nativeDrop);
     }
 
     function _fee(uint32 dst, bytes memory payload, bytes memory opts) internal view returns (uint256) {
@@ -110,20 +115,62 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
         return f.nativeFee;
     }
 
-    function quoteMint(bytes32 cid, uint16, uint32 qty) external view returns (uint256) {
-        IPacksHub p = IPacksHub(packsOf[cid]);
-        if (address(p) == address(0)) revert UnknownCollection();
-        uint32 hub = p.hubEid();
-        bytes memory payload = abi.encode(MINT_REQ, cid, uint256(0), bytes32(0), uint16(0), qty, uint256(0));
-        return _fee(hub, payload, optionsFor(MINT_REQ, qty));
+    function _dummyTypes(uint32 cards) internal pure returns (uint16[] memory t) {
+        t = new uint16[](cards == 0 ? 1 : cards);
     }
 
-    function quoteReveal(bytes32 cid, uint32 cards) external view returns (uint256) {
+    /// @notice HUB view: native fee to send MINT_OK back to `originEid`. The buyer drops this (plus a buffer) on the hub.
+    function quoteMintReturn(bytes32 cid, uint32 originEid, uint32 qty) public view returns (uint256) {
+        if (packsOf[cid] == address(0)) revert UnknownCollection();
+        bytes memory payload = abi.encode(MINT_OK, cid, uint256(0));
+        return _fee(originEid, payload, optionsFor(MINT_OK, qty, 0));
+    }
+
+    /// @notice HUB view: native fee to send REVEAL_OK back to the origin and CARD_COPY to every other chain.
+    function quoteRevealReturn(bytes32 cid, uint32 originEid, uint32 cards) public view returns (uint256 total) {
         IPacksHub p = IPacksHub(packsOf[cid]);
         if (address(p) == address(0)) revert UnknownCollection();
-        uint32 hub = p.hubEid();
+        uint16[] memory types = _dummyTypes(cards);
+        total = _fee(originEid, abi.encode(REVEAL_OK, cid, uint256(0), uint256(0), types), optionsFor(REVEAL_OK, types.length, 0));
+        uint32 here = endpoint.eid();
+        uint32[] memory dests = p.eids();
+        bytes memory cp = abi.encode(CARD_COPY, cid, uint256(0), types);
+        bytes memory opts = optionsFor(CARD_COPY, types.length, 0);
+        for (uint256 i; i < dests.length; ++i) {
+            if (dests[i] == originEid || dests[i] == here) continue;
+            total += _fee(dests[i], cp, opts);
+        }
+    }
+
+    /// @notice CARD_COPY fees from this chain to every other eid (hub reveal fan-out). Paid by the revealer.
+    function quoteFanout(bytes32 cid, uint32 originEid, uint32 cards) public view returns (uint256 total) {
+        IPacksHub p = IPacksHub(packsOf[cid]);
+        if (address(p) == address(0)) revert UnknownCollection();
+        uint16[] memory types = _dummyTypes(cards);
+        bytes memory cp = abi.encode(CARD_COPY, cid, uint256(0), types);
+        bytes memory opts = optionsFor(CARD_COPY, types.length, 0);
+        uint32[] memory dests = p.eids();
+        for (uint256 i; i < dests.length; ++i) {
+            if (dests[i] == originEid) continue;
+            total += _fee(dests[i], cp, opts);
+        }
+    }
+
+    /// @notice ORIGIN (spoke) view: LayerZero cost of MINT_REQ to the hub, carrying `hubValue` of hub-native wei as a drop.
+    function quoteMint(bytes32 cid, uint16, uint32 qty, uint128 hubValue) public view returns (uint256) {
+        IPacksHub p = IPacksHub(packsOf[cid]);
+        if (address(p) == address(0)) revert UnknownCollection();
+        bytes memory payload = abi.encode(MINT_REQ, cid, uint256(0), bytes32(0), uint16(0), qty, uint256(0));
+        return _fee(p.hubEid(), payload, optionsFor(MINT_REQ, qty, hubValue));
+    }
+
+    /// @notice ORIGIN (spoke) view: LayerZero cost of REVEAL_REQ to the hub, carrying `hubValue` for REVEAL_OK + copies.
+    function quoteReveal(bytes32 cid, uint32 cards, uint128 hubValue) public view returns (uint256) {
+        IPacksHub p = IPacksHub(packsOf[cid]);
+        if (address(p) == address(0)) revert UnknownCollection();
+        uint32 n = cards < 1 ? 1 : cards;
         bytes memory payload = abi.encode(REVEAL_REQ, cid, uint256(0), bytes32(0), bytes32(0), uint16(0), uint32(0));
-        return _fee(hub, payload, optionsFor(REVEAL_REQ, cards));
+        return _fee(p.hubEid(), payload, optionsFor(REVEAL_REQ, n, hubValue));
     }
 
     function quoteMovePack(bytes32 cid, uint32 dstEid, uint16, uint32 amount) external view returns (uint256 platform, uint256 lz) {
@@ -136,29 +183,40 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
         return (moveFee, _fee(dstEid, payload, optionsFor(MOVE_CARD, 1)));
     }
 
-    function sendMintRequest(bytes32 cid, uint256 rid, bytes32 to, uint16 tierId, uint32 qty, uint256 phaseId, address refund)
-        external
-        payable
-        onlyPacks(cid)
-    {
+    function sendMintRequest(
+        bytes32 cid,
+        uint256 rid,
+        bytes32 to,
+        uint16 tierId,
+        uint32 qty,
+        uint256 phaseId,
+        address refund,
+        uint128 hubValue
+    ) external payable onlyPacks(cid) {
         uint256 keep = address(this).balance - msg.value;
         IPacksHub p = IPacksHub(msg.sender);
         bytes memory payload = abi.encode(MINT_REQ, cid, rid, to, tierId, qty, phaseId);
-        _paySend(p.hubEid(), payload, optionsFor(MINT_REQ, qty), refund);
+        _paySend(p.hubEid(), payload, optionsFor(MINT_REQ, qty, hubValue), refund);
         _refundDust(refund, keep);
         emit Sent(cid, MINT_REQ, p.hubEid());
     }
 
-    function sendReveal(bytes32 cid, uint256 commitId, bytes32 to, bytes32 seed, uint16 tierId, uint32 qty, address refund)
-        external
-        payable
-        onlyPacks(cid)
-    {
+    function sendReveal(
+        bytes32 cid,
+        uint256 commitId,
+        bytes32 to,
+        bytes32 seed,
+        uint16 tierId,
+        uint32 qty,
+        uint32 cards,
+        address refund,
+        uint128 hubValue
+    ) external payable onlyPacks(cid) {
         uint256 keep = address(this).balance - msg.value;
         IPacksHub p = IPacksHub(msg.sender);
         bytes memory payload = abi.encode(REVEAL_REQ, cid, commitId, to, seed, tierId, qty);
-        uint32 cards = qty; // lower bound; options use per-id headroom
-        _paySend(p.hubEid(), payload, optionsFor(REVEAL_REQ, cards < 1 ? 1 : cards), refund);
+        uint32 n = cards < 1 ? 1 : cards;
+        _paySend(p.hubEid(), payload, optionsFor(REVEAL_REQ, n, hubValue), refund);
         _refundDust(refund, keep);
         emit Sent(cid, REVEAL_REQ, p.hubEid());
     }
@@ -205,6 +263,33 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
         }
         _refundDust(refund, keep);
         left;
+    }
+
+    mapping(address => uint256) public refundOf; // hub: unspent native-drop buffer, claimable by the buyer
+
+    function claimRefund(address who) external nonReentrant {
+        uint256 v = refundOf[who];
+        refundOf[who] = 0;
+        if (v > 0) {
+            (bool ok, ) = who.call{ value: v }("");
+            require(ok);
+        }
+    }
+
+    function _creditRefund(address to, uint256 amt) internal {
+        if (amt == 0 || to == address(0)) return;
+        refundOf[to] += amt;
+    }
+
+    function _refundee(bytes32 to) internal pure returns (address) {
+        return uint256(to) >> 160 == 0 ? address(uint160(uint256(to))) : address(0);
+    }
+
+    function _payLeg(uint32 dst, bytes memory payload, bytes memory opts, uint256 budget) internal returns (uint256) {
+        uint256 fee = _fee(dst, payload, opts);
+        if (fee > budget) revert InsufficientFee(fee, budget);
+        _lzSend(dst, payload, opts, MessagingFee(fee, 0), payable(address(this)));
+        unchecked { return budget - fee; }
     }
 
     function _takeMoveFee() internal {
@@ -255,15 +340,20 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
     function _onMintReq(uint32 srcEid, address packs, bytes calldata payload) internal {
         (, , uint256 rid, bytes32 to, uint16 tierId, uint32 qty, uint256 phaseId) =
             abi.decode(payload, (uint8, bytes32, uint256, bytes32, uint16, uint32, uint256));
-        uint8 reason = IPacksHub(packs).hubReserve(tierId, qty, phaseId, to);
         bytes32 cid = idOfPacks[packs];
+        uint256 budget = msg.value;
+        uint256 need = quoteMintReturn(cid, srcEid, qty);
+        // MINT_FAIL is cheaper; require enough for MINT_OK so a successful reserve can always be confirmed.
+        if (budget < need) revert InsufficientFee(need, budget);
+        uint8 reason = IPacksHub(packs).hubReserve(tierId, qty, phaseId, to);
         if (reason == 0) {
             bytes memory out = abi.encode(MINT_OK, cid, rid);
-            _send(srcEid, out, optionsFor(MINT_OK, qty));
+            budget = _payLeg(srcEid, out, optionsFor(MINT_OK, qty, 0), budget);
         } else {
             bytes memory out = abi.encode(MINT_FAIL, cid, rid, reason);
-            _send(srcEid, out, optionsFor(MINT_FAIL, 0));
+            budget = _payLeg(srcEid, out, optionsFor(MINT_FAIL, 0, 0), budget);
         }
+        _creditRefund(_refundee(to), budget);
     }
 
     function _onMintOk(address packs, bytes calldata payload) internal {
@@ -277,26 +367,52 @@ contract MultiSeaPackEscrow is OApp, ReentrancyGuard {
     }
 
     function _onRevealReq(uint32 srcEid, address packs, bytes calldata payload) internal {
-        (, , uint256 commitId, , bytes32 seed, uint16 tierId, uint32 qty) =
+        (, , uint256 commitId, bytes32 to, bytes32 seed, uint16 tierId, uint32 qty) =
             abi.decode(payload, (uint8, bytes32, uint256, bytes32, bytes32, uint16, uint32));
-        (uint256 start, uint16[] memory types) = IPacksHub(packs).hubAssign(seed, tierId, qty);
-        IPacksHub(packs).copyCards(start, types);
-        bytes32 cid = idOfPacks[packs];
-        bytes memory out = abi.encode(REVEAL_OK, cid, commitId, start, types);
-        _send(srcEid, out, optionsFor(REVEAL_OK, types.length));
-        _copyOthers(packs, cid, srcEid, start, types);
+        _revealFromHub(srcEid, packs, commitId, to, seed, tierId, qty);
     }
 
-    function _copyOthers(address packs, bytes32 cid, uint32 srcEid, uint256 start, uint16[] memory types) internal {
+    function _revealFromHub(uint32 srcEid, address packs, uint256 commitId, bytes32 to, bytes32 seed, uint16 tierId, uint32 qty)
+        internal
+    {
+        bytes32 cid = idOfPacks[packs];
+        uint256 budget = msg.value;
+        uint256 need = quoteRevealReturn(cid, srcEid, IPacksHub(packs).cardsInPack(tierId, qty));
+        if (budget < need) revert InsufficientFee(need, budget);
+        _replyReveal(srcEid, packs, cid, commitId, to, seed, tierId, qty, budget);
+    }
+
+    function _replyReveal(
+        uint32 srcEid,
+        address packs,
+        bytes32 cid,
+        uint256 commitId,
+        bytes32 to,
+        bytes32 seed,
+        uint16 tierId,
+        uint32 qty,
+        uint256 budget
+    ) internal {
+        (uint256 start, uint16[] memory types) = IPacksHub(packs).hubAssign(seed, tierId, qty);
+        IPacksHub(packs).copyCards(start, types);
+        budget = _payLeg(srcEid, abi.encode(REVEAL_OK, cid, commitId, start, types), optionsFor(REVEAL_OK, types.length, 0), budget);
+        budget = _copyOthers(packs, cid, srcEid, start, types, budget);
+        _creditRefund(_refundee(to), budget);
+    }
+
+    function _copyOthers(address packs, bytes32 cid, uint32 srcEid, uint256 start, uint16[] memory types, uint256 budget)
+        internal
+        returns (uint256)
+    {
         uint32[] memory dests = IPacksHub(packs).eids();
         uint32 here = endpoint.eid();
         uint256 n = types.length;
         for (uint256 i; i < dests.length; ++i) {
             if (dests[i] == srcEid || dests[i] == here) continue;
             bytes memory cp = abi.encode(CARD_COPY, cid, start, types);
-            uint256 fee = _fee(dests[i], cp, optionsFor(CARD_COPY, n));
-            if (address(this).balance >= fee) _send(dests[i], cp, optionsFor(CARD_COPY, n));
+            budget = _payLeg(dests[i], cp, optionsFor(CARD_COPY, n, 0), budget);
         }
+        return budget;
     }
 
     function _onRevealOk(address packs, bytes calldata payload) internal {

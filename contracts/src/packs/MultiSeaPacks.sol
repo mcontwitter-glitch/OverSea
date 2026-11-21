@@ -8,12 +8,13 @@ import { MultiSeaPackCards } from "./MultiSeaPackCards.sol";
 
 interface IPackEscrow {
     function localEid() external view returns (uint32);
-    function quoteMint(bytes32 cid, uint16 tierId, uint32 qty) external view returns (uint256);
-    function quoteReveal(bytes32 cid, uint32 cards) external view returns (uint256);
+    function quoteMint(bytes32 cid, uint16 tierId, uint32 qty, uint128 hubValue) external view returns (uint256);
+    function quoteReveal(bytes32 cid, uint32 cards, uint128 hubValue) external view returns (uint256);
+    function quoteFanout(bytes32 cid, uint32 originEid, uint32 cards) external view returns (uint256);
     function quoteMovePack(bytes32 cid, uint32 dstEid, uint16 tierId, uint32 amount) external view returns (uint256 platform, uint256 lz);
     function quoteMoveCard(bytes32 cid, uint32 dstEid, uint256 tokenId) external view returns (uint256 platform, uint256 lz);
-    function sendMintRequest(bytes32 cid, uint256 rid, bytes32 to, uint16 tierId, uint32 qty, uint256 phaseId, address refund) external payable;
-    function sendReveal(bytes32 cid, uint256 commitId, bytes32 to, bytes32 seed, uint16 tierId, uint32 qty, address refund) external payable;
+    function sendMintRequest(bytes32 cid, uint256 rid, bytes32 to, uint16 tierId, uint32 qty, uint256 phaseId, address refund, uint128 hubValue) external payable;
+    function sendReveal(bytes32 cid, uint256 commitId, bytes32 to, bytes32 seed, uint16 tierId, uint32 qty, uint32 cards, address refund, uint128 hubValue) external payable;
     function sendMovePack(bytes32 cid, uint32 dstEid, uint16 tierId, uint32 amount, bytes32 to, address refund) external payable;
     function sendMoveCard(bytes32 cid, uint32 dstEid, uint256 tokenId, bytes32 to, address refund) external payable;
     function fanoutCards(bytes32 cid, uint256 startId, uint16[] calldata types, uint32 originEid, address refund) external payable;
@@ -160,6 +161,7 @@ contract MultiSeaPacks is ERC1155Upgradeable, ReentrancyGuard {
     error PhaseSoldOut(uint256 left);
     error SoldOut();
     error WrongPayment(uint256 required);
+    error InsufficientFee(uint256 required, uint256 sent);
     error BadParams();
     error NotPending();
     error RevealTooEarly();
@@ -287,16 +289,36 @@ contract MultiSeaPacks is ERC1155Upgradeable, ReentrancyGuard {
         return totalCap > used ? totalCap - used : 0;
     }
 
-    function quoteMint(uint256 phaseId, uint16 tierId, uint32 qty) external view returns (uint256 price, uint256 lz) {
-        price = priceOf(phaseId, tierId) * qty;
-        if (!isHub() && address(escrow) != address(0)) lz = escrow.quoteMint(collectionId, tierId, qty);
+    function cardsInPack(uint16 tierId, uint32 qty) public view returns (uint32) {
+        if (tierId == 0 || tierId > _tiers.length) return 0;
+        return uint32(_tiers[tierId - 1].cardsPerPack) * qty;
     }
 
-    function mint(address to, uint256 phaseId, uint16 tierId, uint32 qty, bytes32[] calldata proof) external payable nonReentrant {
+    function quoteMint(uint256 phaseId, uint16 tierId, uint32 qty) external view returns (uint256 price, uint256 lz) {
+        return quoteMint(phaseId, tierId, qty, 0);
+    }
+
+    /// @notice Total the buyer sends: pack price + LayerZero. `hubValue` is ignored on the hub / single-chain;
+    ///         on a spoke it is the hub-native amount (from escrow.quoteMintReturn, plus a buffer) dropped on the hub
+    ///         so the hub can pay MINT_OK / MINT_FAIL without a pre-funded escrow.
+    function quoteMint(uint256 phaseId, uint16 tierId, uint32 qty, uint128 hubValue) public view returns (uint256 price, uint256 lz) {
+        price = priceOf(phaseId, tierId) * qty;
+        if (!isHub() && address(escrow) != address(0)) lz = escrow.quoteMint(collectionId, tierId, qty, hubValue);
+    }
+
+    function mint(address to, uint256 phaseId, uint16 tierId, uint32 qty, bytes32[] calldata proof) external payable {
+        mint(to, phaseId, tierId, qty, proof, 0);
+    }
+
+    function mint(address to, uint256 phaseId, uint16 tierId, uint32 qty, bytes32[] calldata proof, uint128 hubValue)
+        public
+        payable
+        nonReentrant
+    {
         _checkMint(to, phaseId, tierId, qty, proof);
         uint256 cost = priceOf(phaseId, tierId) * qty;
         if (isHub() || address(escrow) == address(0)) _mintLocal(to, phaseId, tierId, qty, cost);
-        else _mintRemote(to, phaseId, tierId, qty, cost);
+        else _mintRemote(to, phaseId, tierId, qty, cost, hubValue);
     }
 
     function _checkMint(address to, uint256 phaseId, uint16 tierId, uint32 qty, bytes32[] calldata proof) internal view {
@@ -322,14 +344,20 @@ contract MultiSeaPacks is ERC1155Upgradeable, ReentrancyGuard {
         emit PackMinted(to, phaseId, tierId, qty, cost);
     }
 
-    function _mintRemote(address to, uint256 phaseId, uint16 tierId, uint32 qty, uint256 cost) internal {
-        if (msg.value < cost) revert WrongPayment(cost);
+    function _mintRemote(address to, uint256 phaseId, uint16 tierId, uint32 qty, uint256 cost, uint128 hubValue) internal {
+        uint256 need = cost + escrow.quoteMint(collectionId, tierId, qty, hubValue);
+        if (msg.value < need) revert InsufficientFee(need, msg.value);
         uint256 rid = nextRid++;
         requests[rid] = MintReq(to, msg.sender, tierId, qty, uint32(phaseId), 1, uint128(cost));
         held += cost;
         emit MintRequested(rid, to, tierId, qty, cost);
-        bytes32 dest = bytes32(uint256(uint160(to)));
-        escrow.sendMintRequest{ value: msg.value - cost }(collectionId, rid, dest, tierId, qty, phaseId, msg.sender);
+        _sendMintReq(rid, to, tierId, qty, phaseId, cost, hubValue);
+    }
+
+    function _sendMintReq(uint256 rid, address to, uint16 tierId, uint32 qty, uint256 phaseId, uint256 cost, uint128 hubValue) internal {
+        escrow.sendMintRequest{ value: msg.value - cost }(
+            collectionId, rid, bytes32(uint256(uint160(to))), tierId, qty, phaseId, msg.sender, hubValue
+        );
     }
 
     function _reserve(uint16 tierId, uint32 qty) internal {
@@ -402,7 +430,28 @@ contract MultiSeaPacks is ERC1155Upgradeable, ReentrancyGuard {
         emit Opened(id, msg.sender, tierId, qty, rb);
     }
 
-    function reveal(uint256 commitId) external payable nonReentrant {
+    function quoteReveal(uint256 commitId) external view returns (uint256 lz) {
+        return quoteReveal(commitId, 0);
+    }
+
+    /// @notice LayerZero the revealer sends. On the hub this is the CARD_COPY fan-out; on a spoke it is REVEAL_REQ
+    ///         carrying `hubValue` (from escrow.quoteRevealReturn, plus a buffer) so the hub can pay REVEAL_OK + copies.
+    function quoteReveal(uint256 commitId, uint128 hubValue) public view returns (uint256 lz) {
+        Commit storage c = commits[commitId];
+        if (c.owner == address(0) || address(escrow) == address(0)) return 0;
+        uint32 nCards = cardsInPack(c.tierId, c.qty);
+        if (isHub()) {
+            if (_eids.length > 1) lz = escrow.quoteFanout(collectionId, localEid, nCards);
+        } else {
+            lz = escrow.quoteReveal(collectionId, nCards, hubValue);
+        }
+    }
+
+    function reveal(uint256 commitId) external payable {
+        reveal(commitId, 0);
+    }
+
+    function reveal(uint256 commitId, uint128 hubValue) public payable nonReentrant {
         Commit storage c = commits[commitId];
         if (c.owner == address(0) || (c.status != ST_PENDING && c.status != ST_REVEALING)) revert NotPending();
         if (msg.sender != c.owner) revert NotCommitOwner();
@@ -412,20 +461,24 @@ contract MultiSeaPacks is ERC1155Upgradeable, ReentrancyGuard {
             if (bh == 0) revert HashExpired();
             c.seed = keccak256(abi.encodePacked(bh, commitId, collectionId, c.owner, c.revealBlock, c.tierId, c.qty));
         }
-        uint32 nCards = uint32(_tiers[c.tierId - 1].cardsPerPack) * c.qty;
+        uint32 nCards = cardsInPack(c.tierId, c.qty);
         if (isHub() || address(escrow) == address(0)) {
             (uint256 start, uint16[] memory types) = _assign(c.seed, c.tierId, c.qty);
             c.status = ST_REVEALED;
             cards.mintActive(c.owner, start, types);
             emit Revealed(commitId, c.owner, start, uint16(types.length));
             if (address(escrow) != address(0) && _eids.length > 1) {
+                uint256 lz = escrow.quoteFanout(collectionId, localEid, nCards);
+                if (msg.value < lz) revert InsufficientFee(lz, msg.value);
                 escrow.fanoutCards{ value: msg.value }(collectionId, start, types, localEid, msg.sender);
             } else if (msg.value != 0) revert WrongPayment(0);
         } else {
-            uint256 lz = escrow.quoteReveal(collectionId, nCards);
-            if (msg.value < lz) revert WrongPayment(lz);
+            uint256 lz = escrow.quoteReveal(collectionId, nCards, hubValue);
+            if (msg.value < lz) revert InsufficientFee(lz, msg.value);
             c.status = ST_REVEALING;
-            escrow.sendReveal{ value: msg.value }(collectionId, commitId, bytes32(uint256(uint160(c.owner))), c.seed, c.tierId, c.qty, msg.sender);
+            escrow.sendReveal{ value: msg.value }(
+                collectionId, commitId, bytes32(uint256(uint160(c.owner))), c.seed, c.tierId, c.qty, nCards, msg.sender, hubValue
+            );
         }
     }
 

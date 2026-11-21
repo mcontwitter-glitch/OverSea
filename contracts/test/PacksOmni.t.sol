@@ -7,8 +7,7 @@ import { MultiSeaPackCards } from "../src/packs/MultiSeaPackCards.sol";
 import { MultiSeaPackFactory } from "../src/packs/MultiSeaPackFactory.sol";
 import { MultiSeaPackEscrow } from "../src/packs/MultiSeaPackEscrow.sol";
 
-/// Two mock LZ chains. A is the hub. Packs mint locally on the hub; opened cards are copied into escrow on B.
-/// Sealed packs and opened cards can be moved A ↔ B.
+/// Two mock LZ chains. A is the hub. Escrows start at 0 balance: the buyer funds the round trip.
 contract PacksOmniTest is TestHelperOz5 {
     uint32 constant A = 1;
     uint32 constant B = 2;
@@ -39,7 +38,6 @@ contract PacksOmniTest is TestHelperOz5 {
             esc[e].setFactory(address(fac[e]));
             fac[e].setEscrow(address(esc[e]));
             vm.stopPrank();
-            vm.deal(address(esc[e]), 100 ether);
         }
         vm.startPrank(timelock);
         esc[A].setPeer(B, bytes32(uint256(uint160(address(esc[B])))));
@@ -51,6 +49,8 @@ contract PacksOmniTest is TestHelperOz5 {
         cards[B] = MultiSeaPackCards(address(packs[B].cards()));
         vm.deal(alice, 1000 ether);
         vm.deal(bob, 1000 ether);
+        assertEq(address(esc[A]).balance, 0, "hub escrow starts empty");
+        assertEq(address(esc[B]).balance, 0, "spoke escrow starts empty");
     }
 
     function initParams() internal view returns (MultiSeaPacks.PackInit memory p) {
@@ -86,28 +86,60 @@ contract PacksOmniTest is TestHelperOz5 {
 
     function deliver(uint32 e) internal { verifyPackets(e, bytes32(uint256(uint160(address(esc[e]))))); }
 
+    function mintHv(uint32 origin, uint32 qty) internal view returns (uint128) {
+        return uint128(esc[A].quoteMintReturn(CID, origin, qty) * 11 / 10); // +10% buffer
+    }
+
+    function revealHv(uint32 origin, uint32 nCards) internal view returns (uint128) {
+        return uint128(esc[A].quoteRevealReturn(CID, origin, nCards) * 11 / 10);
+    }
+
+    function mintOn(uint32 e, address who, uint32 qty) internal returns (uint256 price, uint256 lz, uint128 hv) {
+        hv = e == A ? uint128(0) : mintHv(e, qty);
+        (price, lz) = packs[e].quoteMint(0, 1, qty, hv);
+        vm.prank(who);
+        packs[e].mint{ value: price + lz }(who, 0, 1, qty, new bytes32[](0), hv);
+    }
+
+    function openReveal(uint32 e, address who, uint16 qty) internal {
+        vm.prank(who);
+        packs[e].open(1, qty);
+        uint256 id = packs[e].nextCommitId() - 1;
+        uint32 rb; (, rb,,,,) = packs[e].commits(id);
+        vm.roll(rb + 1);
+        uint32 nCards = packs[e].cardsInPack(1, qty);
+        uint128 hv = e == A ? uint128(0) : revealHv(e, nCards);
+        uint256 lz = packs[e].quoteReveal(id, hv);
+        vm.prank(who);
+        packs[e].reveal{ value: lz }(id, hv);
+    }
+
     function test_hubMintOpenReveal_copiesOnOtherChain() public {
-        vm.prank(alice);
-        packs[A].mint{ value: 0.01 ether }(alice, 0, 1, 1, new bytes32[](0));
+        mintOn(A, alice, 1);
         assertEq(packs[A].balanceOf(alice, 1), 1);
         assertEq(packs[B].balanceOf(alice, 1), 0);
-        vm.prank(alice);
-        packs[A].open(1, 1);
-        uint32 rb; (, rb,,,,) = packs[A].commits(1);
-        vm.roll(rb + 1);
-        vm.prank(alice);
-        packs[A].reveal{ value: 1 ether }(1);
+        uint256 lz = 0;
+        {
+            vm.prank(alice);
+            packs[A].open(1, 1);
+            uint32 rb; (, rb,,,,) = packs[A].commits(1);
+            vm.roll(rb + 1);
+            lz = packs[A].quoteReveal(1, 0);
+            emit log_named_uint("hub reveal fanout lz (5 cards, 1 dest)", lz);
+            vm.prank(alice);
+            packs[A].reveal{ value: lz }(1);
+        }
         assertEq(cards[A].balanceOf(alice), 5);
         deliver(B);
         assertEq(cards[B].balanceOf(address(esc[B])), 5, "escrow copies on B");
         assertEq(cards[B].ownerOf(1), address(esc[B]));
         assertEq(cards[A].ownerOf(1), alice);
         assertEq(cards[B].cardTypeOf(1), cards[A].cardTypeOf(1));
+        assertEq(address(esc[A]).balance, esc[A].refundOf(alice), "hub keeps only claimable leftover, if any");
     }
 
     function test_moveSealedPack() public {
-        vm.prank(alice);
-        packs[A].mint{ value: 0.02 ether }(alice, 0, 1, 2, new bytes32[](0));
+        mintOn(A, alice, 2);
         (uint256 pf, uint256 lz) = esc[A].quoteMovePack(CID, B, 1, 1);
         vm.prank(alice);
         packs[A].movePack{ value: pf + lz }(B, 1, 1, bob);
@@ -117,14 +149,8 @@ contract PacksOmniTest is TestHelperOz5 {
     }
 
     function test_moveOpenedCard() public {
-        vm.prank(alice);
-        packs[A].mint{ value: 0.01 ether }(alice, 0, 1, 1, new bytes32[](0));
-        vm.prank(alice);
-        packs[A].open(1, 1);
-        uint32 rb; (, rb,,,,) = packs[A].commits(1);
-        vm.roll(rb + 1);
-        vm.prank(alice);
-        packs[A].reveal{ value: 1 ether }(1);
+        mintOn(A, alice, 1);
+        openReveal(A, alice, 1);
         deliver(B);
         (uint256 pf, uint256 lz) = esc[A].quoteMoveCard(CID, B, 1);
         vm.prank(alice);
@@ -135,13 +161,97 @@ contract PacksOmniTest is TestHelperOz5 {
     }
 
     function test_spokeMint() public {
-        (uint256 price, uint256 lz) = packs[B].quoteMint(0, 1, 1);
-        vm.prank(alice);
-        packs[B].mint{ value: price + lz + 0.5 ether }(alice, 0, 1, 1, new bytes32[](0));
+        (uint256 price, uint256 lz, uint128 hv) = mintOn(B, alice, 1);
+        emit log_named_uint("spoke mint pack price", price);
+        emit log_named_uint("spoke mint lz (request + nativeDrop for MINT_OK)", lz);
+        emit log_named_uint("spoke mint hubValue (MINT_OK + 10%)", hv);
         assertEq(packs[B].balanceOf(alice, 1), 0, "held until hub confirms");
-        deliver(A); // hub reserves + MINT_OK
+        deliver(A);
         deliver(B);
         assertEq(packs[B].balanceOf(alice, 1), 1);
         assertEq(packs[A].remainingSlots(), 100 - 5);
+        if (esc[A].refundOf(alice) > 0) {
+            uint256 before = alice.balance;
+            uint256 due = esc[A].refundOf(alice);
+            esc[A].claimRefund(alice);
+            assertEq(alice.balance, before + due);
+        }
+    }
+
+    function test_spokeMintAndReveal_buyerPays_escrowStartsEmpty() public {
+        assertEq(address(esc[A]).balance, 0);
+        assertEq(address(esc[B]).balance, 0);
+        (uint256 price, uint256 lzMint, uint128 hvMint) = mintOn(B, alice, 1);
+        emit log_named_uint("e2e spoke mint price", price);
+        emit log_named_uint("e2e spoke mint lz", lzMint);
+        emit log_named_uint("e2e spoke mint hubValue", hvMint);
+        deliver(A);
+        deliver(B);
+        assertEq(packs[B].balanceOf(alice, 1), 1);
+
+        vm.prank(alice);
+        packs[B].open(1, 1);
+        uint256 id = packs[B].nextCommitId() - 1;
+        uint32 rb; (, rb,,,,) = packs[B].commits(id);
+        vm.roll(rb + 1);
+        uint128 hv = revealHv(B, 5);
+        uint256 lz = packs[B].quoteReveal(id, hv);
+        emit log_named_uint("e2e spoke reveal lz (request + nativeDrop for REVEAL_OK)", lz);
+        emit log_named_uint("e2e spoke reveal hubValue (REVEAL_OK + 10%)", hv);
+        uint256 aliceBefore = alice.balance;
+        vm.prank(alice);
+        packs[B].reveal{ value: lz }(id, hv);
+        // origin refunds unused outbound fee immediately
+        assertLe(aliceBefore - alice.balance, lz);
+        deliver(A);
+        deliver(B);
+        assertEq(cards[B].balanceOf(alice), 5, "cards Active on origin");
+        assertEq(cards[A].balanceOf(address(esc[A])), 5, "escrow copies on hub");
+        assertEq(cards[B].ownerOf(1), alice);
+        // escrow may hold only claimable leftover, never a pre-fund
+        assertEq(address(esc[A]).balance, esc[A].refundOf(alice) + esc[A].refundOf(address(0)), "hub escrow has no unaccounted balance");
+        assertEq(address(esc[B]).balance, esc[B].refundOf(alice), "spoke escrow refunded dust");
+    }
+
+    function test_spokeMint_underpays_reverts() public {
+        uint128 hv = mintHv(B, 1);
+        (uint256 price, uint256 lz) = packs[B].quoteMint(0, 1, 1, hv);
+        uint256 need = price + lz;
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, need, need - 1));
+        vm.prank(alice);
+        packs[B].mint{ value: need - 1 }(alice, 0, 1, 1, new bytes32[](0), hv);
+        assertEq(packs[B].balanceOf(alice, 1), 0);
+        assertEq(address(esc[A]).balance, 0);
+        assertEq(address(esc[B]).balance, 0);
+    }
+
+    function test_spokeReveal_underpays_reverts() public {
+        mintOn(B, alice, 1);
+        deliver(A);
+        deliver(B);
+        vm.prank(alice);
+        packs[B].open(1, 1);
+        uint256 id = packs[B].nextCommitId() - 1;
+        uint32 rb; (, rb,,,,) = packs[B].commits(id);
+        vm.roll(rb + 1);
+        uint128 hv = revealHv(B, 5);
+        uint256 lz = packs[B].quoteReveal(id, hv);
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, lz, lz - 1));
+        vm.prank(alice);
+        packs[B].reveal{ value: lz - 1 }(id, hv);
+        (,,,, uint8 status,) = packs[B].commits(id);
+        assertEq(status, packs[B].ST_PENDING());
+    }
+
+    function test_hubReveal_underpays_reverts() public {
+        mintOn(A, alice, 1);
+        vm.prank(alice);
+        packs[A].open(1, 1);
+        uint32 rb; (, rb,,,,) = packs[A].commits(1);
+        vm.roll(rb + 1);
+        uint256 lz = packs[A].quoteReveal(1, 0);
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, lz, lz - 1));
+        vm.prank(alice);
+        packs[A].reveal{ value: lz - 1 }(1);
     }
 }
