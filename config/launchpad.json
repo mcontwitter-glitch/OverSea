@@ -113,7 +113,7 @@
     "shareBufferBps": 2000
   },
   "mainnet": {
-    "_note": "MAINNET deployment (live). Factory owner = deployer 0xb19f…96b1 until step 24 (timelock acceptOwnership, 48 h delay) runs on each chain; pendingOwner = that chain's timelock. Drop approvals are EIP-712 signatures from `approver` (no transaction).",
+    "_note": "MAINNET deployment (live). Factory owner = deployer 0xb19f\u202696b1 until step 24 (timelock acceptOwnership, 48 h delay) runs on each chain; pendingOwner = that chain's timelock. Drop approvals are EIP-712 signatures from `approver` (no transaction).",
     "approver": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockProposer": "0xb19f00e095b1387061d73751c772bba848d196b1",
     "timelockExecutor": "0xb19f00e095b1387061d73751c772bba848d196b1",
@@ -273,5 +273,10 @@
       }
     },
     "switchSigner": "0xb19F00e095B1387061d73751C772bbA848D196b1"
+  },
+  "packDrops": {
+    "_note": "EVM card packs (MultiSeaPackFactory + MultiSeaPackEscrow). MC deploys factories from /deploy-pack-factories or contracts/script/DeployPackFactory.s.sol. Empty until those addresses are recorded. Existing launchpad factories are unchanged. Solana is out of scope.",
+    "factories": {},
+    "escrows": {}
   }
 }

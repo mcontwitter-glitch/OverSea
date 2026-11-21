@@ -31,7 +31,8 @@ const nftKey = (n: Nft) => `${n.chain}|${n.contract.toLowerCase()}|${n.id}`;
 const nftCard = (n: Nft, me: boolean) => {
   const href = itemHref(n);
   const send = me && /^(erc721|erc1155)$/.test(n.standard || '') ? `<button type="button" class="obtn sm" data-send="${esc(nftKey(n))}">Send</button>` : '';
-  const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chainName(n.chain))}${send}</div>`;
+  const pack = /1155/.test(n.standard || '') || (n as any).pack;
+  const inner = `${imageUrl(n.image) ? `<img src="${esc(imageUrl(n.image))}" alt="${esc(n.name || '#' + n.id)}" loading="lazy">` : '<div class="uwmissing">NFT</div>'}<div><b>${esc(n.name || '#' + n.id)}</b>${logo(n.chain)}</div><div class="mut small">${esc(chainName(n.chain))}${pack ? ' · pack' : ''}${n.quantity && n.quantity !== '1' ? ' × ' + esc(n.quantity) : ''}${send}${pack ? ` · <a href="/my-packs">Open</a>` : ''}</div>`;
   return href ? `<a class="nftc" href="${esc(href)}">${inner}</a>` : `<div class="nftc">${inner}</div>`;
 };
 const NFT_CHAINS = ['base', 'ethereum', 'apechain', 'bnb', 'robinhood'] as const;

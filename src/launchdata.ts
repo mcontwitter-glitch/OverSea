@@ -15,7 +15,8 @@ export type Drop = {
   copyMode?: 'batched' | 'at-mint'; batchK?: number; batchTMin?: number; queue?: { ids: number; ageMin: number; batch: number };
   slug: string; name: string; symbol: string; creator: string; description: string; chains: ChainAlloc[];
   maxSupply: number; royaltyBps: number; reveal: 'instant' | 'delayed'; phases: Phase[]; img: string; art: string[];
-  demo?: boolean; local?: boolean; remote?: boolean; addresses?: Record<string, string>; raw?: any; status?: 'pending' | 'approved' | 'rejected' | 'live'; deployed?: boolean; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number;
+  demo?: boolean; local?: boolean; remote?: boolean; addresses?: Record<string, string>; cardAddresses?: Record<string, string>; raw?: any; status?: 'pending' | 'approved' | 'rejected' | 'live'; deployed?: boolean; website?: string; x?: string; submittedAt?: string; storage?: string; baseURI?: string; preRevealURI?: string; payout?: string; creatorReserve?: number; nftType?: string;
+  packs?: { packName?: string; packSymbol?: string; rarities: { name: string; weight: number; cap: number }[]; cards: { rarityId: number; weight?: number }[]; tiers: { name: string; cardsPerPack: number; guaranteedRarity: number; maxPacks: number; price?: string | number; priceUsd?: number }[] };
 };
 export const FEE_BPS: number = LP.platformFeeBps; // 0.5% of primary sales, paid from creator proceeds by withdraw()
 export const LP_CHAINS: string[] = LP.chains;

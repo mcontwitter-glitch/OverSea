@@ -59,6 +59,7 @@ export async function signApprovals(slug: string, log: (s: string) => void) {
 /** Creator: deploy the drop contract on one chain. Returns the new drop address (already reported to the Worker). */
 export async function deployOn(slug: string, k: string, onTx: (h: string) => void): Promise<Address> {
   const a = await api('/launchpad/approval/' + slug, { auth: true, body: { chain: k } });
+  if (a.kind === 'packs' || a.mode === 'packs') return deployPackOn(slug, k, a, onTx);
   const multi = a.mode === 'multichain'; const fn = multi ? 'createOmniDrop' : 'createDrop';
   const item = (F as any[]).find(x => x.name === fn); const params = fromAbi(item.inputs[0], a.params);
   const args = [params, multi ? a.collectionId : a.salt, BigInt(a.deadline), a.signature] as const;
@@ -154,3 +155,37 @@ export async function setPhasesOn(k: string, addr: Address, data: `0x${string}`,
   const r = await pub.waitForTransactionReceipt({ hash }); if (r.status !== 'success') throw new Error('setPhases transaction reverted');
 }
 
+async function deployPackOn(slug: string, k: string, a: any, onTx: (h: string) => void): Promise<Address> {
+  const { decodeEventLog, parseAbi } = await import('viem');
+  const abi = parseAbi([
+    'function createPackDrop((string name,string symbol,string packName,string packSymbol,address owner,address payout,address feeWallet,uint16 platformFeeBps,address royaltyReceiver,uint96 royaltyBps,string cardBaseURI,string packBaseURI,(string name,uint32 weight,uint32 cap)[] rarities,(uint8 rarityId,uint32 weight)[] cards,(string name,uint8 cardsPerPack,uint8 guaranteedRarity,uint32 maxPacks,uint128 price)[] tiers,(uint64 start,uint64 end,uint128 price,uint32 maxPerWallet,uint32 maxSupply,bytes32 merkleRoot)[] phases,uint32[] eids,uint32 hubEid,uint128[] prices) p, bytes32 cid, uint256 deadline, bytes sig) returns (address packs, address cards)',
+    'function usedSalt(bytes32) view returns (bool)',
+    'function predictPacks(bytes32) view returns (address)',
+    'event PackDropCreated(address indexed packs, address indexed cards, address indexed creator, bytes32 collectionId, uint16 feeBps)',
+  ]);
+  const pub = readClient(k);
+  if (await pub.readContract({ address: a.factory, abi, functionName: 'usedSalt', args: [a.collectionId] })) {
+    const drop = await pub.readContract({ address: a.factory, abi, functionName: 'predictPacks', args: [a.collectionId] }) as Address;
+    await api('/launchpad/deployed/' + slug, { auth: true, body: { chain: k, address: drop } });
+    return drop;
+  }
+  const w = await walletOn(k);
+  const args = [a.params, a.collectionId, BigInt(a.deadline), a.signature] as const;
+  const sim = await pub.simulateContract({ address: a.factory, abi, functionName: 'createPackDrop', args, account: wallet.address as Address });
+  const gas = await pub.estimateContractGas({ address: a.factory, abi, functionName: 'createPackDrop', args, account: wallet.address as Address });
+  const hash = await w.writeContract({ ...sim.request, gas: (gas * 125n) / 100n, chain: vchain(k), account: wallet.address as Address });
+  onTx(hash);
+  const r = await pub.waitForTransactionReceipt({ hash });
+  if (r.status !== 'success') throw new Error('deploy transaction reverted');
+  let drop: Address | null = null, cards: Address | null = null;
+  for (const l of r.logs) {
+    if (l.address.toLowerCase() !== String(a.factory).toLowerCase()) continue;
+    try {
+      const e: any = decodeEventLog({ abi, data: l.data, topics: l.topics });
+      if (e.eventName === 'PackDropCreated') { drop = e.args.packs; cards = e.args.cards; }
+    } catch {}
+  }
+  if (!drop) throw new Error('no PackDropCreated event in the receipt');
+  await api('/launchpad/deployed/' + slug, { auth: true, body: { chain: k, address: drop, cards } });
+  return drop;
+}

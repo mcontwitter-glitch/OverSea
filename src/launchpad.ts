@@ -11,6 +11,7 @@ import { SOLANA_ON, SOL_SOON, solSoonChip, onSolanaFlag } from './solflag';
 import { getSession, signIn } from './auth';
 import { FLAT_FEE_USD } from './xpaycore';
 import { AGENT_UI, AGENT_PREVIEW, isAgentDrop, agentCard, attackBox, demoAgents, ORA_FEE_WEI, type AgentView } from './agentdrop';
+import { isPackDrop, packMintBox, mintPack } from './packs';
 import { encodeTraits, traitGas, traitsCard, primeCost, loadTraits, saveTraits, fetchTraits, type TraitEnc } from './agenttraits';
 import { allDrops as demoAndLocal, findDrop as findLocal, localDrops, dropState, comingSoon, activePhase, nextPhase, countdown, minted, pct, FEE_BPS, GAS_UNITS, isMulti, priceOn, lzUsd, lzEta, mintLegs, legsUsd, HUB, MOVE_FEE_USD, MOVE_GAS_UNITS, OMNI_GAS_UNITS, isBatched, batchEta, batchShareUsd, demoHeld, saveHeld, MAX_PER_TX, type Drop, type Held } from './launchdata';
 import { snapshotHolders, snapNote } from './lpholders';
@@ -27,6 +28,7 @@ const chainLogos = (d: Drop) => d.chains.map(c => `<img class="cl" src="/logos/$
 const solSoon = (d: Drop) => !SOLANA_ON && (d as any).mode === 'multichain';
 const demoTag = (d: Drop) => (d.demo ? '<span class="ldtag demo">Demo</span>' : d.local ? '<span class="ldtag demo">Local preview</span>' : '');
 const mcTag = (d: Drop) => (isMulti(d) ? '<span class="ldtag mc" title="One shared supply across chains; NFTs can move between chains">Multichain</span>' : '');
+const packTag = (d: Drop) => (isPackDrop(d) ? '<span class="ldtag drop" title="Sealed ERC-1155 packs that open into ERC-721 cards">Card packs</span>' : '');
 const CH_COL: Record<string, string> = { base: '#3b82f6', ethereum: '#a3a3ff', apechain: '#1d4ed8', bnb: '#f0b90b', robinhood: '#c3f53c' };
 let rates: UsdRates = { ETH: null, APE: null, BNB: null };
 // Worker drops. Prices arrive in wei; minted counts are read on-chain by loadOnchain() (multichain: mintedHere per chain,
@@ -36,6 +38,7 @@ const fromApi = (d: any): Drop => ({ remote: true, addresses: Object.fromEntries
   // `deployed` comes from the Worker; older Workers lack it, so fall back to the same rule (verified on-chain = status 'live').
   deployed: typeof d.deployed === 'boolean' ? d.deployed : d.status === 'live' && Array.isArray(d.deployments) && d.deployments.length > 0,
   chains: (d.chains || []).map((c: string) => ({ chain: c, supply: d.allocations?.[c] ?? Math.floor(d.maxSupply / d.chains.length), minted: 0 })), maxSupply: d.maxSupply, royaltyBps: d.royaltyBps, reveal: d.reveal,
+  nftType: d.nftType, packs: d.packs, cardAddresses: Object.fromEntries((d.deployments || []).filter((x: any) => x.cards).map((x: any) => [x.chain, x.cards])),
   phases: (d.phases || []).map((p: any) => ({ ...p, price: Number(BigInt(p.price)) / 1e18, prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, Number(BigInt(v as string)) / 1e18])) : undefined })), img: d.logo ? API + d.logo : CFG.collections.some(c => c.slug === d.slug) ? `/img/${d.slug}/s/1.webp` : '/brand/icon-128.webp', art: d.banner ? [API + d.banner] : CFG.collections.some(c => c.slug === d.slug) ? [1, 2, 3, 4, 5, 6, 7, 8].map(i => `/img/${d.slug}/s/${i}.webp`) : [] });
 // Agent-drop local preview (VITE_AGENT_DROPS=1 only, flag OFF in config): one labeled demo drop, nothing on-chain.
 const AGENT_DEMO: Drop | null = AGENT_PREVIEW ? { slug: 'agents-demo', name: 'Hungry Agents', symbol: 'HGRY', creator: '0x000000000000000000000000000000000000a9e7', demo: true, status: 'live', mode: 'single', nftType: 'erc463n7',
@@ -60,7 +63,7 @@ function stateChip(d: Drop) {
 function dropCard(d: Drop) {
   const st = dropState(d); const ph = d.phases[activePhase(d)] || d.phases[nextPhase(d)] || d.phases[d.phases.length - 1];
   const c0 = d.chains[0]; const price = priceOn(d, ph, c0.chain);
-  return `<a class="ldcard" href="/launchpad/${esc(d.slug)}"><div class="ldimg"><img src="${esc(d.img)}" alt="" loading="lazy" width="384" height="384"><span class="ldtags2">${demoTag(d)}${mcTag(d)}</span></div>
+  return `<a class="ldcard" href="/launchpad/${esc(d.slug)}"><div class="ldimg"><img src="${esc(d.img)}" alt="" loading="lazy" width="384" height="384"><span class="ldtags2">${demoTag(d)}${mcTag(d)}${packTag(d)}</span></div>
    <div class="ldbody"><div class="ldname">${esc(d.name)}</div><div class="ldchains">${chainLogos(d)}</div>${stateChip(d)}
    <div class="ldprog"><div class="ldbar"><i style="width:${pct(minted(d), d.maxSupply)}%"></i></div><span>${minted(d).toLocaleString()} / ${d.maxSupply.toLocaleString()} minted${isMulti(d) ? ` · shared by ${d.chains.length} chains` : ''}</span></div>
    <div class="ldmeta"><span>${st === 'ended' && !comingSoon(d) ? 'Price' : esc(ph.name)}</span><b>${price ? `${fmt(price)} ${esc(chains[c0.chain]?.native)}` : 'No mint price'}</b></div></div></a>`;
@@ -71,7 +74,7 @@ function listPage() {
   const mine = localDrops().filter(d => d.status === 'pending' || d.status === 'rejected');
   const l = by(tab);
   app.innerHTML = `${navHtml('launchpad')}<section class="page wide ldpage">
-   <div class="ldhero"><div><h1>🚀 Launchpad</h1><p class="mut">Mint new collections on Base, Ethereum, ApeChain, BNB and Robinhood. Pay with native coins from any of these chains. Every drop is reviewed by MultiSea before it goes live, then trades on MultiSea from the first mint.</p></div>
+   <div class="ldhero"><div><h1>🚀 Launchpad</h1><p class="mut">Mint new collections on Base, Ethereum, ApeChain, BNB and Robinhood, including <b>Card packs</b>. <a href="/my-packs">My packs</a> ·  Pay with native coins from any of these chains. Every drop is reviewed by MultiSea before it goes live, then trades on MultiSea from the first mint.</p></div>
     <a class="bbtn sm" href="/launchpad/create">+ Create a drop</a></div>
    ${LP_LIVE ? (drops.some(d => d.demo) ? '<div class="ldnote">Drops tagged <b>Demo</b> (LIL FOOTS art) are examples: minting them is a stub. Every other drop is a real on-chain contract.</div>' : '') : '<div class="ldnote">Preview: launchpad contracts are not deployed yet. Drops below are <b>demo data</b> (LIL FOOTS art) and minting is a stub.</div>'}
    <div class="ldtabs" role="tablist">${(['live', 'upcoming', 'ended'] as const).map(k => `<button role="tab" class="ldtab ${tab === k ? 'on' : ''}" data-tab="${k}">${k[0].toUpperCase() + k.slice(1)} <span>${by(k).length}</span></button>`).join('')}</div>
@@ -143,6 +146,7 @@ function mintBox(d: Drop) {
   if (qty > max) qty = max;
   const al = p?.kind === 'allowlist'; const eligible = !al || (!!wallet.address && (R.remote ? true : !!p.allowlist?.includes(wallet.address.toLowerCase())));
   const real = R.remote && LP_LIVE && !!R.addresses?.[c.chain];
+  if (isPackDrop(d)) return dep + packMintBox(d, c.chain, ai, qty, !!realBusy) + `<p class="mut small" style="margin-top:10px"><a href="/my-packs">Open packs you’ve minted →</a></p>` + holderRefreshBox(d);
   const btn = st !== 'live' ? `<button class="bbtn" disabled>${st === 'upcoming' ? 'Not started' : 'Minting ended'}</button>`
     : !eligible ? `<button class="bbtn" disabled>${wallet.address ? 'Not on this allowlist' : 'Connect to check allowlist'}</button>`
     : left <= 0 ? `<button class="bbtn" disabled>Sold out</button>`
@@ -403,7 +407,7 @@ function dropPage(d: Drop) {
   const cd = target ? countdown(target) : null;
   app.innerHTML = `${navHtml('launchpad')}<section class="ldrop">
    <div class="ldban"><div class="ldbanart">${d.art.slice(0, 8).map(u => `<img src="${esc(u)}" alt="" width="200" height="200">`).join('')}</div><div class="ldbanfade"></div>
-    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}${soon ? SOON : `<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span>`}</div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div>${shareBtnsFor(`https://api.multisea.io/s/l/${encodeURIComponent(d.slug)}`, d.name)}</div></div></div>
+    <div class="ldbanin"><img class="ldlogo" src="${esc(d.img)}" alt="" width="96" height="96"><div><div class="ldtags">${demoTag(d)}${mcTag(d)}${packTag(d)}${soon ? SOON : `<span class="ldst ${st === 'upcoming' ? 'up' : st}">${st === 'live' ? '<i></i>Live' : st === 'upcoming' ? 'Upcoming' : 'Ended'}</span>`}</div><h1>${esc(d.name)}</h1><div class="ldchains">${chainLogos(d)} ${d.creator ? `<span class="mut small">by <span class="mono">${esc(d.creator.slice(0, 6) + '…' + d.creator.slice(-4))}</span></span>` : ''}</div>${shareBtnsFor(`https://api.multisea.io/s/l/${encodeURIComponent(d.slug)}`, d.name)}</div></div></div>
    <div class="ldwrap"><div class="ldmain ldtop">
     <p class="desc">${esc(d.description)}</p>
     ${cd ? `<div class="ldcd" data-target="${target}"><span class="mut">${st === 'live' ? esc(d.phases[ai].name) + ' ends in' : esc(d.phases[ni].name) + ' starts in'}</span><div class="ldcdg"><div><b data-u="d">${cd.d}</b><em>days</em></div><div><b data-u="h">${cd.h}</b><em>hrs</em></div><div><b data-u="m">${cd.m}</b><em>min</em></div><div><b data-u="s">${cd.s}</b><em>sec</em></div></div></div>` : ''}
@@ -411,7 +415,7 @@ function dropPage(d: Drop) {
      ${d.chains.length > 1 ? `<div class="ldperch">${d.chains.map(c => `<span><img class="cl" src="/logos/${c.chain}.svg" alt=""> ${c.minted.toLocaleString()} / ${c.supply.toLocaleString()}</span>`).join('')}</div>` : ''}</div>`}
    </div><div class="ldmain ldphwrap"><div class="gh pad">Phases</div><div class="ldphs">${phaseRows(d)}</div></div>
    <aside class="ldside">${d.mode === 'ordinals' ? ordBox(d) : ''}${revealBox(d)}${mintBox(d)}${SOLANA_ON && (d as any).remote && (d as any).raw?.solana && !soon ? '<div data-solcard></div>' : ''}${AGENT_UI && isAgentDrop(d) ? agentBox(d) : ''}${soon ? '' : alBox(d)}
-    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isAgentDrop(d) ? 'ERC-463N7 agents (experimental, unaudited)' : isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
+    <div class="fcard small"><div class="kv"><span>Supply</span><b>${d.maxSupply.toLocaleString()}</b><span>Royalty (ERC-2981)</span><b>${d.royaltyBps / 100}%</b><span>Reveal</span><b>${d.reveal === 'instant' ? 'Instant' : 'Delayed'}</b><span>Standard</span><b>${isPackDrop(d) ? 'ERC-1155 packs + ERC-721 cards' : isAgentDrop(d) ? 'ERC-463N7 agents (experimental, unaudited)' : isMulti(d) ? 'ERC-721 + LayerZero V2 escrow' : 'ERC-721A'}</b>${isMulti(d) ? `<span>Supply model</span><b>Shared · IDs assigned by the Base hub</b><span>Each mint creates</span><b>1 Active + ${d.chains.length - 1} escrow copies${isBatched(d) ? ` <i class="usd">batched every ${batchEta(d).k} IDs / ${batchEta(d).t} min</i>` : ''}</b><span>Move between chains</span><b>LZ fee + $${MOVE_FEE_USD.toFixed(2)}</b>` : ''}<span>After mint</span><b>Trades on MultiSea</b></div></div>
    ${isMulti(d) && !soon ? heldBox(d) : ''}
    </aside></div></section>${moveId ? moveModal(d) : ''}`;
 }
@@ -504,6 +508,16 @@ app.addEventListener('click', e => {
     (async () => { for (const k of list) { depBusy = k; render(); const a = await one(k); if (k !== 'solana') (d as any).addresses = { ...(d as any).addresses, [k]: a }; d.deployed = true; done.push(k); }
       depMsg = `✓ Deployed on ${done.map(c => esc(cn(c))).join(', ')}.`; await refreshRemote(); })()
       .catch(e => { depMsg = `${done.length ? `✓ ${done.map(c => esc(cn(c))).join(', ')} deployed. ` : ''}<span class="err">${depBusy ? esc(cn(depBusy)) + ': ' : ''}${esc(e?.shortMessage || e?.message || e)}</span> Tap the button to continue from there.`; refreshRemote().catch(() => {}); }).finally(() => { depBusy = ''; render(); }); return; }
+  if (el.dataset.act === 'mintpack') {
+    const tier = +((app.querySelector('[data-tier]') as HTMLSelectElement)?.value || 1);
+    const q = +((app.querySelector('[data-qty]') as HTMLInputElement)?.value || 1);
+    const k = (d.chains.find(x => x.chain === chainSel) || d.chains[0]).chain;
+    const addr = (d as any).addresses?.[k];
+    if (!addr || !wallet.address) return;
+    realBusy = true; render();
+    mintPack(k, addr, wallet.address as any, activePhase(d), tier, q, [], h => { /* tx hash shown via busy */ }).then(() => { realBusy = false; render(); }).catch(err => { realBusy = false; alert(err?.shortMessage || err?.message || err); render(); });
+    return;
+  }
   if (el.dataset.act === 'mint' && comingSoon(d)) return; // no mint before the contract is deployed
   if (el.dataset.act === 'mint' && (d as any).remote && LP_LIVE && (d as any).addresses?.[chainSel]) {
     if (!wallet.address) { openConnect(); return; } const k = chainSel; const ai = activePhase(d); const ph: any = (d as any).raw.phases[ai]; const n = qty;

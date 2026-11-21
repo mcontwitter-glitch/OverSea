@@ -769,3 +769,16 @@ a.ulink{color:inherit;text-decoration:none}a.ulink:hover{text-decoration:underli
 .ldholdsrcs li{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
 .ldholdx{margin-top:8px}
 .ldholdwarn{color:#fbbf24}
+
+/* Card packs */
+.ldpack{margin-top:14px}.ldpackr,.ldpackcard{margin-top:8px}
+.ldpackcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.ldpackcard{display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid #45bdfa33;border-radius:10px;background:#0b1220aa}
+.ldpackrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.ldpulls{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0;perspective:800px}
+.ldpull{width:140px;animation:ldflip .7s ease both}
+.ldpullin{background:#0b1220;border:1px solid #45bdfa55;border-radius:12px;padding:8px;text-align:center;box-shadow:0 8px 24px #45bdfa22}
+.ldpullin img{width:100%;border-radius:8px;aspect-ratio:1;object-fit:cover}
+.ldpull.r-legendary .ldpullin{border-color:#fbbf24;box-shadow:0 8px 28px #fbbf2444}
+.ldpull.r-rare .ldpullin{border-color:#a78bfa}
+@keyframes ldflip{from{transform:rotateY(80deg) scale(.8);opacity:0}to{transform:none;opacity:1}}

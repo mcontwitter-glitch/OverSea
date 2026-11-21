@@ -250,12 +250,16 @@ let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad
 let _offers; const offers = () => (_offers ??= makeOffers({ CFG, chains, bad, HASH, getCollection, feeWallet, cached, royaltyFor: (env, slug) => native().royaltyFor(env, slug), hooks: { onSale: (env, s) => growth().recordSale(env, s) } }));
 // Launchpad: factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
 const isDropOnChain = async (k, factory, drop) => { const c = chains[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
-  return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
+  const abi = (name) => [{ type: 'function', name, stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }];
+  if (await pc.readContract({ address: factory, abi: abi('isDrop'), functionName: 'isDrop', args: [drop] }).catch(() => false)) return true;
+  return pc.readContract({ address: factory, abi: abi('isPacks'), functionName: 'isPacks', args: [drop] }).catch(() => false); };
 let _launchpad; let _launchpadT;
 // Staging Worker (multisea-api-staging): LP_NETWORK = 'testnet' swaps in the testnet factories / escrows / chains.
 const TCH = Object.fromEntries(Object.entries(LPT0.chains).map(([k, c]) => [k, { chainId: c.chainId, rpc: c.rpc, name: c.name, native: c.native, explorer: c.explorer }]));
 const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
-  return pc.readContract({ address: factory, abi: [{ type: 'function', name: 'isDrop', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: 'isDrop', args: [drop] }).catch(() => false); };
+  const abi = (name) => [{ type: 'function', name, stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }];
+  if (await pc.readContract({ address: factory, abi: abi('isDrop'), functionName: 'isDrop', args: [drop] }).catch(() => false)) return true;
+  return pc.readContract({ address: factory, abi: abi('isPacks'), functionName: 'isPacks', args: [drop] }).catch(() => false); };
 const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet, resnapAuto }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr), resnapAuto }));
@@ -285,7 +289,7 @@ async function handle(req, env, url, ctx) {
   if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p, ctx); if (r) return r; }
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
-  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
+  if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'packs', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const a = await lzLegs()(req, env, url, p, M); if (a !== undefined) return a; }
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }

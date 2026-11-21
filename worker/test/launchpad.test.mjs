@@ -422,3 +422,23 @@ test('Solana allowlist addresses are accepted on Solana drops, rejected on EVM-o
   assert.equal(h, root);
   assert.equal((await call('GET', `/launchpad/proof/sol-al/0/${AL[1]}`)).eligible, false);
 });
+
+test('card pack submit: rarity caps, one card per rarity, Solana refused', async () => {
+  const { call, env } = setup();
+  const packs = {
+    packName: 'Island Packs', packSymbol: 'IPACK',
+    rarities: [{ name: 'Common', weight: 70, cap: 70 }, { name: 'Rare', weight: 30, cap: 30 }],
+    cards: [{ rarityId: 1, weight: 0 }, { rarityId: 2, weight: 0 }],
+    tiers: [{ name: 'Standard', cardsPerPack: 5, guaranteedRarity: 2, maxPacks: 0, price: '10000000000000000' }],
+    cardBaseURI: 'ipfs://cards/',
+  };
+  const base = { nftType: 'packs', packs, maxSupply: 100, reveal: 'instant', baseURI: 'ipfs://cards/', creatorReserve: 0 };
+  await assert.rejects(call('POST', '/launchpad/submit', drop({ ...base, slug: 'packs-sol', solana: true })), /Solana|EVM only/);
+  await assert.rejects(call('POST', '/launchpad/submit', drop({ ...base, slug: 'packs-miss', packs: { ...packs, cards: [{ rarityId: 1, weight: 0 }] } })), /at least one card/);
+  const ok = await call('POST', '/launchpad/submit', drop({ ...base, slug: 'island-packs' }));
+  assert.equal(ok.status, 'pending');
+  const stored = await env.COLLECTIONS.get('lpending:island-packs', 'json');
+  assert.equal(stored.nftType, 'packs');
+  assert.equal(stored.maxSupply, 100);
+  assert.equal(stored.packs.tiers[0].guaranteedRarity, 2);
+});

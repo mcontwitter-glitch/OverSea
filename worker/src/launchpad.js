@@ -65,6 +65,19 @@ export const agentKit = ({ mediaBase = '', mediaExt = '', deathURI = '', phases 
 export const DEATH_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/[\w\-.%]+|https:\/\/[\w\-./%]+)\.(png|jpe?g|gif|webp|svg)$/i;
 export const MEDIA_BASE_RE = /^(ipfs:\/\/[A-Za-z0-9]+\/|https:\/\/[\w\-./%]+\/)$/;
 export const MEDIA_EXT_RE = /^\.(png|jpe?g|gif|webp|svg)$/i;
+
+export const PACK_RARITY_C = [{ name: 'name', type: 'string' }, { name: 'weight', type: 'uint32' }, { name: 'cap', type: 'uint32' }];
+export const PACK_CARD_C = [{ name: 'rarityId', type: 'uint8' }, { name: 'weight', type: 'uint32' }];
+export const PACK_TIER_C = [{ name: 'name', type: 'string' }, { name: 'cardsPerPack', type: 'uint8' }, { name: 'guaranteedRarity', type: 'uint8' }, { name: 'maxPacks', type: 'uint32' }, { name: 'price', type: 'uint128' }];
+export const PACK_INIT_T = [{ type: 'tuple', components: [
+  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'packName', type: 'string' }, { name: 'packSymbol', type: 'string' },
+  { name: 'owner', type: 'address' }, { name: 'payout', type: 'address' }, { name: 'feeWallet', type: 'address' }, { name: 'platformFeeBps', type: 'uint16' },
+  { name: 'royaltyReceiver', type: 'address' }, { name: 'royaltyBps', type: 'uint96' }, { name: 'cardBaseURI', type: 'string' }, { name: 'packBaseURI', type: 'string' },
+  { name: 'rarities', type: 'tuple[]', components: PACK_RARITY_C }, { name: 'cards', type: 'tuple[]', components: PACK_CARD_C },
+  { name: 'tiers', type: 'tuple[]', components: PACK_TIER_C }, { name: 'phases', type: 'tuple[]', components: PHASE_T },
+  { name: 'eids', type: 'uint32[]' }, { name: 'hubEid', type: 'uint32' }, { name: 'prices', type: 'uint128[]' }] }];
+export const packConfigHash = p => keccak256(encodeAbiParameters(PACK_INIT_T, [{ ...p, feeWallet: ZERO, platformFeeBps: 0 }]));
+export const PACK_APPROVAL_TYPES = { PackDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'collectionId', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const AGENT_APPROVAL_TYPES = { AgentDropApproval: [{ name: 'creator', type: 'address' }, { name: 'configHash', type: 'bytes32' }, { name: 'salt', type: 'bytes32' }, { name: 'deadline', type: 'uint256' }] };
 export const agentConfigHash = p => keccak256(encodeAbiParameters(AGENT_T, [p]));
 export const DEATH_LIMITS_DEFAULT = { attackerCooldown: 86400, minTargetAge: 604800, grace: 172800, minGap: 86400, targetCooldown: 21600, requestTimeout: 86400 };
@@ -167,7 +180,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   }
 
   function validate(b, creator) {
-    const isAgent = b.nftType === 'erc463n7';
+    const isAgent = b.nftType === 'erc463n7'; const isPack = b.nftType === 'packs';
     const slug = str(b.slug, 40); if (!SLUG.test(slug)) bad('slug must be 3-40 chars a-z 0-9 -');
     const name = str(b.name, 60); if (!name) bad('name required');
     const symbol = str(b.symbol, 12).toUpperCase(); if (!/^[A-Z0-9]{1,12}$/.test(symbol)) bad('symbol must be 1-12 letters/digits');
@@ -243,6 +256,8 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
     const out = { slug, name, symbol, description: str(b.description, 1000), website: str(b.website, 200), x: str(b.x, 200), logo: str(b.logo, 120), banner: str(b.banner, 120),
       mode, copyMode, solana, batchK, batchTMin, chains: chainsSel, allocations, maxSupply, creatorReserve, royaltyBps, royaltyReceiver, payout, reveal, baseURI, preRevealURI, phases, allowlists, metadataHost: str(b.metadataHost, 20) };
     if (isAgent) { out.nftType = 'erc463n7'; out.agent = validateAgent(b, out); }
+    if (isPack) { if (solana) bad('Card packs are EVM only in this release');
+      out.nftType = 'packs'; out.packs = validatePacks(b, out); out.maxSupply = out.packs.rarities.reduce((a, r) => a + r.cap, 0); }
     // MultiSea bridge: the creator prepaid the gas-only listing fee on-chain at review; the server lists it once deployed.
     const bp = b.bridgePrepay;
     if (bp && !isAgent && mode === 'single' && typeof bp.chain === 'string' && chainsSel.includes(bp.chain) && bp.dropId === keccak256(toBytes(slug)) && /^0x[0-9a-fA-F]{64}$/.test(String(bp.tx || '')))
@@ -285,10 +300,78 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   }
 
   // EIP-712 approval for one chain of an approved drop. Creator = the submitter (createDrop: msg.sender; createOmniDrop: p.owner).
+  function validatePacks(b, base) {
+      const src = b.packs || {};
+      const rarities = Array.isArray(src.rarities) ? src.rarities : [];
+      if (!rarities.length || rarities.length > 16) bad('Card packs: 1–16 rarity tiers');
+      const outR = rarities.map((r, i) => {
+        const name = str(r.name, 24) || bad(`rarity ${i + 1}: name`);
+        const weight = int(r.weight, 1, 1_000_000, `rarity ${i + 1} weight`);
+        const cap = int(r.cap, 1, 1_000_000, `rarity ${i + 1} cap`);
+        return { name, weight, cap };
+      });
+      const cards = Array.isArray(src.cards) ? src.cards : [];
+      if (!cards.length || cards.length > 256) bad('Card packs: 1–256 cards in the set');
+      const used = new Set();
+      const outC = cards.map((c, i) => {
+        const rarityId = int(c.rarityId, 1, outR.length, `card ${i + 1} rarity`);
+        used.add(rarityId);
+        return { rarityId, weight: int(c.weight ?? 0, 0, 1_000_000, `card ${i + 1} weight`) };
+      });
+      outR.forEach((r, i) => { if (!used.has(i + 1)) bad(`rarity “${r.name}” needs at least one card`); });
+      const tiers = Array.isArray(src.tiers) ? src.tiers : [];
+      if (!tiers.length || tiers.length > 8) bad('Card packs: 1–8 pack tiers');
+      const outT = tiers.map((x, i) => {
+        const name = str(x.name, 32) || bad(`pack tier ${i + 1}: name`);
+        const cardsPerPack = int(x.cardsPerPack, 1, 20, `pack tier ${i + 1} cards per pack`);
+        const guaranteedRarity = int(x.guaranteedRarity ?? 0, 0, outR.length, `pack tier ${i + 1} guaranteed rarity`);
+        const maxPacks = int(x.maxPacks ?? 0, 0, 1_000_000, `pack tier ${i + 1} max packs`);
+        const price = wei(x.price ?? 0, `pack tier ${i + 1} price`);
+        return { name, cardsPerPack, guaranteedRarity, maxPacks, price, priceUsd: x.priceUsd !== undefined ? Number(x.priceUsd) : undefined };
+      });
+      return { packName: str(src.packName, 60) || (base.name + ' Packs'), packSymbol: str(src.packSymbol, 12) || ((base.symbol || 'PACK').slice(0, 8) + 'P'),
+        rarities: outR, cards: outC, tiers: outT, cardBaseURI: str(src.cardBaseURI || base.baseURI, 200), packBaseURI: str(src.packBaseURI, 200) };
+    }
+    function packParams(d, creator) {
+      const p = d.packs;
+      const eids = d.chains.map(k => LP.eids?.[k] || LP.mainnet?.chains?.[k]?.eid).filter(Boolean);
+      if (eids.length !== d.chains.length) bad('missing LayerZero eid for a selected chain', 501);
+      const hubEid = LP.eids?.[LP.hubChain || 'base'] || LP.mainnet?.chains?.base?.eid;
+      const phases = (d.phases || []).map(x => ({ start: BigInt(x.start), end: BigInt(x.end || 0), price: BigInt(x.price || 0), maxPerWallet: x.maxPerWallet || 0, maxSupply: x.maxSupply || 0, merkleRoot: x.merkleRoot || ZH }));
+      const nP = phases.length, nT = p.tiers.length, nC = d.chains.length;
+      const prices = [];
+      for (let i = 0; i < nC; i++) {
+        const k = d.chains[i];
+        for (let ph = 0; ph < nP; ph++) {
+          for (let t = 0; t < nT; t++) {
+            const tier = p.tiers[t];
+            const fallback = phases[ph].price;
+            const v = d.mode === 'multichain' && tier.prices?.[k] != null ? tier.prices[k] : (tier.price ?? fallback);
+            prices.push(BigInt(v || 0));
+          }
+        }
+      }
+      return {
+        name: d.name, symbol: d.symbol, packName: p.packName, packSymbol: p.packSymbol,
+        owner: creator, payout: d.payout || creator, feeWallet: ZERO, platformFeeBps: 0,
+        royaltyReceiver: d.royaltyReceiver || d.payout || creator, royaltyBps: d.royaltyBps || 0,
+        cardBaseURI: p.cardBaseURI || d.baseURI || '', packBaseURI: p.packBaseURI || '',
+        rarities: p.rarities, cards: p.cards,
+        tiers: p.tiers.map(x => ({ name: x.name, cardsPerPack: x.cardsPerPack, guaranteedRarity: x.guaranteedRarity || 0, maxPacks: x.maxPacks || 0, price: BigInt(x.price || 0) })),
+        phases, eids, hubEid, prices,
+      };
+    }
   function approvalTyped(d, chain, deadline) {
-    const factory = LP.factories?.[chain]; if (!d.chains.includes(chain) || !factory || !chains[chain]) bad('no factory on that chain yet', 501);
-    const creator = lc(d.submitter); const domain = { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory };
+    const creator = lc(d.submitter);
     const ser = x => JSON.parse(JSON.stringify(x, (k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    if (d.nftType === 'packs') {
+      const pf = LP.packDrops?.factories?.[chain]; if (!d.chains.includes(chain) || !pf || !chains[chain]) bad('no pack factory on that chain yet — MultiSea will deploy it first', 501);
+      const ip = packParams(d, creator); const cfg = packConfigHash(ip); const collectionId = collectionIdOf(d.slug, creator);
+      const message = { creator, configHash: cfg, collectionId, deadline };
+      return { typed: { domain: { name: 'MultiSeaPacks', version: '1', chainId: chains[chain].chainId, verifyingContract: pf }, types: PACK_APPROVAL_TYPES, primaryType: 'PackDropApproval', message }, out: { kind: 'packs', mode: d.mode === 'multichain' ? 'packs' : 'packs', chain, factory: pf, collectionId, deadline: deadline.toString(), configHash: cfg, params: ser(ip), slug: d.slug } };
+    }
+    const factory = LP.factories?.[chain]; if (!d.chains.includes(chain) || !factory || !chains[chain]) bad('no factory on that chain yet', 501);
+    const domain = { name: 'MultiSeaLaunchpad', version: '1', chainId: chains[chain].chainId, verifyingContract: factory };
     if (d.nftType === 'erc463n7') {
       const af = AG.enabled && AG.factories?.[chain]; if (!af || !d.chains.includes(chain)) bad('no agent drop factory on that chain yet', 501);
       const ip = agentParams(d, creator); const cfg = agentConfigHash(ip);
@@ -400,13 +483,14 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
           return { ok: true, drop: pub(live) };
         }
         if (!d.chains.includes(chain) || !ADDR.test(address)) bad('bad chain/address');
-        const fac = d.nftType === 'erc463n7' ? (AG.enabled && AG.factories?.[chain]) : LP.factories[chain];
+        const fac = d.nftType === 'erc463n7' ? (AG.enabled && AG.factories?.[chain]) : d.nftType === 'packs' ? (LP.packDrops?.factories?.[chain]) : LP.factories[chain];
         if (!fac || !(await isDropOnChain(chain, fac, address))) bad('address is not a MultiSea launchpad drop on ' + chain);
-        const deployments = [...(d.deployments || []).filter(x => x.chain !== chain), { chain, address }];
+        const deployments = [...(d.deployments || []).filter(x => x.chain !== chain), { chain, address, ...(b.cards && ADDR.test(lc(b.cards)) ? { cards: lc(b.cards) } : {}) }];
         const live = { ...d, deployments, status: 'live' }; await K.put('ldrop:' + d.slug, JSON.stringify(live));
         // Auto-list on MultiSea: the drop becomes a normal approved collection page /c/<slug> (trading uses the 0.5% marketplace fee).
         const col = (await K.get('col:' + d.slug, 'json')) || { slug: d.slug, name: d.name, description: d.description, website: d.website, x: d.x, logo: d.logo, banner: d.banner, escrow: [], submitter: d.submitter, status: 'approved', approvedAt: new Date(now()).toISOString(), source: 'launchpad' };
         col.deployments = deployments;
+        if (d.nftType === 'packs') { col.standard = 'erc1155'; col.nftType = 'packs'; col.cardDeployments = deployments.filter(x => x.cards).map(x => ({ chain: x.chain, address: x.cards })); if (d.mode === 'multichain') col.escrow = (col.escrow || []).concat(d.chains.map(k => LP.packDrops?.escrows?.[k]).filter(Boolean).map(address => ({ chain: Object.keys(LP.packDrops?.escrows || {}).find(k => lc(LP.packDrops.escrows[k]) === lc(address)), address: lc(address) })).filter(x => x.chain && x.address && x.address !== ZERO)); }
         // Multichain: the shared per-chain escrow holds every non-Active copy, so it is excluded from holder counts.
         if (d.mode === 'multichain') col.escrow = deployments.flatMap(x => [...new Set([LP.omniEscrows?.[x.chain], LP.solana?.v2?.escrows?.[x.chain]].filter(Boolean).map(lc))].map(address => ({ chain: x.chain, address }))).filter(x => x.address !== ZERO && x.chain !== 'solana');
         await K.put('col:' + d.slug, JSON.stringify(col));
