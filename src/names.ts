@@ -60,17 +60,37 @@ function paintEl(el: HTMLElement, r: Rec) {
   el.innerHTML = `${r.a && /^https:\/\//.test(r.a) ? `<img class="ensav" src="${esc(r.a)}" alt="" width="16" height="16" loading="lazy" onerror="this.remove()">` : ''}${esc(r.n)}`;
 }
 function paint(a: string) { const r = cache[a] || { n: profileName(a), a: profileAvatar(a), t: Date.now() }; if (!r?.n && !r?.a) return; document.querySelectorAll<HTMLElement>('[data-addr]').forEach(el => { if (el.dataset.addr!.toLowerCase() === a) paintEl(el, r); }); }
-/** Upgrade every [data-addr] currently in the DOM (visible ones first, capped per pass). */
+function isVisible(el: HTMLElement) {
+  const r = el.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  return r.bottom > -80 && r.top < vh + 80 && r.right > 0 && r.left < vw;
+}
+/** Upgrade [data-addr] currently in the DOM. Only visible addresses hit thirdweb ENS RPCs; MultiSea
+ *  /profiles is tried first so opening the Activity tab does not fire tens of eth_call requests. */
 export function hydrateNames(root: ParentNode = document) {
   const want = new Set<string>();
-  root.querySelectorAll<HTMLElement>('[data-addr]').forEach(el => { const a = el.dataset.addr!.toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return; loadProfile(a);
-    if (fresh(cache[a])) paintEl(el, cache[a]); else if (want.size < 60) want.add(a); });
-  want.forEach(a => { if (!inflight.has(a) && !queue.includes(a)) queue.push(a); }); pump();
+  root.querySelectorAll<HTMLElement>('[data-addr]').forEach(el => {
+    const a = el.dataset.addr!.toLowerCase(); if (!/^0x[0-9a-f]{40}$/.test(a)) return;
+    loadProfile(a).then(p => { if (p?.name || p?.avatar) paint(a); });
+    if (fresh(cache[a]) || profileName(a) || profileAvatar(a)) paintEl(el, cache[a] || { n: profileName(a) || null, a: profileAvatar(a) || null, t: Date.now() });
+    else if (isVisible(el) && want.size < 24) want.add(a);
+  });
+  want.forEach(a => {
+    const p = profiles[a];
+    if (p && p.t > Date.now() - PTTL && (p.name || p.avatar)) return;
+    loadProfile(a).then(prof => {
+      if (prof?.name || fresh(cache[a])) return;
+      if (!inflight.has(a) && !queue.includes(a)) { queue.push(a); pump(); }
+    });
+  });
 }
 let started = false;
-/** Auto-hydrate on DOM changes (debounced). Called once by the shell. */
+/** Auto-hydrate on DOM changes and scroll (debounced). Called once by the shell. */
 export function autoNames() {
   if (started || !CID) return; started = true; let t: any = 0;
   const run = () => { clearTimeout(t); t = setTimeout(() => hydrateNames(), 150); };
-  new MutationObserver(run).observe(document.body, { childList: true, subtree: true }); run();
+  new MutationObserver(run).observe(document.body, { childList: true, subtree: true });
+  window.addEventListener('scroll', run, { passive: true });
+  run();
 }

@@ -101,14 +101,24 @@ async function loadLiveOwners() {
   document.documentElement.dataset.ownersLive = ownersLiveAt ? '1' : '0';
 }
 let activity: Row[] = []; let activityLoaded = false; let activityState: 'loading' | 'ok' | 'error' = 'loading';
+let activityMore = false; // browser fallback or LayerZero legs still running after the first paint
 // Activity: live on-chain events only (mint, sent, sale, bridged) on every chain the collection is on. The API returns
-// precomputed transfers with sale prices (GET /activity/<slug>, KV + SWR; includes Robinhood getLogs on the Worker).
-// Any chain listed in `browser` or `failed` (Worker couldn't read it) is still scanned here from the chain RPC as a
-// fallback. src/activitycore.ts turns the raw transfers into rows.
+// precomputed transfers with sale prices (GET /activity/<slug>, KV + SWR; includes Robinhood via Blockscout on the Worker).
+// Rows from that snapshot are painted immediately. Any chain listed in `browser` or `failed` (Worker couldn't read it)
+// is still scanned here from the chain RPC as a fallback, and unpaired bridges are filled in from /activity/lz; both
+// merge into the list in the background. src/activitycore.ts turns the raw transfers into rows. Robinhood log cursors
+// (`ms-act:rl:…` in localStorage) mean a repeat visit only scans new blocks if the Worker still left it to the browser.
 const actKv: Kv = {
   async get(k) { try { return JSON.parse(localStorage.getItem('ms-act:' + k) || 'null') ?? undefined; } catch { return undefined; } },
   async put(k, v) { try { localStorage.setItem('ms-act:' + k, JSON.stringify(v)); } catch {} },
 };
+function paintActivity(state: 'loading' | 'ok' | 'error') {
+  activityState = state;
+  document.documentElement.dataset.activity = activityState;
+  document.documentElement.dataset.activityMore = activityMore ? '1' : '0';
+  perf.newestTs = Math.max(0, ...activity.map(a => +a.ts || 0));
+  if (st.tab === 'activity') render();
+}
 async function loadActivity() {
   if (activityLoaded) return; activityLoaded = true; const t = performance.now();
   const esc = escrowSet(COL); const R = makeRpc(CFG.chains as any); let raw: Raw[] = []; let todo: string[];
@@ -116,30 +126,43 @@ async function loadActivity() {
     const r = await fetch(`${API}/activity/${COL.slug}`, { signal: AbortSignal.timeout(30_000) }); if (!r.ok) throw new Error('HTTP ' + r.status);
     const v = await r.json(); raw = v.raw || []; todo = [...(v.browser || []), ...(v.failed || [])];
   } catch (e: any) { console.warn('[activity api]', e?.message); todo = COL.deployments.map(d => d.chain); }
+  if (raw.length) {
+    activity = assemble(raw, esc);
+    activityMore = !!(todo.length);
+    paintActivity('ok');
+  }
   let ok = 0;
-  await Promise.all(COL.deployments.filter(d => todo.includes(d.chain)).map(async d => {
-    try {
-      const rows = insightOn(d.chain)
-        ? (await collectionTransfers(d.chain, d.address, 200)).map(x => ({ chain: x.chain, contract: d.address.toLowerCase(), id: x.id, from: x.from.toLowerCase(), to: x.to.toLowerCase(), tx: x.tx.toLowerCase(), log: 0, block: x.block, ts: x.ts }))
-        : await rpcTransfers(R, actKv, d.chain, d.address);
-      await annotateSales(R, actKv, CFG.chains as any, d.chain, rows, esc).catch(() => {});
-      raw.push(...rows); ok++;
-    } catch (e: any) { console.warn('[activity]', d.chain, e?.message); }
-  }));
-  activity = assemble(raw, esc); activityState = activity.length || ok ? 'ok' : 'error';
+  if (todo.length) {
+    activityMore = true; if (st.tab === 'activity' && activity.length) paintActivity(activityState);
+    await Promise.all(COL.deployments.filter(d => todo.includes(d.chain)).map(async d => {
+      try {
+        const rows = insightOn(d.chain)
+          ? (await collectionTransfers(d.chain, d.address, 200)).map(x => ({ chain: x.chain, contract: d.address.toLowerCase(), id: x.id, from: x.from.toLowerCase(), to: x.to.toLowerCase(), tx: x.tx.toLowerCase(), log: 0, block: x.block, ts: x.ts }))
+          : await rpcTransfers(R, actKv, d.chain, d.address);
+        await annotateSales(R, actKv, CFG.chains as any, d.chain, rows, esc).catch(() => {});
+        raw.push(...rows); ok++;
+        activity = assemble(raw, esc);
+        if (st.tab === 'activity') paintActivity('ok');
+      } catch (e: any) { console.warn('[activity]', d.chain, e?.message); }
+    }));
+  }
   // Locks/releases with no transfer on another EVM chain (Solana legs, or a leg outside the window): ask LayerZero Scan.
   const un = unpairedBridges(activity);
-  if (un.length) try {
-    const legs: Record<string, Leg> = {}; const need: string[] = [];
-    for (const k of un) { const c = await actKv.get('lz1:' + k.split(':')[1]); if (c) legs[k.split(':')[1]] = c; else need.push(k); }
-    for (let i = 0; i < need.length; i += 40) {
-      const r = await fetch(`${API}/activity/lz?txs=${need.slice(i, i + 40).join(',')}`, { signal: AbortSignal.timeout(30_000) }); if (!r.ok) break;
-      const j = await r.json(); for (const [t, l] of Object.entries(j.legs || {}) as [string, Leg][]) { legs[t] = l; if (l?.peerTx && (l.peer !== 'solana' || l.ts)) await actKv.put('lz1:' + t, l); }
-    }
-    activity = applyLegs(activity, legs);
-  } catch (e: any) { console.warn('[activity lz]', e?.message); }
-  perf.activityMs = performance.now() - t; perf.newestTs = Math.max(0, ...activity.map(a => +a.ts || 0)); document.documentElement.dataset.activity = activityState;
-  if (st.tab === 'activity') render();
+  if (un.length) {
+    activityMore = true; if (st.tab === 'activity') paintActivity(activity.length || ok ? 'ok' : activityState);
+    try {
+      const legs: Record<string, Leg> = {}; const need: string[] = [];
+      for (const k of un) { const c = await actKv.get('lz1:' + k.split(':')[1]); if (c) legs[k.split(':')[1]] = c; else need.push(k); }
+      for (let i = 0; i < need.length; i += 40) {
+        const r = await fetch(`${API}/activity/lz?txs=${need.slice(i, i + 40).join(',')}`, { signal: AbortSignal.timeout(30_000) }); if (!r.ok) break;
+        const j = await r.json(); for (const [tx, l] of Object.entries(j.legs || {}) as [string, Leg][]) { legs[tx] = l; if (l?.peerTx && (l.peer !== 'solana' || l.ts)) await actKv.put('lz1:' + tx, l); }
+      }
+      activity = applyLegs(activity, legs);
+    } catch (e: any) { console.warn('[activity lz]', e?.message); }
+  }
+  activityMore = false;
+  perf.activityMs = performance.now() - t;
+  paintActivity(activity.length || ok ? 'ok' : 'error');
 }
 let primVol: Record<string, number> | null = null; // launchpad drops: primary mint volume read from chain
 let offerData: OffersPayload = { offers: [], contracts: {}, best: {} };
@@ -454,6 +477,7 @@ function activityView() {
   const label = (a: Row) => a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'bridge' ? 'Bridged' : 'Sent';
   const route = (a: Row) => a.type !== 'bridge' ? '' : `<small class="mut">${a.dir === 'out' ? `from ${cn(a.chain)}` : a.dir === 'in' ? `to ${cn(a.chain2!)}` : `${cn(a.chain)} → ${cn(a.chain2!)}`}</small>`;
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
+   ${activityMore ? '<div class="actmore">Loading more chains…</div>' : ''}
    ${rows.slice(0, 200).map(a => { const it = byId.get(a.id); const u = txUrl(a.chain, a.tx), u2 = a.tx2 && a.chain2 ? txUrl(a.chain2, a.tx2) : ''; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
      <span class="ai" data-id="${a.id}">${it ? (isOrd(it.id) ? ordKit!.ordThumb(ordById.get(it.id)!.iid, '').replace('<img', '<img width="40" height="40"') : thumb(it, false, 40)) : ''}<span>${esc(it?.name || '#' + a.id)}</span></span>
      <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrLink(a.from)}</span><span>${addrLink(a.to)}</span>

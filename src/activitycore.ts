@@ -68,7 +68,8 @@ export async function rpcTransfers(R: RpcApi, kv: Kv, k: string, contract: strin
   const got = await R.batch(k, miss.map(b => ['eth_getBlockByNumber', ['0x' + b.toString(16), false]] as [string, any[]]), 25);
   await Promise.all(miss.map((b, i) => { const t = got[i] ? parseInt(got[i].timestamp, 16) : 0; if (t) { bt[b] = t; return kv.put(`bt:${k}:${b}`, t); } }));
   rows.forEach(r => { if (!r.ts) r.ts = bt[r.block] || 0; });
-  if (rows.every(r => r.ts)) await kv.put(ck, { upto: head, rows });
+  // Persist even if a few block times are missing; otherwise every visit re-scans the full window range.
+  await kv.put(ck, { upto: head, rows });
   return rows;
 }
 
