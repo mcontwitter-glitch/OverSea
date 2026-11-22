@@ -1,14 +1,22 @@
 // GET /activity/<slug>: raw on-chain transfers (with Seaport sale price/currency resolved) of one static collection on
 // every chain it is deployed on; the page turns them into Mint / Sent / Sale / Bridged rows (src/activitycore.ts).
-// Insight covers Ethereum, Base, Abstract, ApeChain, BNB. Other EVM chains (Robinhood has no indexer) are read here
-// with eth_getLogs via the chain's fallback RPCs (the first official RPC 403s Cloudflare; publicnode/drpc do not).
-// A chain in `failed` or `browser` could not be read here; the page still scans those itself as a fallback.
+// Insight covers Ethereum, Base, Abstract, ApeChain, BNB. Other EVM chains (Robinhood has no Insight indexer) are
+// read here with eth_getLogs via fallback RPCs. Those RPCs 403 Cloudflare IPs, so Robinhood (and any other chain
+// whose explorer is Blockscout) falls back to the public Blockscout token-transfer API, which is reachable
+// without a key. A chain in `failed` or `browser` could not be read here; the page still scans those itself.
 // The */5 cron precomputes each static collection into KV ('act:<slug>'). GET serves that snapshot through the
 // shared stale-while-revalidate cache (60s fresh / 4 min SWR). Log cursors ('actkv:rl:…') stay in KV so later
 // Robinhood scans only cover new blocks. Receipts, token symbols and block times stay in the Cache API (30 days).
 import { makeRpc, rpcTransfers, annotateSales, escrowSet, isEscrowCopy, PER_CHAIN } from '../../src/activitycore.ts';
 const INSIGHT = 'https://insight.thirdweb.com';
 const INSIGHT_CHAINS = ['ethereum', 'base', 'abstract', 'apechain', 'bnb'];
+// Blockscout hosts (Robinhood's explorer among them) sit on Cloudflare and need a same-site Referer or
+// the edge serves a challenge page (HTTP 403) instead of JSON. No API key.
+function blockscoutOrigin(c) {
+  const ex = String(c?.explorer || '');
+  try { const u = new URL(ex); if (!/\.blockscout\.com$/i.test(u.hostname)) return null; return u.origin; }
+  catch { return null; }
+}
 const IMMUTABLE = 30 * 86400;
 export const ACT_TTL = 60, ACT_SWR = 240, ACT_REWRITE_SEC = 1800, ACT_MAX_AGE_SEC = 3 * 3600;
 
@@ -47,10 +55,53 @@ export function makeActivity({ chains, lc, STATIC, cached }) {
     return d.map(x => ({ chain: k, contract: lc(contract), id: +x.token_id, from: lc(x.from_address), to: lc(x.to_address), tx: lc(x.transaction_hash), log: +x.log_index || 0, block: +x.block_number, ts: Math.floor(Date.parse(x.block_timestamp) / 1000) }));
   }
 
+  async function blockscoutTransfers(k, contract) {
+    const origin = blockscoutOrigin(chains[k]);
+    if (!origin) throw new Error('no blockscout for ' + k);
+    const headers = {
+      accept: 'application/json',
+      referer: origin + '/',
+      origin,
+    };
+    const rows = [];
+    let path = '/api/v2/tokens/' + contract + '/transfers';
+    for (let page = 0; page < 8 && rows.length < PER_CHAIN; page++) {
+      const r = await fetch(origin + path, { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error('blockscout ' + k + ' ' + r.status);
+      const j = await r.json();
+      for (const it of j.items || []) {
+        const id = Number(it.total?.token_id ?? it.total?.token_instance?.id);
+        if (!Number.isFinite(id)) continue;
+        rows.push({
+          chain: k, contract: lc(contract), id,
+          from: lc(it.from?.hash || it.from), to: lc(it.to?.hash || it.to),
+          tx: lc(it.transaction_hash), log: Number(it.log_index) || 0,
+          block: Number(it.block_number) || 0,
+          ts: Math.floor(Date.parse(it.timestamp) / 1000) || 0,
+        });
+        if (rows.length >= PER_CHAIN) break;
+      }
+      const n = j.next_page_params;
+      if (!n || !(j.items || []).length) break;
+      const qs = new URLSearchParams();
+      if (n.block_number != null) qs.set('block_number', String(n.block_number));
+      if (n.index != null) qs.set('index', String(n.index));
+      path = '/api/v2/tokens/' + contract + '/transfers?' + qs.toString();
+    }
+    return rows;
+  }
+
   async function chainRows(env, kv, esc, d) {
-    const rows = INSIGHT_CHAINS.includes(d.chain)
-      ? await insightTransfers(env, d.chain, d.address)
-      : await rpcTransfers(R, kv, d.chain, d.address);
+    let rows;
+    if (INSIGHT_CHAINS.includes(d.chain)) rows = await insightTransfers(env, d.chain, d.address);
+    else {
+      try { rows = await rpcTransfers(R, kv, d.chain, d.address); }
+      catch (e) {
+        if (!blockscoutOrigin(chains[d.chain])) throw e;
+        console.warn('activity', d.chain, 'rpc failed, trying blockscout', e?.message);
+        rows = await blockscoutTransfers(d.chain, d.address);
+      }
+    }
     const kept = rows.filter(r => !isEscrowCopy(r, esc));
     await annotateSales(R, kv, chains, d.chain, kept, esc).catch(e => console.warn('activity sales', d.chain, e?.message));
     return kept;

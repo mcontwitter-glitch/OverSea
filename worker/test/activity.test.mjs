@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeActivity, ACT_MAX_AGE_SEC, ACT_REWRITE_SEC } from '../src/activity.js';
 import { solAllowed, SOL_READ } from '../src/solrpc.js';
+import { CORS_ALLOW_HEADERS, corsHeaders } from '../src/cors.js';
 import { assemble, escrowSet, PER_CHAIN } from '../../src/activitycore.ts';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -214,4 +215,64 @@ test('handle serves the snapshot as JSON (or empty raw for an unknown slug)', as
   const body = await res.json();
   assert.equal(body.raw[0].id, 9);
   assert.match(res.headers.get('cache-control') || '', /stale-while-revalidate/);
+});
+
+
+test('CORS allows the solana-client preflight header @solana/web3.js sends', () => {
+  assert.match(CORS_ALLOW_HEADERS, /solana-client/);
+  assert.match(CORS_ALLOW_HEADERS, /content-type/);
+  const env = { ALLOWED_ORIGINS: 'https://multisea.io' };
+  const h = corsHeaders(new Request('https://api.multisea.io/rpc/solana', { headers: { origin: 'https://multisea.io' } }), env);
+  assert.ok(h);
+  assert.equal(h['access-control-allow-origin'], 'https://multisea.io');
+  assert.match(h['access-control-allow-headers'], /solana-client/);
+  assert.match(h['access-control-allow-methods'], /POST/);
+  const local = corsHeaders(new Request('https://api.multisea.io/rpc/solana', { headers: { origin: 'http://127.0.0.1:4173' } }), env);
+  assert.equal(local['access-control-allow-origin'], 'http://127.0.0.1:4173');
+  assert.equal(corsHeaders(new Request('https://api.multisea.io/rpc/solana', { headers: { origin: 'https://evil.example' } }), env), null);
+});
+
+test('build falls back to Blockscout token transfers when every Robinhood RPC returns 403', async () => {
+  const prev = globalThis.fetch;
+  const addr = COL.deployments[1].address;
+  const col = { ...COL };
+  const chainsBs = {
+    ...chains,
+    robinhood: { ...chains.robinhood, explorer: 'https://robinhoodchain.blockscout.com' },
+  };
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://insight.thirdweb.com')) {
+      return json({ data: { data: [{ token_id: '1', from_address: ZERO, to_address: '0x' + '11'.repeat(20), transaction_hash: '0xaaa', log_index: 0, block_number: 99, block_timestamp: '2026-01-01T00:00:00.000Z' }] } });
+    }
+    if (url.includes('rh-forbidden') || url.includes('rh-ok')) return new Response('no', { status: 403 });
+    if (url.startsWith('https://robinhoodchain.blockscout.com/api/v2/tokens/')) {
+      const ref = init?.headers?.referer || init?.headers?.Referer;
+      assert.match(String(ref || ''), /robinhoodchain\.blockscout\.com/);
+      return json({
+        items: [{
+          block_number: 118423464, log_index: 22, timestamp: '2026-11-19T18:18:10.000000Z',
+          transaction_hash: '0xccc',
+          from: { hash: '0x' + '11'.repeat(20) },
+          to: { hash: '0x' + '22'.repeat(20) },
+          total: { token_id: '11' },
+        }],
+        next_page_params: null,
+      });
+    }
+    throw new Error('unexpected fetch ' + url);
+  };
+  try {
+    const kv = memoryKv();
+    const A = makeActivity({ chains: chainsBs, lc, STATIC: { islands: col } });
+    const snap = await A.build({ COLLECTIONS: kv, THIRDWEB_CLIENT_ID: 'test' }, col);
+    assert.deepEqual(snap.failed, []);
+    assert.deepEqual(snap.browser, []);
+    assert.ok(snap.raw.some(r => r.chain === 'base' && r.id === 1));
+    const rh = snap.raw.find(r => r.chain === 'robinhood' && r.id === 11);
+    assert.ok(rh, 'robinhood transfer came from Blockscout');
+    assert.equal(rh.tx, '0xccc');
+    assert.equal(rh.block, 118423464);
+    assert.ok(rh.ts > 1_700_000_000);
+  } finally { globalThis.fetch = prev; }
 });

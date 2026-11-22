@@ -21,6 +21,7 @@ import { makeWalletLink } from './walletlink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
 import { solAllowed, solFanout } from './solrpc.js';
+import { corsHeaders } from './cors.js';
 import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
@@ -47,12 +48,6 @@ const hits = new Map();
 function limited(ip, max = 60) {
   const now = Date.now(), w = (hits.get(ip) || []).filter(t => now - t < 60_000); w.push(now); hits.set(ip, w);
   if (hits.size > 5000) hits.clear(); return w.length > max;
-}
-function corsHeaders(req, env) {
-  const o = req.headers.get('origin') || '';
-  const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const ok = allowed.includes(o) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
-  return ok ? { 'access-control-allow-origin': o, 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': 'content-type,authorization', 'access-control-max-age': '86400', vary: 'origin' } : null;
 }
 class HttpError extends Error { constructor(status, msg, extra) { super(msg); this.status = status; this.extra = extra; } }
 const bad = (m, s = 400) => { throw new HttpError(s, m); };
