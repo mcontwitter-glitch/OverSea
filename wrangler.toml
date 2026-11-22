@@ -1,0 +1,6 @@
+# Cloudflare Pages config for the static site (dist/). Only used if multisea.io moves from GitHub Pages to
+# Cloudflare Pages (see public/_headers for the cache rules). The API Worker has its own config in worker/wrangler.toml.
+# Deploy (after `npm run build`): npx wrangler pages deploy dist --project-name multisea-site --branch main
+name = "multisea-site"
+pages_build_output_dir = "./dist"
+compatibility_date = "2025-09-01"
