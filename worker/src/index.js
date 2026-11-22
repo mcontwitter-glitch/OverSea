@@ -20,7 +20,7 @@ import { makeSolanaLink } from './solanalink.js';
 import { makeWalletLink } from './walletlink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
-import { solAllowed, solFanout } from './solrpc.js';
+import { solAllowed, solFanout, solRpcError } from './solrpc.js';
 import { corsHeaders } from './cors.js';
 import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
@@ -475,7 +475,10 @@ async function handle(req, env, url, ctx) {
     const calls = Array.isArray(j) ? j : [j]; if (!calls.length || calls.length > 20) bad('bad batch');
     if (p[1] === 'solana') {
       const why = solAllowed(calls); if (why) bad(why, why.startsWith('method') ? 403 : 400);
-      return new Response(JSON.stringify(await solFanout(j)), { headers: { 'content-type': 'application/json' } });
+      try { return new Response(JSON.stringify(await solFanout(j)), { headers: { 'content-type': 'application/json' } }); }
+      // Upstream timeout/HTTP errors: JSON-RPC error on 200 so Chrome does not log "Failed to load resource: 500"
+      // and the collection page can retry the public RPC from the browser.
+      catch (e) { return new Response(JSON.stringify(solRpcError(j, e)), { headers: { 'content-type': 'application/json' } }); }
     }
     const c = chains[p[1]]; if (!c) bad('unknown chain', 404);
     for (const x of calls) if (!RPC_READ.has(x?.method)) bad('method not allowed: ' + String(x?.method).slice(0, 40), 403);

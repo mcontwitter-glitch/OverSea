@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeActivity, ACT_MAX_AGE_SEC, ACT_REWRITE_SEC } from '../src/activity.js';
-import { solAllowed, SOL_READ } from '../src/solrpc.js';
+import { solAllowed, SOL_READ, solRpcError, solRaceOpts, SOL_HEAVY_TIMEOUT_MS } from '../src/solrpc.js';
 import { CORS_ALLOW_HEADERS, corsHeaders } from '../src/cors.js';
 import { assemble, escrowSet, PER_CHAIN } from '../../src/activitycore.ts';
 
@@ -275,4 +275,23 @@ test('build falls back to Blockscout token transfers when every Robinhood RPC re
     assert.equal(rh.block, 118423464);
     assert.ok(rh.ts > 1_700_000_000);
   } finally { globalThis.fetch = prev; }
+});
+
+test('solRaceOpts gives getMultipleAccounts a longer timeout than the default 3s hedge', () => {
+  const heavy = solRaceOpts({ jsonrpc: '2.0', id: 1, method: 'getMultipleAccounts', params: [] });
+  assert.equal(heavy.timeoutMs, SOL_HEAVY_TIMEOUT_MS);
+  assert.ok(heavy.timeoutMs > 3000);
+  const light = solRaceOpts({ jsonrpc: '2.0', id: 1, method: 'getHealth' });
+  assert.equal(light.timeoutMs, undefined);
+});
+
+test('solRpcError is a JSON-RPC error body that keeps the request id (for an HTTP 200 reply)', () => {
+  const one = solRpcError({ jsonrpc: '2.0', id: 'abc', method: 'getMultipleAccounts' }, new Error('https://solana-rpc.publicnode.com timeout'));
+  assert.equal(one.id, 'abc');
+  assert.equal(one.error.code, -32603);
+  assert.match(one.error.message, /publicnode/);
+  const batch = solRpcError([{ id: 1 }, { id: 2 }], 'boom');
+  assert.equal(batch.length, 2);
+  assert.equal(batch[0].id, 1);
+  assert.equal(batch[1].error.message, 'boom');
 });
