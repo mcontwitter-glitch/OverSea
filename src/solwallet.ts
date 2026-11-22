@@ -2,6 +2,7 @@
 // hidden until the mainnet program exists (config/launchpad.json solana.programId).
 import { Connection, PublicKey, Transaction, type TransactionInstruction } from '@solana/web3.js';
 import LP from '../config/launchpad.json';
+import APP from '../config/app.json';
 import { addBroadcast, sendWallet, priorityFee, budget, TxExpired } from './soltx';
 
 import { sol, onSol, connectSolWallet, disconnectSolWallet, solWalletOptions, type SolProv } from './solconnect';
@@ -12,7 +13,12 @@ export const SOL_WALLETS = [
   { id: 'phantom', name: 'Phantom', url: 'https://phantom.app/' },
   { id: 'solflare', name: 'Solflare', url: 'https://solflare.com/' },
 ];
-export const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || (LP as any).solana?.rpc || 'https://api.mainnet-beta.solana.com';
+// Reads go through the Worker (POST /rpc/solana) when the API base is set, so the collection page does not
+// hit solana-rpc.publicnode.com from the browser. VITE_SOLANA_RPC still wins (local validator / a private RPC).
+// Signed sends still broadcast to SOL_SEND_RPC, not through the Worker.
+const API: string = (import.meta as any).env?.VITE_API_BASE || (APP as any).apiBase || '';
+const PUBLIC_SOL: string = (LP as any).solana?.rpc || 'https://solana-rpc.publicnode.com';
+export const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || (API ? String(API).replace(/\/$/, '') + '/rpc/solana' : PUBLIC_SOL);
 /** The public RPC (publicnode) answers at most 10 accounts per getMultipleAccounts ("403: A maximum of 10 accounts is allowed"):
  *  split bigger reads. Patched on the connection itself so the LayerZero SDK's reads through it are split too. */
 export function chunkMulti<T extends Connection>(c: T, max = 10): T {

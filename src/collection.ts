@@ -102,8 +102,9 @@ async function loadLiveOwners() {
 }
 let activity: Row[] = []; let activityLoaded = false; let activityState: 'loading' | 'ok' | 'error' = 'loading';
 // Activity: live on-chain events only (mint, sent, sale, bridged) on every chain the collection is on. The API returns
-// Insight-chain transfers with sale prices (GET /activity/<slug>); Robinhood (no indexer, and its RPC refuses the API)
-// and any chain the API couldn't read are read here from the chain RPC. src/activitycore.ts turns them into rows.
+// precomputed transfers with sale prices (GET /activity/<slug>, KV + SWR; includes Robinhood getLogs on the Worker).
+// Any chain listed in `browser` or `failed` (Worker couldn't read it) is still scanned here from the chain RPC as a
+// fallback. src/activitycore.ts turns the raw transfers into rows.
 const actKv: Kv = {
   async get(k) { try { return JSON.parse(localStorage.getItem('ms-act:' + k) || 'null') ?? undefined; } catch { return undefined; } },
   async put(k, v) { try { localStorage.setItem('ms-act:' + k, JSON.stringify(v)); } catch {} },
