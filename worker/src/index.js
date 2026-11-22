@@ -20,6 +20,7 @@ import { makeSolanaLink } from './solanalink.js';
 import { makeWalletLink } from './walletlink.js';
 import { makeShare } from './share.js';
 import { makeActivity } from './activity.js';
+import { solAllowed, solFanout } from './solrpc.js';
 import { makeLzLegs } from './lzlegs.js';
 import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
@@ -287,7 +288,7 @@ let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, A
 let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch, wl: walletLink() }));
 let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
-let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
+let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC, cached }));
 let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
 let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc }));
@@ -302,7 +303,7 @@ async function handle(req, env, url, ctx) {
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'packs', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const a = await lzLegs()(req, env, url, p, M); if (a !== undefined) return a; }
-  { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
+  { const a = await activity().handle(req, env, url, p, M, ctx); if (a !== undefined) return a; }
   { const n = await islandNfts()(req, env, url, p, M, ctx); if (n !== undefined) return n; }
   // Live owners per static collection, built by the */5 cron (src/owners.js). 404 = not built / too old: the browser reads chain itself.
   if (M === 'GET' && p[0] === 'owners' && p.length === 2) {
@@ -474,10 +475,14 @@ async function handle(req, env, url, ctx) {
     if (M !== 'POST') bad('method not allowed', 405);
     if (!corsHeaders(req, env)) bad('origin not allowed', 403);
     if (limited('rpc:' + (req.headers.get('cf-connecting-ip') || 'x'), 300)) bad('rate limited', 429);
-    const c = chains[p[1]]; if (!c) bad('unknown chain', 404);
     const txt = await req.text(); if (txt.length > 64_000) bad('too large', 413);
     let j; try { j = JSON.parse(txt); } catch { bad('bad json'); }
     const calls = Array.isArray(j) ? j : [j]; if (!calls.length || calls.length > 20) bad('bad batch');
+    if (p[1] === 'solana') {
+      const why = solAllowed(calls); if (why) bad(why, why.startsWith('method') ? 403 : 400);
+      return new Response(JSON.stringify(await solFanout(j)), { headers: { 'content-type': 'application/json' } });
+    }
+    const c = chains[p[1]]; if (!c) bad('unknown chain', 404);
     for (const x of calls) if (!RPC_READ.has(x?.method)) bad('method not allowed: ' + String(x?.method).slice(0, 40), 403);
     // Rarely-changing contract reads (phases(), supply counters, name...) are cached briefly per call (src/rpccache.js).
     const ttls = calls.map(rpcCacheTtl);
@@ -673,10 +678,11 @@ async function handle(req, env, url, ctx) {
 
 export default {
   async scheduled(event, env, ctx) {
-    // '*/5 * * * *': live owner snapshots (GET /owners/<slug>) and the Island wallet NFT counts.
+    // '*/5 * * * *': live owner snapshots (GET /owners/<slug>), Island wallet NFT counts, and collection activity (GET /activity/<slug>).
     if (event?.cron === '*/5 * * * *') {
       ctx.waitUntil(owners().refreshAll(env).then(r => console.log('owners', JSON.stringify(r))).catch(e => console.log('owners error', e?.message)));
       ctx.waitUntil(islandNfts().warm?.(env, ctx)?.then(r => console.log('island nfts warm', r)).catch(e => console.log('island nfts warm error', e?.message)));
+      ctx.waitUntil(activity().refreshAll(env).then(r => console.log('activity', JSON.stringify(r))).catch(e => console.log('activity error', e?.message)));
       return;
     }
     // '*/15 * * * *' (and any other trigger): re-validate native listings, then precompute each collection's listings into KV.

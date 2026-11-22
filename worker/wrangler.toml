@@ -26,7 +26,7 @@ ADMIN_ADDRESSES = "0xca89ae48a5c61d13e78236daa4ac29ee588ea475"
 STATIC_EDITORS = '{"lil-foots":["0xca89ae48a5c61d13e78236daa4ac29ee588ea475"]}'
 
 # */15: re-validate MultiSea native listings (fills, cancels, transfers, expiry), then precompute listings into KV ('nl:<slug>').
-# */5: live owner snapshots for GET /owners/<slug> ('owners:<slug>') and the Island wallet NFT counts. Both use the
+# */5: live owner snapshots for GET /owners/<slug> ('owners:<slug>'), Island wallet NFT counts, and collection activity for GET /activity/<slug> ('act:<slug>'). These use the
 # existing COLLECTIONS KV namespace; snapshots are only rewritten when they change (or every 30-60 min).
 [triggers]
 crons = ["*/15 * * * *", "*/5 * * * *"]
