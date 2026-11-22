@@ -4,6 +4,7 @@ import { Connection, PublicKey, Transaction, type TransactionInstruction } from 
 import LP from '../config/launchpad.json';
 import APP from '../config/app.json';
 import { addBroadcast, sendWallet, priorityFee, budget, TxExpired } from './soltx';
+import { firstGoodSolRead } from './solreadfetch';
 
 import { sol, onSol, connectSolWallet, disconnectSolWallet, solWalletOptions, type SolProv } from './solconnect';
 type Prov = SolProv;
@@ -14,24 +15,33 @@ export const SOL_WALLETS = [
   { id: 'solflare', name: 'Solflare', url: 'https://solflare.com/' },
 ];
 // Reads go through the Worker (POST /rpc/solana) when the API base is set, so the collection page does not
-// hit solana-rpc.publicnode.com from the browser. VITE_SOLANA_RPC still wins (local validator / a private RPC).
+// hit solana-rpc.publicnode.com from the browser first. Cloudflare egress often times out on that same
+// publicnode URL; if the Worker returns a JSON-RPC error (or is slow), we hedge to publicnode from the
+// browser, which can reach it. VITE_SOLANA_RPC still wins (local validator / a private RPC).
 // Signed sends still broadcast to SOL_SEND_RPC, not through the Worker.
 const API: string = (import.meta as any).env?.VITE_API_BASE || (APP as any).apiBase || '';
 const PUBLIC_SOL: string = (LP as any).solana?.rpc || 'https://solana-rpc.publicnode.com';
 export const SOL_RPC: string = (import.meta as any).env?.VITE_SOLANA_RPC || (API ? String(API).replace(/\/$/, '') + '/rpc/solana' : PUBLIC_SOL);
+const CUSTOM_SOL = !!(import.meta as any).env?.VITE_SOLANA_RPC;
+const SOL_READ_URLS: string[] = CUSTOM_SOL ? [SOL_RPC] : (API ? [SOL_RPC, PUBLIC_SOL] : [PUBLIC_SOL]);
+export { firstGoodSolRead } from './solreadfetch';
 /** The public RPC (publicnode) answers at most 10 accounts per getMultipleAccounts ("403: A maximum of 10 accounts is allowed"):
- *  split bigger reads. Patched on the connection itself so the LayerZero SDK's reads through it are split too. */
-export function chunkMulti<T extends Connection>(c: T, max = 10): T {
+ *  split bigger reads, a few chunks at a time. Patched on the connection itself so the LayerZero SDK's reads through it are split too. */
+export function chunkMulti<T extends Connection>(c: T, max = 10, conc = 3): T {
   const orig = c.getMultipleAccountsInfoAndContext.bind(c);
   (c as any).getMultipleAccountsInfoAndContext = async (keys: PublicKey[], cfg?: any) => {
     if (keys.length <= max) return orig(keys, cfg);
     const parts: PublicKey[][] = []; for (let i = 0; i < keys.length; i += max) parts.push(keys.slice(i, i + max));
-    const rs = await Promise.all(parts.map(p => orig(p, cfg)));
+    const rs: Awaited<ReturnType<typeof orig>>[] = new Array(parts.length);
+    let i = 0;
+    await Promise.all(Array.from({ length: Math.min(conc, parts.length) }, async () => {
+      while (i < parts.length) { const n = i++; rs[n] = await orig(parts[n], cfg); }
+    }));
     return { context: rs[0].context, value: rs.flatMap(r => r.value) };
   };
   return c;
 }
-export const solConn = chunkMulti(new Connection(SOL_RPC, 'confirmed'));
+export const solConn = chunkMulti(new Connection(SOL_RPC, { commitment: 'confirmed', fetch: (url, init) => firstGoodSolRead(SOL_READ_URLS, init || {}) as any }));
 // Second broadcast RPC for signed transactions (public, browser-friendly); not used for reads or on a test validator.
 export const SOL_SEND_RPC = (import.meta as any).env?.VITE_SOLANA_RPC ? '' : 'https://solana.leorpc.com/?api_key=FREE';
 if (SOL_SEND_RPC) addBroadcast(new Connection(SOL_SEND_RPC, 'confirmed'));
