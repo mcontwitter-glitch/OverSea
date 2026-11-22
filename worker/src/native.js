@@ -17,6 +17,8 @@ const TYPES = {
 const SEA = parseAbi(['function getCounter(address) view returns (uint256)', 'function getOrderStatus(bytes32) view returns (bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize)']);
 const EV = parseAbi(['event OrderCancelled(bytes32 orderHash, address indexed offerer, address indexed zone)', 'event CounterIncremented(uint256 newCounter, address indexed offerer)']);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Cron-precomputed listings ('nl:<slug>'): used while younger than 50 min; an unchanged copy is rewritten every 30 min.
+export const PRE_MAX_AGE_MS = 50 * 60_000, PRE_REWRITE_MS = 30 * 60_000;
 const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)']);
 
 export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks = {} }) {
@@ -77,9 +79,10 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   // Same check, but RPC trouble becomes a friendly 503 (details go to the Worker log).
   const liveOrFail = (k, p, hash) => live(k, p, hash).catch(e => { console.log('native rpc', k, e?.shortMessage || e?.message); bad(`Couldn't reach the ${chains[k].name} network. Please try again in a moment.`, 503); });
   const key = (k, p, hash) => `ord:${k}:${lc(p.offer[0].token)}:${p.offer[0].identifierOrCriteria}:${hash}`;
-  const bust = async slug => { if (slug) await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {}); };
+  // A write (list / remove / cancel / fill / drop) purges the edge copy and the cron-precomputed KV copy ('nl:<slug>').
+  const bust = async (slug, env) => { if (!slug) return; await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {}); if (env?.COLLECTIONS) await env.COLLECTIONS.delete('nl:' + slug).catch(() => {}); };
   async function drop(env, k, rec, why, opt = {}) {
-    await env.COLLECTIONS.delete(key(k, rec.parameters, rec.hash)); await bust(rec.slug);
+    await env.COLLECTIONS.delete(key(k, rec.parameters, rec.hash)); await bust(rec.slug, env);
     if (why === 'filled') {
       const fw = lc(feeWallet(env)); const cons = rec.parameters.consideration;
       const feeWei = cons.filter(c => c.recipient === fw).reduce((s, c) => s + BigInt(c.startAmount), 0n);
@@ -111,31 +114,59 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     const l = await liveOrFail(k, p, hash); if (!l.ok) bad(l.why === 'not-approved' ? 'approve Seaport for this collection first' : 'order not valid on-chain: ' + l.why);
     const rec = { chain: k, hash, parameters: p, signature: b.signature, priceWei: total.toString(), slug: slugs[0], createdAt: new Date().toISOString() };
     await env.COLLECTIONS.put(key(k, p, hash), JSON.stringify(rec), { metadata: { p: total.toString(), s: p.offerer, e: Number(p.endTime) }, expiration: Math.max(Number(p.endTime), Math.floor(Date.now() / 1000) + 120) });
-    for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/n:' + s)).catch(() => {});
+    for (const s of slugs) await bust(s, env);
     if (hooks.onList) await hooks.onList(env, p.offerer, k).catch(() => {});
     return { ok: true, orderHash: hash };
   }
 
   async function records(env, col) {
-    const out = [];
-    for (const d of col.deployments || []) {
-      let cursor; do { const l = await env.COLLECTIONS.list({ prefix: `ord:${d.chain}:${lc(d.address)}:`, cursor }); cursor = l.list_complete ? null : l.cursor; for (const kk of l.keys) out.push({ name: kk.name, chain: d.chain }); } while (cursor);
-    }
-    return out;
+    // One KV list chain per deployment, run in parallel (was one deployment after another).
+    const per = await Promise.all((col.deployments || []).map(async d => {
+      const out = []; let cursor;
+      do { const l = await env.COLLECTIONS.list({ prefix: `ord:${d.chain}:${lc(d.address)}:`, cursor }); cursor = l.list_complete ? null : l.cursor; for (const kk of l.keys) out.push({ name: kk.name, chain: d.chain }); } while (cursor);
+      return out;
+    }));
+    return per.flat();
   }
-  // Public listings for a collection; invalid orders are pruned on read (60s fresh, 60s SWR, 2 min bound).
+  // Build the public listing rows. checkLive=false is used right after the cron sweep (which just validated every order).
+  async function compute(env, col, checkLive = true) {
+    const recs = await records(env, col); const out = [];
+    await Promise.all(recs.map(async r => {
+      const rec = await env.COLLECTIONS.get(r.name, 'json'); if (!rec) return;
+      if (checkLive) {
+        const l = await live(r.chain, rec.parameters, rec.hash).catch(() => ({ ok: true })); // RPC hiccup: keep
+        if (!l.ok) { await drop(env, r.chain, rec, l.why); return; }
+      }
+      out.push({ source: 'multisea', chain: r.chain, id: Number(rec.parameters.offer[0].identifierOrCriteria), price: Number(rec.priceWei) / 1e18, currency: chains[r.chain].native, orderHash: rec.hash, protocolAddress: lc(SEAPORT), seller: rec.parameters.offerer, endTime: Number(rec.parameters.endTime) });
+    }));
+    return out.sort((a, b) => a.chain.localeCompare(b.chain) || a.id - b.id || a.orderHash.localeCompare(b.orderHash));
+  }
+  // Public listings for a collection: the cron-precomputed KV copy when present (purged on every write), else built live
+  // with on-chain validation. Edge-cached 60s fresh + 240s stale-while-revalidate.
   async function listings(env, slug, ctx) {
     const col = await getCollection(env, slug); if (!col) bad('not found', 404);
     return cached(`n:${slug}`, 60, async () => {
-      const recs = await records(env, col); const out = [];
-      await Promise.all(recs.map(async r => {
-        const rec = await env.COLLECTIONS.get(r.name, 'json'); if (!rec) return;
-        const l = await live(r.chain, rec.parameters, rec.hash).catch(() => ({ ok: true })); // RPC hiccup: keep
-        if (!l.ok) { await drop(env, r.chain, rec, l.why); return; }
-        out.push({ source: 'multisea', chain: r.chain, id: Number(rec.parameters.offer[0].identifierOrCriteria), price: Number(rec.priceWei) / 1e18, currency: chains[r.chain].native, orderHash: rec.hash, protocolAddress: lc(SEAPORT), seller: rec.parameters.offerer, endTime: Number(rec.parameters.endTime) });
-      }));
-      return out;
-    }, 60, ctx);
+      const pre = await env.COLLECTIONS.get('nl:' + slug, 'json').catch(() => null);
+      const now = Date.now();
+      if (pre?.at && now - pre.at < PRE_MAX_AGE_MS && Array.isArray(pre.listings)) return pre.listings.filter(l => l.endTime * 1000 > now);
+      return compute(env, col);
+    }, 240, ctx);
+  }
+  // Cron (after sweep): store each collection's listings in KV 'nl:<slug>'. Written only on change or when older than 1h.
+  async function precompute(env, slugs) {
+    const res = {};
+    for (const slug of slugs) {
+      try {
+        const col = await getCollection(env, slug); if (!col) continue;
+        const rows = await compute(env, col, false);
+        const prev = await env.COLLECTIONS.get('nl:' + slug, 'json').catch(() => null);
+        if (prev && JSON.stringify(prev.listings) === JSON.stringify(rows) && Date.now() - prev.at < PRE_REWRITE_MS) { res[slug] = 'unchanged'; continue; }
+        await env.COLLECTIONS.put('nl:' + slug, JSON.stringify({ at: Date.now(), listings: rows }));
+        await caches.default.delete(new Request('https://cache.multisea/n:' + slug)).catch(() => {});
+        res[slug] = rows.length;
+      } catch (e) { res[slug] = 'error ' + (e?.message || e); }
+    }
+    return res;
   }
   async function getOrder(env, k, hash) {
     const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` });
@@ -147,7 +178,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   async function remove(env, k, hash, address) {
     const l = await env.COLLECTIONS.list({ prefix: `ord:${k}:` }); const name = l.keys.find(x => x.name.endsWith(':' + lc(hash)))?.name; if (!name) bad('order not found', 404);
     const rec = await env.COLLECTIONS.get(name, 'json'); if (lc(rec.parameters.offerer) !== lc(address)) bad('only the seller can remove this listing', 403);
-    await env.COLLECTIONS.delete(name); if (rec.slug) await caches.default.delete(new Request('https://cache.multisea/n:' + rec.slug)).catch(() => {});
+    await env.COLLECTIONS.delete(name); await bust(rec.slug, env);
     return { ok: true, note: 'Removed from MultiSea. The signed order stays valid on-chain until it expires; cancel on-chain or call Seaport incrementCounter() to invalidate all your open orders.' };
   }
   // Instant removal after an on-chain Seaport.cancel: verify isCancelled (or the tx's OrderCancelled event), then delete.
@@ -197,5 +228,5 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
   async function fills(env) {
     const l = await env.COLLECTIONS.list({ prefix: 'nfill:' }); return (await Promise.all(l.keys.slice(-100).map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).reverse();
   }
-  return { cancelled, counterBumped, list, listings, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean, dropByHash, typedData };
+  return { cancelled, counterBumped, list, listings, precompute, getOrder, remove, sweep, fills, royaltyFor, orderHash, clean, dropByHash, typedData };
 }

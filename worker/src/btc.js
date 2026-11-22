@@ -56,6 +56,9 @@ export function makeBtcRoutes({ bad }) {
         if (!all) { all = (await getJ(`${BTC.indexer.mainnet}/collection/${encodeURIComponent(p[4])}/inscriptions`)).map(x => ({ id: x.id, num: x.num, name: x.meta?.name })); await env.COLLECTIONS.put(ck, JSON.stringify(all), { expirationTtl: 3600 }); }
         return { total: all.length, items: all.slice(off, off + lim) };
       }
+      // ord's own JSON (authoritative location / sat / content type) for one inscription; ordinals.com sends no CORS headers,
+      // so the browser asks here (src/btc/data.ts inscription()).
+      if (p[3] === 'r' && p[4] === 'inscription' && p.length === 6) { if (!ID.test(p[5])) bad('bad inscription id'); const b = ordBase(env, n); if (!b) bad(`no ${n} indexer configured`, 503); return getJ(`${b}/r/inscription/${p[5]}`, { 'user-agent': 'MultiSea/1.0 (+https://multisea.io)' }); } // ord answers 403 without a UA
       if (n === 'mainnet') return getJ(`${BTC.indexer.mainnet}/${rest}`, env.ORD_API_KEY ? { 'x-api-key': env.ORD_API_KEY } : {});
       const b = ordBase(env, n); if (!b) bad(`no ${n} indexer configured`, 503);
       if (p[3] === 'wallet') { const a = p[4]; if (!B.isAddr(a, n)) bad('bad address'); const j = await getJ(`${b}/address/${a}`); const items = await Promise.all((j.inscriptions || []).slice(0, 100).map(async id => { const r = await getJ(`${b}/r/inscription/${id}`).catch(() => null); return r && { id, num: r.number, contentType: r.content_type, outpoint: r.satpoint?.split(':').slice(0, 2).join(':'), value: r.value }; })); return { balance: j.sat_balance ?? null, items: items.filter(Boolean) }; }

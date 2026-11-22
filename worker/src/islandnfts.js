@@ -110,14 +110,36 @@ export function makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }) {
     }));
     return { counts: Object.fromEntries(Object.entries(counts).filter(([, v]) => v > 0)), usd: px ? Object.fromEntries(Object.entries(usd).filter(([, v]) => v >= 0.005).map(([i, v]) => [i, Math.round(v * 100) / 100])) : {}, failed, at: Math.floor(Date.now() / 1000) };
   }
-  return async function handle(req, env, url, p, M) {
+  // KV copy 'cache:island-wallets:v4' (1h expiry) + 60s edge copy. A stale KV copy is served at once and rebuilt in the
+  // background (was: rebuilt inline, ~5s on a cold edge). The */5 cron keeps it warm (warm()).
+  const KK = 'cache:island-wallets:v4', EDGE = () => new Request('https://cache.multisea/island-wallet-nfts:v4');
+  const isStale = (v, now) => now - v.at > (v.failed?.length ? 60 : 600);
+  let rebuilding = null;
+  async function rebuild(env) {
+    if (rebuilding) return rebuilding;
+    rebuilding = (async () => {
+      const v = await build(env);
+      if (env.COLLECTIONS) await env.COLLECTIONS.put(KK, JSON.stringify(v), { expirationTtl: 3600 }).catch(() => {});
+      await caches.default.put(EDGE(), new Response(JSON.stringify(v), { headers: { 'cache-control': 'public, max-age=60' } })).catch(() => {});
+      return v;
+    })().finally(() => { rebuilding = null; });
+    return rebuilding;
+  }
+  async function handle(req, env, url, p, M, ctx) {
     if (!(M === 'GET' && p[0] === 'islands' && p[1] === 'wallet-nfts' && p.length === 2)) return undefined;
-    const key = new Request('https://cache.multisea/island-wallet-nfts:v4');
-    const hit = await caches.default.match(key); if (hit) return hit.json();
-    const KV = env.COLLECTIONS, kk = 'cache:island-wallets:v4'; const now = Math.floor(Date.now() / 1000);
-    let v = KV ? await KV.get(kk, 'json').catch(() => null) : null;
-    if (!v || now - v.at > (v.failed?.length ? 60 : 600)) { v = await build(env); if (KV) await KV.put(kk, JSON.stringify(v), { expirationTtl: 3600 }).catch(() => {}); }
-    await caches.default.put(key, new Response(JSON.stringify(v), { headers: { 'cache-control': 'public, max-age=60' } }));
+    const hit = await caches.default.match(EDGE()); if (hit) return hit.json();
+    const KV = env.COLLECTIONS; const now = Math.floor(Date.now() / 1000);
+    const v = KV ? await KV.get(KK, 'json').catch(() => null) : null;
+    if (!v) return rebuild(env);
+    if (isStale(v, now)) { const bg = rebuild(env).catch(() => {}); if (ctx?.waitUntil) ctx.waitUntil(bg); }
+    else await caches.default.put(EDGE(), new Response(JSON.stringify(v), { headers: { 'cache-control': 'public, max-age=60' } })).catch(() => {});
     return v;
+  }
+  handle.warm = async env => {
+    const v = env.COLLECTIONS ? await env.COLLECTIONS.get(KK, 'json').catch(() => null) : null;
+    // Rebuild a bit before the read path would call it stale, so visitors rarely see a stale copy.
+    if (v && Math.floor(Date.now() / 1000) - v.at < (v.failed?.length ? 30 : 400)) return 'fresh';
+    const n = await rebuild(env); return 'rebuilt' + (n.failed?.length ? ' (failed: ' + n.failed.join(',') + ')' : '');
   };
+  return handle;
 }

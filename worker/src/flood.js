@@ -11,6 +11,8 @@ export function edgeTtl(url, req) {
   if (p.startsWith('/activity/')) return 30;
   if (p === '/islands/wallet-nfts') return 30;
   if (p === '/health') return 15;
+  if (/^\/owners\/[a-z0-9-]+$/.test(p)) return 60;
+  if (/^\/btc\/ord\/mainnet\/r\/inscription\/[0-9a-f]{64}i\d+$/.test(p)) return 60;
   if (/^\/os\/[^/]+\/stats$/.test(p)) return 60;
   if (/^\/os\/[^/]+\/(listings|items)$/.test(p)) return 30;
   if (p === '/collections' || /^\/collections\/[^/]+$/.test(p)) return 30;

@@ -25,6 +25,9 @@ import { makeIslandNfts } from './islandnfts.js';
 import { makeSolMeta } from './solmeta.js';
 import { handleOnchainUri } from './onchainuri.js';
 import { edgeTtl, edgeCacheKey, floodBlock } from './flood.js';
+import { rpcRace } from './rpcrace.js';
+import { makeOwners } from './owners.js';
+import { rpcCacheTtl, rpcCacheKey } from './rpccache.js';
 import LP from '../../config/launchpad.json';
 import LPT0 from '../../config/launchpad.testnet.json'; // STAGING only (env.LP_NETWORK = 'testnet'); the live Worker never sets it
 
@@ -59,39 +62,45 @@ const footTba = id => getContractAddress({ opcode: 'CREATE2', from: FOOT_REG, sa
 const osFetch = (env, path, init = {}) => fetch(OS + path, { ...init, headers: { 'x-api-key': env.OPENSEA_API_KEY, accept: 'application/json', 'content-type': 'application/json', ...(init.headers || {}) } });
 // Foot wallet NFT list cache (seconds); see GET /foot/<id>/nfts.
 const FW_TTL = 30, FW_TTL_PARTIAL = 10, FW_MIN_AGE = 10;
-// Listing GETs: 60s fresh, then serve stale up to 60s more while refreshing (stale bound ~2 min).
-const LISTING_TTL = 60, LISTING_SWR = 60;
+// Listing GETs: 60s fresh, then serve stale up to 4 min more while refreshing in the background (stale bound ~5 min).
+// Writes (list / remove / cancel / fill) purge the cache, and buying re-validates the order on-chain, so stale is safe.
+const LISTING_TTL = 60, LISTING_SWR = 240;
 const listingCC = `public, max-age=${LISTING_TTL}, stale-while-revalidate=${LISTING_SWR}`;
 function listingJson(body) {
   return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json', 'cache-control': listingCC } });
 }
-async function cached(key, ttl, fn, swrTtl = 0, ctx) {
+// Edge-cache memo with stale-while-revalidate: fresh for `ttl`s; then for `swrTtl`s more the stored copy is returned at once
+// and refreshed in the background (ctx.waitUntil). If a refresh fails, a copy up to STALE_IF_ERROR old is still served.
+// Concurrent misses in one isolate share one fn() call. Default stale window when a ctx is given: 4 x ttl.
+const STALE_IF_ERROR = 3600; const inflight = new Map();
+async function cached(key, ttl, fn, swrTtl, ctx) {
+  const swr = swrTtl ?? (ctx ? ttl * 4 : 0);
   const cache = caches.default; const req = new Request('https://cache.multisea/' + key);
-  const put = val => cache.put(req, new Response(JSON.stringify(val), { headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl + (swrTtl || 0)}`, 'x-ms-cached-at': String(Date.now()) } }));
-  const refresh = () => fn().then(put).catch(() => {});
-  const hit = await cache.match(req);
+  const put = val => cache.put(req, new Response(JSON.stringify(val), { headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl + swr + STALE_IF_ERROR}`, 'x-ms-cached-at': String(Date.now()) } })).catch(() => {});
+  const run = () => {
+    let pr = inflight.get(key);
+    if (!pr) { pr = (async () => { const v = await fn(); await put(v); return v; })().finally(() => inflight.delete(key)); inflight.set(key, pr); }
+    return pr;
+  };
+  const hit = await cache.match(req).catch(() => null);
   if (hit) {
     const at = Number(hit.headers.get('x-ms-cached-at') || 0);
     const age = at ? (Date.now() - at) / 1000 : 0;
     if (!at || age < ttl) return hit.json();
-    if (swrTtl > 0 && age < ttl + swrTtl) { if (ctx?.waitUntil) ctx.waitUntil(refresh()); else refresh(); return hit.json(); }
+    if (swr > 0 && age < ttl + swr) { const bg = run().catch(() => {}); if (ctx?.waitUntil) ctx.waitUntil(bg); return hit.json(); }
+    try { return await run(); } catch (e) { if (age < ttl + swr + STALE_IF_ERROR) return hit.json(); throw e; }
   }
-  const val = await fn(); await put(val); return val;
+  return run();
 }
 const RPC_READ = new Set(['eth_call', 'eth_chainId', 'eth_blockNumber', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_getTransactionByHash', 'eth_getBlockByNumber', 'eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_feeHistory', 'eth_estimateGas', 'net_version']);
-// Try each configured RPC in order (2 rounds); an HTTP error, a non-JSON body or a JSON-RPC rate-limit/internal error moves on to the next.
+// Hedged across the configured RPCs (src/rpcrace.js): the next URL starts if one hasn't answered in ~400ms or fails;
+// each attempt times out after 3s (8s for big batches); 2 passes over the list. An HTTP error, non-JSON body or rate-limit error moves on.
 async function rpcFanout(c, payload) {
-  const urls = c.rpcs?.length ? c.rpcs : [c.rpc]; let last = 'no rpc';
-  for (let round = 0; round < 2; round++) for (const u of urls) {
-    try {
-      const r = await fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
-      if (!r.ok) { last = u + ' HTTP ' + r.status; continue; }
-      const out = await r.json(); const arr = Array.isArray(out) ? out : [out];
-      if (arr.some(x => x?.error && (x.error.code === -32005 || x.error.code === -32603 || /rate|limit|capacity|timeout|unavailable/i.test(x.error.message || '')))) { last = u + ' ' + (arr.find(x => x.error).error.message || ''); continue; }
-      return out;
-    } catch (e) { last = u + ' ' + (e?.message || e); }
-  }
-  bad('all RPCs failed for ' + c.name + ': ' + last.slice(0, 160), 502);
+  const urls = c.rpcs?.length ? c.rpcs : [c.rpc];
+  // Big payloads (multicall batches from the Worker itself) get the old 8s per attempt; browser-sized reads 3s.
+  const big = JSON.stringify(payload).length > 4000;
+  try { return await rpcRace(urls, payload, big ? { timeoutMs: 8000, hedgeMs: 1500 } : {}); }
+  catch (e) { bad('all RPCs failed for ' + c.name + ': ' + String(e?.message || e).slice(0, 160), 502); }
 }
 async function rpcCall(chainKey, to, data) {
   const c = chains[chainKey]; if (!c) return null;
@@ -281,6 +290,7 @@ let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
 let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC }));
 let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
+let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc }));
 let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
 
@@ -293,7 +303,12 @@ async function handle(req, env, url, ctx) {
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'packs', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };
   { const a = await lzLegs()(req, env, url, p, M); if (a !== undefined) return a; }
   { const a = await activity().handle(req, env, url, p, M); if (a !== undefined) return a; }
-  { const n = await islandNfts()(req, env, url, p, M); if (n !== undefined) return n; }
+  { const n = await islandNfts()(req, env, url, p, M, ctx); if (n !== undefined) return n; }
+  // Live owners per static collection, built by the */5 cron (src/owners.js). 404 = not built / too old: the browser reads chain itself.
+  if (M === 'GET' && p[0] === 'owners' && p.length === 2) {
+    const snap = await owners().get(env, p[1]); if (!snap) bad('no owner snapshot', 404);
+    return new Response(JSON.stringify(snap), { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=60, stale-while-revalidate=240' } });
+  }
   // Profiles before growth so GET /profile/nfts is not swallowed by growth's GET /profile/:address.
   { const wr = await walletLink().handle(req, env, url, p, M, body); if (wr !== undefined) return wr; }
   { const sl = await solanaLink().handle(req, env, url, p, M, body); if (sl !== undefined) return sl; }
@@ -464,6 +479,16 @@ async function handle(req, env, url, ctx) {
     let j; try { j = JSON.parse(txt); } catch { bad('bad json'); }
     const calls = Array.isArray(j) ? j : [j]; if (!calls.length || calls.length > 20) bad('bad batch');
     for (const x of calls) if (!RPC_READ.has(x?.method)) bad('method not allowed: ' + String(x?.method).slice(0, 40), 403);
+    // Rarely-changing contract reads (phases(), supply counters, name...) are cached briefly per call (src/rpccache.js).
+    const ttls = calls.map(rpcCacheTtl);
+    if (ttls.every(t => t > 0)) {
+      const out = await Promise.all(calls.map(async (x, i) => {
+        const res = await cached(await rpcCacheKey(p[1], x), ttls[i], async () => { const r = await rpcFanout(c, { jsonrpc: '2.0', id: 1, method: x.method, params: x.params }); if (r?.error && !(r.error.code === 3 || /revert/i.test(r.error.message || ''))) throw new Error('rpc error'); return r?.error ? { error: r.error } : { result: r.result }; }, ttls[i], ctx)
+          .catch(() => null);
+        return res ? { jsonrpc: '2.0', id: x.id ?? null, ...(res.error ? { error: res.error } : { result: res.result }) } : null;
+      }));
+      if (out.every(Boolean)) return new Response(JSON.stringify(Array.isArray(j) ? out : out[0]), { headers: { 'content-type': 'application/json', 'x-ms-rpc-cache': '1' } });
+    }
     return new Response(JSON.stringify(await rpcFanout(c, j)), { headers: { 'content-type': 'application/json' } });
   }
 
@@ -648,7 +673,15 @@ async function handle(req, env, url, ctx) {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r))));
+    // '*/5 * * * *': live owner snapshots (GET /owners/<slug>) and the Island wallet NFT counts.
+    if (event?.cron === '*/5 * * * *') {
+      ctx.waitUntil(owners().refreshAll(env).then(r => console.log('owners', JSON.stringify(r))).catch(e => console.log('owners error', e?.message)));
+      ctx.waitUntil(islandNfts().warm?.(env, ctx)?.then(r => console.log('island nfts warm', r)).catch(e => console.log('island nfts warm error', e?.message)));
+      return;
+    }
+    // '*/15 * * * *' (and any other trigger): re-validate native listings, then precompute each collection's listings into KV.
+    ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r)))
+      .then(() => native().precompute(env, Object.keys(STATIC))).then(r => console.log('native precompute', JSON.stringify(r))).catch(e => console.log('native sweep error', e?.message)));
     ctx.waitUntil(offers().sweep(env).then(r => console.log('offers sweep', JSON.stringify(r))).catch(e => console.log('offers sweep error', e?.message)));
     if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
   },
@@ -662,8 +695,8 @@ export default {
     if (url.pathname.startsWith('/onchain-uri/')) { const r = await handleOnchainUri(req, env, url, { chains: { ...chains, ...(LP.mainnet?.chains || {}) }, kv: env.COLLECTIONS }); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
-    // Separate buckets: RPC/media traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
-    const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/');
+    // Separate buckets: RPC/media/owner-snapshot traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
+    const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') || url.pathname.startsWith('/owners/'); // /owners replaces ~140 browser RPC calls
     if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '10', ...H } });
     const ttl = edgeTtl(url, req);
     const cache = globalThis.caches?.default;
