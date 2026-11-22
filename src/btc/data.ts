@@ -57,7 +57,9 @@ export const collItems = (slug: string): Promise<any[]> => once('ci:' + slug, as
   return J(`${OW}/collection/${slug}/inscriptions`);
 });
 export async function inscription(id: string): Promise<Ins> {
-  const [o, r] = await Promise.all([J(`${OW}/inscription/${id}`).catch(() => null), J(`https://ordinals.com/r/inscription/${id}`).catch(() => null)]);
+  // ord's JSON comes through the Worker (ordinals.com sends no CORS headers, so a direct browser fetch always failed).
+  const ordR = apiFeatures.includes('btc') ? J(`${API}/btc/ord/mainnet/r/inscription/${id}`).catch(() => null) : Promise.resolve(null);
+  const [o, r] = await Promise.all([J(`${OW}/inscription/${id}`).catch(() => null), ordR]);
   if (!o && !r) throw new Error('inscription not found');
   const meta = o?.meta || {}; // ordinals.com (ord itself) is authoritative for location; Ordinals Wallet adds collection + traits
   return { id, num: r?.number ?? o?.num, name: meta.name || `Inscription #${(r?.number ?? o?.num)?.toLocaleString()}`, contentType: r?.content_type || o?.content_type, sat: r?.sat ?? o?.sat ?? null,

@@ -22,11 +22,11 @@ async function liveStatic() {
   const DS = await import('./dropstats');
   await Promise.all(CFG.collections.map(async c => {
     const card = cards.find(x => x.slug === c.slug), s = sums[c.slug]; if (!card || !s) return;
+    // Listings start right away, alongside the chain reads (they used to wait for primaryVolume, ~4s on a slow RPC).
+    const osP = fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null);
+    const nrP = fetch(`${API}/native/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null);
     const prim = await DS.primaryVolume(c.deployments);
-    const [osr, nr, holders] = await Promise.all([
-      fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API}/native/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
-      prim ? DS.uniqueHolders(c as any) : null]);
+    const [osr, nr, holders] = await Promise.all([osP, nrP, prim ? DS.uniqueHolders(c as any) : null]);
     if (prim) card.volume = DS.volText(DS.addVol(prim, s.volume || {}));
     if (holders) card.owners = holders.toLocaleString();
     if (osr || nr) {

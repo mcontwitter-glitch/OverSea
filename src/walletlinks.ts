@@ -17,10 +17,11 @@ export function forgetWallets() { cache.clear(); }
 /** address -> profile primary for the linked ones (and primaries that have links). Batched by 100. */
 export async function resolveProfiles(addrs: string[]): Promise<Record<string, string>> {
   const list = [...new Set(addrs.map(key))], out: Record<string, string> = {};
-  for (let i = 0; i < list.length; i += 100) {
-    const part = list.slice(i, i + 100);
+  const parts: string[][] = []; for (let i = 0; i < list.length; i += 100) parts.push(list.slice(i, i + 100));
+  // Chunks run in parallel (was one after another, ~0.7s each).
+  await Promise.all(parts.map(async part => {
     try { const r = await fetch(`${API}/profile/resolve?addresses=${part.join(',')}`); if (r.ok) Object.assign(out, (await r.json()).map || {}); } catch { /* unmerged rows */ }
-  }
+  }));
   return out;
 }
 async function call(method: 'GET' | 'POST', path: string, body?: any) {

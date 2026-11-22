@@ -1,10 +1,12 @@
 // Live ownership from chain (ownerOf via Multicall3), layered over the static owners snapshot.
 // The snapshot (public/data/<slug>/owners.json) is built at deploy time and never refreshes, so a later
 // mint, bridge, or escrow flush kept showing stale per-chain Held / In vault/escrow numbers.
-// Every chain is swept once on page load (refresh re-reads). Multicall3 is one eth_call per chunk;
-// if a chunk fails (RPC size or 429, as on Robinhood), it is retried in groups of 20.
-import { parseAbi, type Hex } from 'viem';
-import { bulkClient } from './wallet';
+// The Worker's */5 cron builds the same ownerOf sweep for the static collections (GET /owners/<slug>, worker/src/owners.js),
+// so a page load is one request instead of ~23 eth_calls per chain from the browser. Any chain the snapshot lacks (failed
+// on the Worker, or the endpoint is down / older than 3h) is still swept here: Multicall3 is one eth_call per chunk;
+// if a chunk fails (RPC size or 429, as on Robinhood), it is retried in groups of 20. Pass { fresh: true } to skip the snapshot.
+import { parseAbi, getAddress, type Hex } from 'viem';
+import { bulkClient, API } from './wallet';
 import { MC3 } from './footkit';
 
 export type Loc = { chain: string; owner: string; also?: { chain: string; owner: string }[] };
@@ -40,15 +42,36 @@ async function ownersOn(chain: string, token: string, ids: number[]): Promise<Ma
   return out;
 }
 
+type OwnerSnap = { v: number; slug: string; at: number; idStart: number; idEnd: number; addrs: string[]; chains: Record<string, { address: string; o: number[] }>; failed: string[] };
+/** Worker snapshot as chain:address -> Map(id -> owner). null if unavailable or not for this id range. */
+async function snapshotOwners(col: Col): Promise<{ by: Map<string, Map<number, string>>; at: number } | null> {
+  try {
+    const r = await fetch(`${API}/owners/${col.slug}`, { signal: AbortSignal.timeout(6000) }); if (!r.ok) return null;
+    const s = await r.json() as OwnerSnap;
+    if (s?.v !== 1 || s.idStart !== col.idStart || s.idEnd !== col.idEnd || !Array.isArray(s.addrs)) return null;
+    const addrs = s.addrs.map(a => { try { return getAddress(a); } catch { return a; } });
+    const by = new Map<string, Map<number, string>>();
+    for (const [chain, v] of Object.entries(s.chains || {})) {
+      if (!Array.isArray(v.o) || v.o.length !== s.idEnd - s.idStart + 1) continue;
+      const m = new Map<number, string>(); v.o.forEach((j, i) => { if (j >= 0 && addrs[j]) m.set(s.idStart + i, addrs[j]); });
+      by.set(`${chain}:${v.address.toLowerCase()}`, m);
+    }
+    return { by, at: s.at };
+  } catch { return null; }
+}
+
 /** Returns live owners for every id (null if no chain could be read: the caller keeps the snapshot). */
-export async function liveOwners(col: Col, snap: Record<string, Loc>): Promise<{ owners: Record<string, Loc>; stats: LiveStats; failed: string[]; at: number } | null> {
+export async function liveOwners(col: Col, snap: Record<string, Loc>, opts: { fresh?: boolean } = {}): Promise<{ owners: Record<string, Loc>; stats: LiveStats; failed: string[]; at: number } | null> {
   const ids = Array.from({ length: col.idEnd - col.idStart + 1 }, (_, i) => col.idStart + i);
   const esc = new Set((col.escrow || []).map(e => `${e.chain}:${e.address.toLowerCase()}`));
   const isEsc = (chain: string, a: string) => esc.has(`${chain}:${a.toLowerCase()}`);
   const origin = (col.deployments.find(d => d.original) || col.deployments.find(d => (col.escrow || []).some(e => e.chain === d.chain)) || col.deployments[0])?.chain;
   const failed: string[] = []; const read: Record<string, Map<number, string>> = {};
   const src: Record<string, string> = {};
+  const remote = opts.fresh ? null : await snapshotOwners(col);
   await Promise.all(col.deployments.map(async d => {
+    const pre = remote?.by.get(`${d.chain}:${d.address.toLowerCase()}`);
+    if (pre) { read[d.chain] = pre; src[d.chain] = 'api'; return; }
     try { read[d.chain] = await ownersOn(d.chain, d.address, ids); src[d.chain] = 'rpc'; }
     catch {
       try {
@@ -80,5 +103,5 @@ export async function liveOwners(col: Col, snap: Record<string, Loc>): Promise<{
     const own = [...m.values()]; const live = own.filter(o => !isEsc(d.chain, o));
     stats[d.chain] = { held: own.length, inEscrow: own.length - live.length, live: live.length, holders: new Set(live.map(o => o.toLowerCase())).size };
   }
-  return { owners, stats, failed, at: Date.now() };
+  return { owners, stats, failed, at: remote && Object.values(src).every(v => v === 'api') ? remote.at : Date.now() };
 }
