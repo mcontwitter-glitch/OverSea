@@ -1,0 +1,33 @@
+# Cloudflare Pages response headers (ignored by GitHub Pages, where it is just a static file).
+# Rules are additive; "! Cache-Control" drops the value set by the catch-all rule before setting a new one.
+
+# HTML and anything not listed below: always revalidate (picks up a new deploy immediately).
+# CORS * matches what GitHub Pages sends today (other origins read /data/*.json and images).
+/*
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
+  Access-Control-Allow-Origin: *
+
+# Vite output: file names carry a content hash, so they never change.
+/assets/*
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+# Item art (card thumbnails + modal images, incl. the animated Island webps). Treated as immutable: if an image is
+# ever replaced, write it under a new path (or add ?v=) so returning visitors get the new file.
+/img/*
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+# Brand images are referenced with ?v=<hash> by postbuild; chain logos rarely change.
+/brand/*
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+/logos/*
+  ! Cache-Control
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+# Build-time data snapshots: short cache, served stale while a new copy loads.
+/data/*
+  ! Cache-Control
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600

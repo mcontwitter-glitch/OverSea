@@ -1,0 +1,1 @@
+export{F as profileWallets}from"./wallet-Dw6Qb1k5.js";

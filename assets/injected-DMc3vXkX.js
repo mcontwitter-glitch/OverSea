@@ -1,0 +1,1 @@
+export{t as autoConnectEip1193Wallet,n as connectEip1193Wallet}from"./injected-B9J1D8fm.js";
