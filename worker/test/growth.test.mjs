@@ -27,7 +27,7 @@ function setup(over = {}) {
     status: async () => [false, false, 0n, 0n], counter: async () => 0n, verify: async (k, args) => verifyTypedData(args).catch(() => false), receipt: async (k, h) => over.receipts?.[h] || null, tx: async (k, h) => over.txs?.[h] || null, relayStatus: async (e, id) => over.relay?.[id] || null };
   const relayFetch = async () => ({ ok: false, status: 503, json: async () => ({ message: 'offline' }) });
   const native = makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet: e => lc(e.FEE_WALLET), cached: async (k, t, f) => f() });
-  const g = makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet: e => lc(e.FEE_WALLET), admins: e => e.ADMIN_ADDRESSES.split(','), requireSession: async req => { const s = sessions[req.headers.get('authorization')]; if (!s) bad('sign in', 401); return { address: lc(s) }; }, canEdit: async (e, slug, a) => ({ ok: lc(a) === '0xca89ae48a5c61d13e78236daa4ac29ee588ea475' }), relayFetch, chain: chainStub });
+  const g = makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet: e => lc(e.FEE_WALLET), admins: e => e.ADMIN_ADDRESSES.split(','), requireSession: async req => { const s = sessions[req.headers.get('authorization')]; if (!s) bad('sign in', 401); return { address: lc(s) }; }, canEdit: async (e, slug, a) => ({ ok: lc(a) === '0xca89ae48a5c61d13e78236daa4ac29ee588ea475' }), relayFetch, chain: { ...chainStub, ...(over.chain || {}) }, saveCollectionPatch: async (e, slug, patch) => { (over.saved ||= []).push(patch); } });
   const call = async (method, path, b, auth) => { const url = new URL('https://x' + path); const p = url.pathname.split('/').filter(Boolean); const req = new Request(url, { method, headers: auth ? { authorization: auth } : {}, body: b ? JSON.stringify(b) : undefined }); try { return { s: 200, j: await g.handle(req, env, url, p, method, async () => b, native) }; } catch (e) { return { s: e.status || 500, j: { error: e.message } }; } };
   return { env, g, native, call };
 }
@@ -130,4 +130,44 @@ test('bundles: same-chain multi-item order verified; cross-chain flagged experim
     const rec = JSON.parse(env.COLLECTIONS.m.get('bundle:' + x.j.id)); rec.lock.until = Date.now() - 1; env.COLLECTIONS.m.set('bundle:' + x.j.id, JSON.stringify(rec));
     const after = (await call('GET', `/bundles/${x.j.id}`)).j.bundle; assert.equal(after.status, 'partial'); assert.deepEqual(after.legs.map(l => l.status).sort(), ['filled', 'withdrawn']);
   }
+});
+
+test('vault mode: registration verified on-chain, royalty routed per chain, fee share ledger only, fund recorded from the fee wallet, old payout path closed', async () => {
+  const founder = privateKeyToAccount(generatePrivateKey()).address; const VAULT = '0x' + 'aa'.repeat(20), FACT = '0x' + 'fa'.repeat(20);
+  CFG.revshareVaults = { factories: { [LILCHAIN]: FACT } };
+  const saved = []; const dep = LIL.deployments.find(d => d.chain === LILCHAIN);
+  const chain = { vaultOf: async (k, f, c) => (k === LILCHAIN && f === FACT && c === lc(dep.address) ? VAULT : null), vaultInfo: async () => ({ owner: lc(founder), collection: lc(dep.address), totalSupply: 100, firstId: 1 }) };
+  const ADMIN = '0xca89ae48a5c61d13e78236daa4ac29ee588ea475';
+  const FUNDTX = '0x' + 'cd'.repeat(32);
+  const { env, g, call } = setup({ saved, chain, sessions: { F: founder, ADM: ADMIN, FEEW: FEE }, royalty: { recipient: '0x' + '44'.repeat(20), bps: 500 },
+    receipts: { [FUNDTX]: { status: 'success' } }, txs: { [FUNDTX]: { to: VAULT, from: FEE, value: 125000000000000000n } } });
+  // registration guards: terms, caps, wrong vault, non-owner
+  assert.equal((await call('POST', `/revshare/${LIL.slug}/vaults`, { chain: LILCHAIN, vault: VAULT, feeShareBps: 5000, royaltyBps: 500 }, 'ADM')).s, 400, 'terms required');
+  assert.equal((await call('POST', `/revshare/${LIL.slug}/vaults`, { chain: LILCHAIN, vault: VAULT, feeShareBps: 9000, royaltyBps: 500, acceptedTerms: true }, 'ADM')).s, 400, 'fee cap');
+  assert.equal((await call('POST', `/revshare/${LIL.slug}/vaults`, { chain: LILCHAIN, vault: '0x' + 'bb'.repeat(20), feeShareBps: 5000, royaltyBps: 500, acceptedTerms: true }, 'ADM')).s, 409, 'not the factory vault');
+  assert.equal((await call('POST', `/revshare/${LIL.slug}/vaults`, { chain: LILCHAIN, vault: VAULT, feeShareBps: 5000, royaltyBps: 500, acceptedTerms: true }, 'F')).s, 403, 'canEdit required');
+  const ok = await call('POST', `/revshare/${LIL.slug}/vaults`, { chain: LILCHAIN, vault: VAULT, feeShareBps: 5000, royaltyBps: 500, acceptedTerms: true }, 'ADM');
+  assert.ok(ok.j.ok, JSON.stringify(ok.j)); assert.deepEqual(ok.j.config.vaults, { [LILCHAIN]: VAULT }); assert.equal(ok.j.config.royaltyShareBps, 10000); assert.equal(ok.j.config.supply, 100);
+  assert.deepEqual(saved.at(-1).royalty, { recipient: '0x' + '44'.repeat(20), bps: 500, vaults: { [LILCHAIN]: VAULT } });
+  // native royaltyFor resolves the vault on its chain only
+  const col = { royalty: saved.at(-1).royalty };
+  const nat = makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection: async () => col, feeWallet: e => lc(e.FEE_WALLET), cached: async (k, t, f) => f() });
+  assert.equal((await nat.royaltyFor(env, LIL.slug, LILCHAIN)).recipient, VAULT);
+  const other = LIL.deployments.find(d => d.chain !== LILCHAIN)?.chain; if (other) assert.equal((await nat.royaltyFor(env, LIL.slug, other)).recipient, '0x' + '44'.repeat(20), 'chains without a vault keep the default recipient');
+  assert.deepEqual((await nat.royaltyFor(env, LIL.slug)).vaults, { [LILCHAIN]: VAULT });
+  // sale: fee 0.5% of 10 ETH = 0.05, royalty 5% = 0.5. Vault mode ledger tracks the FEE share only (royalty paid straight into the vault)
+  const fee = W(10) * 50n / 10000n, roy = W(10) * 500n / 10000n;
+  await g.recordSale(env, { chain: LILCHAIN, orderHash: '0x' + '21'.repeat(32), buyer: founder, seller: ADMIN, priceWei: W(10).toString(), feeWei: fee.toString(), royaltyWei: roy.toString(), items: [{ token: lc(dep.address), id: '1' }] });
+  const info = (await call('GET', `/revshare/${LIL.slug}`)).j; const c = info.acc.perChain[LILCHAIN];
+  assert.equal(c.fromFee, (fee / 2n).toString()); assert.equal(c.fromRoyalty, '0'); assert.equal(c.total, (fee / 2n).toString());
+  assert.equal(info.fund.owedFee[LILCHAIN], (fee / 2n).toString()); assert.equal(info.factories[LILCHAIN], FACT);
+  // funding: only the fee wallet, only into the vault, idempotent; owed shrinks
+  assert.equal((await call('POST', '/admin/growth/vault-funded', { slug: LIL.slug, chain: LILCHAIN, txHash: FUNDTX }, 'F')).s, 403);
+  const f1 = await call('POST', '/admin/growth/vault-funded', { slug: LIL.slug, chain: LILCHAIN, txHash: FUNDTX }, 'FEEW'); assert.ok(f1.j.ok, JSON.stringify(f1.j)); assert.equal(f1.j.funded[LILCHAIN], '125000000000000000');
+  assert.equal(f1.j.owedFee[LILCHAIN], undefined, 'over-funded: nothing owed');
+  assert.equal((await call('POST', '/admin/growth/vault-funded', { slug: LIL.slug, chain: LILCHAIN, txHash: FUNDTX }, 'FEEW')).j.duplicate, true);
+  // the Worker hot-wallet claim path is closed for vault collections
+  const hold = '0x' + '55'.repeat(20);
+  assert.equal((await call('POST', `/revshare/${LIL.slug}/claim`, { tokenIds: ['1'], chain: LILCHAIN }, 'F')).s, 409);
+  delete CFG.revshareVaults.factories[LILCHAIN];
 });

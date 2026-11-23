@@ -4,7 +4,7 @@ import { pickHtml, picked, resetPicks } from './filepick';
 import { esc, media } from './shell';
 import { apiFeatures } from './wallet';
 const mediaOn = () => apiFeatures.includes('media');
-export type Editable = { slug: string; name: string; description?: string; website?: string; x?: string; discord?: string; logo?: string; banner?: string; royalty?: { recipient: string; bps: number } | null };
+export type Editable = { slug: string; name: string; description?: string; website?: string; x?: string; discord?: string; logo?: string; banner?: string; royalty?: { recipient: string; bps: number; vaults?: Record<string, string> } | null };
 export function openEdit(c: Editable, onSaved: (c: any) => void) {
   resetPicks();
   const m = document.createElement('div'); m.className = 'modal wov';
@@ -17,6 +17,7 @@ export function openEdit(c: Editable, onSaved: (c: any) => void) {
    <label>Discord<input name="discord" placeholder="https://discord.gg/…" value="${esc(c.discord || '')}"></label>
    <div class="gh">Creator royalty <span class="mut small">(MultiSea listings; 0–10%, leave 0 for none)</span></div>
    <div class="crow"><input name="roybps" type="text" inputmode="decimal" placeholder="0" value="${c.royalty?.bps ? c.royalty.bps / 100 : ''}" style="width:90px;flex:none"><span class="mut">%</span><input name="royto" placeholder="Payout address 0x…" value="${esc(c.royalty?.recipient || '')}"></div>
+   ${c.royalty?.vaults && Object.keys(c.royalty.vaults).length ? `<p class="mut small">💰 Revenue share is on: on ${Object.keys(c.royalty.vaults).map(esc).join(', ')} the royalty is paid into the collection's revenue-share vault (set up from the Founder box), and this address is used on other chains. Existing listings keep the recipient they were signed with.</p>` : ''}
    <p class="msg"></p><button class="bbtn save">Sign & save</button></div>`;
   document.body.appendChild(m);
   const up: Record<string, string> = {}; const msg = m.querySelector('.msg') as HTMLElement;

@@ -72,7 +72,7 @@ function drawCreate() {
 async function royaltyFees(items: Sel[]): Promise<Fee[]> {
   const by: Record<string, number> = {};
   for (const s of items) { const slug = s.slug || CFG.collections.find(c => c.deployments.some(d => d.chain === s.chain && d.address.toLowerCase() === s.token))?.slug; if (!slug) continue;
-    const cfg = await getJ('/native/config/' + slug).catch(() => null); const r = cfg?.royalty; if (r?.bps) by[r.recipient] = (by[r.recipient] || 0) + r.bps / items.length; }
+    const cfg = await getJ('/native/config/' + slug).catch(() => null); const r = cfg?.royalty; if (r?.bps) { const to = r.vaults?.[s.chain] || r.recipient; by[to] = (by[to] || 0) + r.bps / items.length; } }
   return Object.entries(by).map(([recipient, bps]) => ({ recipient, bps: Math.ceil(bps), required: true, kind: 'creator', ceil: true }));
 }
 async function sign() {

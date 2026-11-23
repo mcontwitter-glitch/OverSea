@@ -31,7 +31,7 @@ export async function openSell(it: SellItem, onListed: () => void) {
       osOk ? fetch(`${API}/sell/config/${c.openseaSlug}/${it.contract}`).then(async r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null),
     ]);
     if (!nr?.seaport && !or) throw Object.assign(new Error('Could not load marketplace fees'), { kind: 'stale' });
-    const nFees: Fee[] = nr?.seaport ? [{ recipient: nr.feeRecipient, bps: nr.feeBps, required: true, kind: 'multisea', ceil: true }, ...(nr.royalty ? [{ recipient: nr.royalty.recipient, bps: nr.royalty.bps, required: true, kind: 'creator' as const }] : [])] : [];
+    const nFees: Fee[] = nr?.seaport ? [{ recipient: nr.feeRecipient, bps: nr.feeBps, required: true, kind: 'multisea', ceil: true }, ...(nr.royalty ? [{ recipient: nr.royalty.vaults?.[it.chain] || nr.royalty.recipient, bps: nr.royalty.bps, required: true, kind: 'creator' as const }] : [])] : [];
     let market: 'multisea' | 'opensea' = nr?.seaport ? 'multisea' : 'opensea';
     const oFees: Fee[] = or?.fees || []; const optional = oFees.filter(f => !f.required && f.bps > 0);
     body.innerHTML = `<div class="sl"><span>Marketplace</span><div class="pills mk">

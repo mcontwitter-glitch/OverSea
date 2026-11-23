@@ -5,11 +5,12 @@ import { wallet, onWallet, openConnect, checkApi, API } from './wallet';
 import { usdRates } from './shell';
 import { api } from './auth';
 import { frame, getJ, esc, logo, fmtWei, usdTxt, chains, connectCta } from './gx';
+import { vaultCardHtml, loadVaultView, runVaultClaim, type VaultView } from './rsvault';
 const el = frame('revshare', 'Revenue share');
 const ZERO = '0x0000000000000000000000000000000000000000';
 const TOKENS: Record<string, { sym: string; addr: string }[]> = { base: [{ sym: 'USDC', addr: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }], ethereum: [{ sym: 'USDC', addr: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' }] };
 const q = new URLSearchParams(location.search);
-const st = { slug: q.get('c') || CFG.default, info: null as any, list: [] as any[], mine: [] as string[], manual: '', claim: null as any, canEdit: false, err: '', res: '', payChain: 'base', payCur: ZERO, busy: false };
+const st = { slug: q.get('c') || CFG.default, info: null as any, list: [] as any[], mine: [] as string[], manual: '', claim: null as any, canEdit: false, vview: null as VaultView | null, err: '', res: '', payChain: 'base', payCur: ZERO, busy: false };
 async function myTokens(slug: string) {
   if (!wallet.address) return [];
   const me = wallet.address.toLowerCase();
@@ -25,22 +26,24 @@ async function load() {
   st.mine = await myTokens(st.slug);
   if (wallet.address) st.canEdit = !!(await fetch(`${API}/collections/${st.slug}/can-edit?address=${wallet.address}`).then(r => r.json()).catch(() => ({}))).ok;
   await refreshClaim(); draw();
+  st.vview = null; const vs = st.info?.config?.vaults;
+  if (vs && Object.keys(vs).length) { st.vview = { slug: st.slug, rows: [], loading: true, wallet: wallet.address }; draw(); st.vview = await loadVaultView(st.slug, st.info.config, [], wallet.address).catch(() => null); draw(); }
 }
 const ids = () => [...new Set([...st.mine, ...st.manual.split(/[\s,]+/).filter(x => /^\d{1,9}$/.test(x))])];
 async function refreshClaim() { const i = ids(); st.claim = i.length ? await getJ(`/revshare/${st.slug}/claimable?ids=${i.join(',')}`).catch(() => null) : null; }
 async function draw() {
   const r = await usdRates(); const u = (k: string, w: string) => +fmtWei(w).replace(/,/g, '') * ((r as any)[chains[k]?.native] || 0);
-  const i = st.info; const cfg = i?.config || { enabled: false };
+  const i = st.info; const cfg = i?.config || { enabled: false }; const vaultMode = !!(cfg.vaults && Object.keys(cfg.vaults).length);
   const accUsd = i ? Object.entries(i.acc.perChain || {}).reduce((s, [k, c]: any) => s + u(k, c.total), 0) : 0;
   const claimUsd = st.claim ? Object.entries(st.claim.total || {}).reduce((s, [k, w]) => s + u(k, w as string), 0) : 0;
   const cols = [...new Map([...CFG.collections.map(c => [c.slug, c.name]), ...st.list.map((c: any) => [c.slug, c.name])] as [string, string][]).entries()];
   el.innerHTML = `<div class="ghero"><h1>Revenue share</h1><p class="lpsub">Collections can share MultiSea marketplace revenue with their holders. When enabled, a % of MultiSea's 0.5% fee (and optionally a % of the creator royalty) from every sale MultiSea sees accrues to <b>each token</b> equally. Holders claim in the token and chain they choose.</p></div>
   <div class="legal small"><b>Important:</b> revenue-sharing NFTs can be treated as securities or investment contracts in some jurisdictions. Collections enabling this should get legal advice first. Nothing here is an offer of securities or a promise of returns.</div>
   <div class="bar2"><label>Collection <select data-k="slug">${cols.map(([s, n]) => `<option value="${esc(s)}" ${s === st.slug ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
-   ${i?.payouts?.enabled ? '<span class="tag ok">Payouts live</span>' : `<span class="tag warn" title="${esc(i?.payouts?.reason || '')}">Mainnet payouts disabled until funded</span>`}</div>
+   ${vaultMode ? '<span class="tag ok" title="Holders claim straight from on-chain vaults">On-chain vaults</span>' : i?.payouts?.enabled ? '<span class="tag ok">Payouts live</span>' : `<span class="tag warn" title="${esc(i?.payouts?.reason || '')}">Mainnet payouts disabled until funded</span>`}</div>
   ${st.err ? `<p class="err">${esc(st.err)}</p>` : ''}
-  ${i ? `<div class="gstats"><div class="gstat"><b>${cfg.enabled ? 'On' : 'Off'}</b><span>Revenue share</span></div><div class="gstat"><b>${cfg.enabled ? (cfg.feeShareBps / 100) + '%' : '-'}</b><span>of MultiSea fee</span></div><div class="gstat"><b>${cfg.enabled ? (cfg.royaltyShareBps / 100) + '%' : '-'}</b><span>of royalty (creator-funded)</span></div><div class="gstat"><b>${usdTxt(accUsd) || '$0.00'}</b><span>Accrued to holders · ${i.acc.sales || 0} sales</span></div></div>` : '<div class="spin"></div>'}
-  <div class="fcard"><div class="gh">Claim</div>
+  ${i ? `<div class="gstats"><div class="gstat"><b>${cfg.enabled ? 'On' : 'Off'}</b><span>Revenue share</span></div><div class="gstat"><b>${cfg.enabled ? (cfg.feeShareBps / 100) + '%' : '-'}</b><span>of MultiSea fee</span></div><div class="gstat"><b>${cfg.enabled ? (cfg.royaltyShareBps / 100) + '%' : '-'}</b><span>of royalty (creator-funded)</span></div><div class="gstat"><b>${usdTxt(accUsd) || '$0.00'}</b><span>${vaultMode ? 'MultiSea fee share accrued' : 'Accrued to holders'} · ${i.acc.sales || 0} sales</span></div></div>` : '<div class="spin"></div>'}
+  ${vaultMode ? vaultCardHtml(st.vview, cfg, !!wallet.address) : `  <div class="fcard"><div class="gh">Claim</div>
    ${!wallet.address ? connectCta('Connect the wallet that holds your NFTs.') : `
    <p class="mut small">${st.mine.length ? `Found ${st.mine.length} token(s) in your wallet.` : 'No tokens found automatically.'} Add token IDs:</p>
    <input class="ids" placeholder="e.g. 12, 845, 2001" value="${esc(st.manual)}">
@@ -48,9 +51,9 @@ async function draw() {
    <div class="two"><label>Payout chain<select data-k="payChain">${Object.keys(chains).map(k => `<option value="${k}" ${k === st.payChain ? 'selected' : ''}>${esc(chains[k].name)}</option>`).join('')}</select></label>
      <label>Payout token<select data-k="payCur"><option value="${ZERO}">${esc(chains[st.payChain].native)} (native)</option>${(TOKENS[st.payChain] || []).map(t => `<option value="${t.addr}" ${t.addr === st.payCur ? 'selected' : ''}>${t.sym}</option>`).join('')}</select></label></div>
    <button class="bbtn" data-act="claim" ${st.claim && Object.keys(st.claim.total || {}).length && !st.busy ? '' : 'disabled'}>${st.busy ? 'Claiming…' : 'Claim via Relay'}</button>
-   ${st.res}`}</div>
+   ${st.res}`}</div>`}
   ${st.canEdit ? optinHtml(cfg) : ''}
-  <div class="fcard"><div class="gh">How it works</div><ol class="small mut"><li>A collection owner opts in and sets the shares (MultiSea fee share is capped at ${i ? i.capBps / 100 : 50}% of the 0.5% fee).</li><li>Every MultiSea sale the Worker sees adds <i>pool ÷ supply</i> to each token's balance (remainders carry over). Balances follow the token, so a buyer inherits unclaimed revenue.</li><li>Holders claim; MultiSea's payout wallet pays via Relay in the chosen token/chain. An on-chain pull-based splitter contract option exists for collections that prefer trustless payouts.</li></ol></div>`;
+  <div class="fcard"><div class="gh">How it works</div><ol class="small mut"><li>A collection owner opts in and sets the shares (MultiSea fee share is capped at ${i ? i.capBps / 100 : 50}% of the 0.5% fee).</li><li>Every MultiSea sale the Worker sees adds <i>pool ÷ supply</i> to each token's balance (remainders carry over). Balances follow the token, so a buyer inherits unclaimed revenue.</li><li>Holders claim; MultiSea's payout wallet pays via Relay in the chosen token/chain. Collections that set up on-chain vaults skip this: their creator royalty is paid straight into a vault contract per chain, MultiSea adds its fee share, and holders claim directly from the contract.</li></ol></div>`;
 }
 function optinHtml(cfg: any) {
   return `<div class="fcard admin"><div class="gh">Collection settings (owner/admin)</div>
@@ -70,6 +73,7 @@ el.addEventListener('change', async e => {
 el.addEventListener('click', async e => {
   const t = e.target as HTMLElement; const a = t.dataset.act;
   if (a === 'connect') openConnect();
+  if (a === 'vclaim' && st.vview) { runVaultClaim(st.vview, (t as HTMLElement).dataset.chain!, draw); return; }
   if (a === 'claim') { st.busy = true; st.res = ''; draw();
     try { const r = await api(`/revshare/${st.slug}/claim`, { auth: true, body: { tokenIds: ids(), chain: st.payChain, currency: st.payCur } });
       st.res = r.executed ? `<p class="ok">✓ Paid. ${r.txs.map((h: string) => `<span class="mono">${h.slice(0, 10)}…</span>`).join(' ')}</p>` : `<p class="warn small">Claim recorded (request ${esc(r.requestId)}), not paid: ${esc(r.reason)} Your balance stays claimable.</p>${(r.quotes || []).filter((x: any) => x.out).map((x: any) => `<p class="mut small">Relay estimate: ${esc(x.out.amountFormatted)} ${esc(x.out.currency?.symbol)} (${usdTxt(+x.out.amountUsd)})</p>`).join('')}`;

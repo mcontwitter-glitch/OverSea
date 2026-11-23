@@ -77,7 +77,7 @@ export function makeOffers({ CFG, chains, bad, HASH, getCollection, feeWallet, c
         const collection = lc(a.collection);
         const slug = slugOf(k, collection);
         if (!slug) { out.skipped++; continue; }
-        const roy = royaltyFor ? await royaltyFor(env, slug) : null;
+        const roy = royaltyFor ? await royaltyFor(env, slug, k) : null;
         const rec = {
           id, chain: k, slug, buyer: lc(a.buyer), collection,
           pricePerItem: String(a.pricePerItem), quantity: String(a.quantity), remaining: String(a.quantity),

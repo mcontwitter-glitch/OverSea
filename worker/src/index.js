@@ -137,6 +137,13 @@ async function canEdit(env, slug, address) {
   for (const d of col.deployments || []) { if ((await ownerOfContract(d.chain, d.address)) === a) return { ok: true, why: `owner() on ${d.chain}` }; }
   return { ok: false };
 }
+// Persist a patch onto a collection record (static collections keep overrides under ovr:<slug>, dynamic ones under col:<slug>).
+async function saveCollectionPatch(env, slug, patch) {
+  const stamp = { ...patch, updatedAt: new Date().toISOString() };
+  if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...stamp }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return v; }
+  const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
+  const v = { ...cur, ...stamp }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return v;
+}
 async function allowedContract(env, osChain, contract) {
   const key = osToKey[osChain]; if (!key) return false; const c = lc(contract);
   for (const col of CFG.collections) if (col.deployments.some(d => d.chain === key && lc(d.address) === c)) return true;
@@ -253,7 +260,7 @@ async function rpcBalance(chainKey, addr) {
 }
 
 let _native; const native = () => (_native ??= makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, cached, hooks: { onSale: (env, s) => growth().recordSale(env, s), onList: (env, a, k) => growth().questEvent(env, a, k, 'list') } }));
-let _offers; const offers = () => (_offers ??= makeOffers({ CFG, chains, bad, HASH, getCollection, feeWallet, cached, royaltyFor: (env, slug) => native().royaltyFor(env, slug), hooks: { onSale: (env, s) => growth().recordSale(env, s) } }));
+let _offers; const offers = () => (_offers ??= makeOffers({ CFG, chains, bad, HASH, getCollection, feeWallet, cached, royaltyFor: (env, slug, chain) => native().royaltyFor(env, slug, chain), hooks: { onSale: (env, s) => growth().recordSale(env, s) } }));
 // Launchpad: factory isDrop() check runs on the chain's public RPC; approvals need the LAUNCHPAD_APPROVER_KEY secret.
 const isDropOnChain = async (k, factory, drop) => { const c = chains[k]; if (!c) return false; const pc = createPublicClient({ transport: http(c.rpc) });
   const abi = (name) => [{ type: 'function', name, stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }];
@@ -288,7 +295,7 @@ let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
 let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc }));
 let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
-let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch }));
+let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch, saveCollectionPatch }));
 
 // ---------- router ----------
 async function handle(req, env, url, ctx) {
@@ -544,7 +551,11 @@ async function handle(req, env, url, ctx) {
     const b = await body();
     const patch = { ...(b.description != null ? { description: str(b.description, 1000) } : {}), ...cleanLinks(b), ...(b.logo != null ? { logo: str(b.logo, 120, MEDIA) } : {}), ...(b.banner != null ? { banner: str(b.banner, 120, MEDIA) } : {}), updatedBy: s.address, updatedAt: new Date().toISOString() };
     for (const k of ['website', 'x', 'discord']) if (b[k] == null) delete patch[k];
-    if (b.royalty !== undefined) { const r = b.royalty; if (r === null || !r.bps) patch.royalty = null; else { if (!ADDR.test(r.recipient || '') || !Number.isFinite(+r.bps) || +r.bps < 0 || +r.bps > 1000) bad('royalty: recipient address and 0-10% required'); patch.royalty = { recipient: lc(r.recipient), bps: Math.floor(+r.bps) }; } }
+    if (b.royalty !== undefined) {
+      const r = b.royalty; const keep = (await getCollection(env, slug))?.royalty?.vaults; // RevShareVault routing survives royalty edits
+      if (r === null || !r.bps) patch.royalty = keep && Object.keys(keep).length ? { recipient: lc(r?.recipient && ADDR.test(r.recipient) ? r.recipient : ''), bps: 0, vaults: keep } : null;
+      else { if (!ADDR.test(r.recipient || '') || !Number.isFinite(+r.bps) || +r.bps < 0 || +r.bps > 1000) bad('royalty: recipient address and 0-10% required'); patch.royalty = { recipient: lc(r.recipient), bps: Math.floor(+r.bps), ...(keep && Object.keys(keep).length ? { vaults: keep } : {}) }; }
+    }
     if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...patch }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return { ok: true, collection: v, via: perm.why }; }
     const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
     const v = { ...cur, ...patch }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return { ok: true, collection: { ...v, creator: v.creator || v.submitter || undefined, submitter: undefined }, via: perm.why };

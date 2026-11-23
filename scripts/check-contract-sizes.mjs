@@ -33,6 +33,7 @@ function check(name, { init, runtime }, src) {
 const pack = loadJson('config/pack-artifact.json');
 const onchain = loadJson('config/onchain-artifact.json');
 const island = loadJson('config/island-wallet-artifact.json');
+const revshare = loadJson('config/revshare-artifact.json');
 
 const packMap = {
   ops: 'opsBytecode',
@@ -81,6 +82,7 @@ if (!String(onchain.omniBytecode || '').includes(onchain.artLibraryPlaceholder |
 }
 
 check('island.factory', { init: island.bytecode }, 'island-wallet-artifact.json');
+check('revshare.factory', { init: revshare.factoryBytecode }, 'revshare-artifact.json');
 
 const OUT = path.join('contracts', 'out');
 const forgeTargets = [
@@ -93,6 +95,8 @@ const forgeTargets = [
   ['src/onchain/MultiSeaOnchainDrop.sol', 'MultiSeaOnchainDrop'],
   ['src/onchain/MultiSeaOnchainOmniDrop.sol', 'MultiSeaOnchainOmniDrop'],
   ['src/onchain/MultiSeaOnchainFactory.sol', 'MultiSeaOnchainFactory'],
+  ['src/revshare/RevShareVaultFactory.sol', 'RevShareVaultFactory'],
+  ['src/revshare/RevShareVault.sol', 'RevShareVault'],
   ['src/island/IslandWalletFactory.sol', 'IslandWalletFactory'],
   ['src/island/IslandWallet.sol', 'IslandWallet'],
 ];

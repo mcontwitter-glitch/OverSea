@@ -10,6 +10,8 @@ const ZERO = '0x0000000000000000000000000000000000000000', ZERO32 = '0x' + '0'.r
 const SEA_EV = parseAbi(['event OrderFulfilled(bytes32 orderHash, address indexed offerer, address indexed zone, address recipient, (uint8 itemType, address token, uint256 identifier, uint256 amount)[] offer, (uint8 itemType, address token, uint256 identifier, uint256 amount, address recipient)[] consideration)']);
 const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function balanceOf(address) view returns (uint256)', 'function isApprovedForAll(address,address) view returns (bool)']);
 const SEA = parseAbi(['function getCounter(address) view returns (uint256)', 'function getOrderStatus(bytes32) view returns (bool isValidated, bool isCancelled, uint256 totalFilled, uint256 totalSize)']);
+const VAULT_FACTORY = parseAbi(['function vaultOf(address) view returns (address)']);
+const VAULT = parseAbi(['function owner() view returns (address)', 'function collection() view returns (address)', 'function totalSupply() view returns (uint256)', 'function firstId() view returns (uint256)']);
 const BIG = /^\d{1,78}$/;
 const B = x => BigInt(x || 0);
 export const refCode = addr => keccak256(toBytes(String(addr).toLowerCase())).slice(2, 10);
@@ -17,7 +19,7 @@ export const MINTPASS_TYPES = { MintPass: [{ name: 'to', type: 'address' }, { na
 export const BUNDLE_POLICY = 'Cross-chain bundles are filled one chain at a time (each chain\'s leg is a single Seaport order, so a leg is all-or-nothing). The buyer gets an exclusive 15-minute checkout lock and the signed orders are only revealed to that buyer. If a later leg fails or the lock expires after some legs were filled, the buyer keeps the filled legs at their listed per-leg prices and the bundle is marked "partially filled"; the remaining legs are withdrawn and the seller should cancel them on-chain.';
 
 export function makeGrowth(d) {
-  const { CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch } = d;
+  const { CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch, saveCollectionPatch } = d;
   const SEAPORT = lc(CFG.seaport);
   const kvj = (env, k) => env.COLLECTIONS.get(k, 'json');
   const put = (env, k, v, o) => env.COLLECTIONS.put(k, JSON.stringify(v), o);
@@ -39,6 +41,8 @@ export function makeGrowth(d) {
     tx: (k, h) => client(k).getTransaction({ hash: h }).catch(() => null),
     verify: (k, args) => verifyTypedData(args).catch(() => false).then(ok => ok || client(k).verifyTypedData(args).catch(() => false)),
     relayStatus: async (env, id) => { const r = await relayFetch(env, `/intents/status/v3?requestId=${id}`); return r.ok ? r.json() : null; },
+    vaultOf: (k, factory, col) => client(k).readContract({ address: factory, abi: VAULT_FACTORY, functionName: 'vaultOf', args: [col] }).then(lc).catch(() => null),
+    vaultInfo: async (k, v) => { const rd = functionName => client(k).readContract({ address: v, abi: VAULT, functionName }); const [owner, collection, totalSupply, firstId] = await Promise.all([rd('owner'), rd('collection'), rd('totalSupply'), rd('firstId')]); return { owner: lc(owner), collection: lc(collection), totalSupply: Number(totalSupply), firstId: Number(firstId) }; },
     ...(d.chain || {}),
   };
   const cfgOf = async env => ({ ...DEFAULTS, ...((await kvj(env, 'cfg:growth')) || {}) });
@@ -130,13 +134,16 @@ export function makeGrowth(d) {
   // claimable(token) = acc[chain] - claimed[token][chain]. Remainders carry to the next sale.
   async function accrueRevshare(env, slug, k, feeWei, royaltyWei) {
     const cfg = await kvj(env, 'rs:cfg:' + slug); if (!cfg?.enabled || !cfg.supply) return null;
+    // Vault mode: the creator royalty is paid straight into the on-chain RevShareVault by the sale itself, so the ledger only tracks the
+    // MultiSea FEE share (what MC still has to fund into the vault from the fee wallet).
+    const vaultMode = !!(cfg.vaults && Object.keys(cfg.vaults).length); if (vaultMode) royaltyWei = 0n;
     const pool = feeWei * BigInt(cfg.feeShareBps || 0) / 10000n + royaltyWei * BigInt(cfg.royaltyShareBps || 0) / 10000n;
     if (pool <= 0n) return null;
     const ak = 'rs:acc:' + slug; const a = (await kvj(env, ak)) || { perChain: {}, sales: 0 };
     const c = a.perChain[k] || { acc: '0', rem: '0', total: '0', fromFee: '0', fromRoyalty: '0' };
     const tot = pool + B(c.rem); const sup = BigInt(cfg.supply);
     c.acc = (B(c.acc) + tot / sup).toString(); c.rem = (tot % sup).toString(); c.total = (B(c.total) + pool).toString();
-    c.fromFee = (B(c.fromFee) + feeWei * BigInt(cfg.feeShareBps || 0) / 10000n).toString(); c.fromRoyalty = (B(c.fromRoyalty) + royaltyWei * BigInt(cfg.royaltyShareBps || 0) / 10000n).toString();
+    c.fromFee = (B(c.fromFee) + feeWei * BigInt(cfg.feeShareBps || 0) / 10000n).toString(); c.fromRoyalty = (B(c.fromRoyalty) + royaltyWei * BigInt(cfg.royaltyShareBps || 0) / 10000n).toString(); c.vaultMode = vaultMode;
     a.perChain[k] = c; a.sales++; await put(env, ak, a);
     return { slug, pool: pool.toString() };
   }
@@ -174,6 +181,7 @@ export function makeGrowth(d) {
   }
   async function revshareClaim(env, slug, who, b) {
     const cfg = await kvj(env, 'rs:cfg:' + slug); if (!cfg?.enabled) bad('revenue share is not enabled for this collection');
+    if (cfg.vaults && Object.keys(cfg.vaults).length) bad('this collection pays holders from on-chain vaults: claim on the collection page (no Worker payout)', 409);
     const ids = [...new Set((Array.isArray(b.tokenIds) ? b.tokenIds : []).map(String))].filter(x => /^\d{1,9}$/.test(x)).slice(0, 50); if (!ids.length) bad('tokenIds required');
     const dest = { chain: b.chain, currency: b.currency || ZERO }; if (!chains[dest.chain] || !ADDR.test(dest.currency)) bad('choose a payout chain and token');
     const col = await getCollection(env, slug); if (!col) bad('not found', 404);
@@ -200,6 +208,53 @@ export function makeGrowth(d) {
       await put(env, `rs:req:${id}`, { id, slug, who: lc(who), ids, legs, dest, status: 'paid', txs, at: new Date().toISOString() });
       return { ok: true, executed: true, status: 'paid', txs, legs };
     } finally { await env.COLLECTIONS.delete(lockKey); }
+  }
+
+  // ======================= on-chain vaults (RevShareVault) =======================
+  // A founder deploys a RevShareVault from the factory in their own wallet; the Worker verifies it on-chain, records it in
+  // rs:cfg:<slug>.vaults and points the collection's creator royalty at the vault on that chain (royalty.vaults[chain]).
+  async function registerVault(env, slug, who, b) {
+    const col = await getCollection(env, slug); if (!col) bad('not found', 404);
+    const k = String(b.chain || ''); if (!chains[k]) bad('unknown chain');
+    const factory = CFG.revshareVaults?.factories?.[k]; if (!ADDR.test(factory || '')) bad('no revenue-share factory is deployed on this chain yet', 409);
+    const dep = (col.deployments || []).find(x => x.chain === k); if (!dep) bad('this collection is not deployed on that chain');
+    const vault = lc(b.vault); if (!ADDR.test(vault)) bad('vault address required');
+    const cfgG = await cfgOf(env);
+    const fee = Math.floor(+b.feeShareBps || 0), roy = Math.floor(+b.royaltyBps || 0);
+    if (fee < 0 || fee > cfgG.rsFeeCapBps) bad(`fee share 0-${cfgG.rsFeeCapBps / 100}% of MultiSea's fee`);
+    if (roy < 0 || roy > 1000) bad('creator royalty 0-10%');
+    if (!b.acceptedTerms) bad('accept the revenue-share terms first');
+    if ((await chain.vaultOf(k, lc(factory), lc(dep.address))) !== vault) bad('that address is not this collection\'s vault from the MultiSea factory', 409);
+    const info = await chain.vaultInfo(k, vault).catch(() => null); if (!info || info.collection !== lc(dep.address)) bad('vault does not point at this collection', 409);
+    if (info.owner !== lc(who) && !admins(env).includes(lc(who))) bad('only the vault owner (or an admin) can register it', 403);
+    const cur = (await kvj(env, 'rs:cfg:' + slug)) || {};
+    if (cur.vaults && Object.keys(cur.vaults).some(x => x !== k) && cur.supply && cur.supply !== info.totalSupply) bad('every chain\'s vault must use the same supply', 409);
+    const v = { ...cur, enabled: true, feeShareBps: fee, royaltyShareBps: roy > 0 ? 10000 : 0, supply: info.totalSupply, firstId: info.firstId, vaults: { ...(cur.vaults || {}), [k]: vault }, by: lc(who), at: new Date().toISOString(), acceptedTerms: true };
+    await put(env, 'rs:cfg:' + slug, v);
+    // creator royalty -> vault on this chain; the default recipient (other chains) stays whatever it was, else the founder
+    const r = col.royalty || null; const vaults = { ...(r?.vaults || {}), [k]: vault };
+    if (roy > 0) await saveCollectionPatch(env, slug, { royalty: { recipient: lc(r?.recipient && ADDR.test(r.recipient) ? r.recipient : who), bps: roy, vaults } });
+    else if (r) await saveCollectionPatch(env, slug, { royalty: { ...r, vaults } });
+    return { ok: true, config: v, royalty: roy > 0 ? { bps: roy, vault } : null };
+  }
+  async function fundState(env, slug) {
+    const f = (await kvj(env, 'rs:fund:' + slug)) || { perChain: {} }; const a = (await kvj(env, 'rs:acc:' + slug)) || { perChain: {} }; const cfg = await kvj(env, 'rs:cfg:' + slug);
+    const owed = {}; for (const [k, c] of Object.entries(a.perChain || {})) { const o = B(c.fromFee) - B(f.perChain?.[k]?.total); if (o > 0n) owed[k] = o.toString(); }
+    return { vaults: cfg?.vaults || {}, funded: Object.fromEntries(Object.entries(f.perChain || {}).map(([k, x]) => [k, x.total])), owedFee: owed };
+  }
+  // MC (fee wallet) sends the fee share into the vault from his own wallet; the Worker verifies the tx on-chain and records it.
+  async function recordVaultFunding(env, slug, b) {
+    const k = String(b.chain || ''); if (!chains[k] || !HASH.test(b.txHash || '')) bad('invalid input');
+    const cfg = await kvj(env, 'rs:cfg:' + slug); const vault = cfg?.vaults?.[k]; if (!vault) bad('no vault registered on that chain', 404);
+    const dk = `rs:fundtx:${k}:${lc(b.txHash)}`; if (await env.COLLECTIONS.get(dk)) return { ok: true, duplicate: true, ...(await fundState(env, slug)) };
+    const tx = await chain.tx(k, b.txHash); const rc = await chain.receipt(k, b.txHash);
+    if (!tx || !rc || rc.status !== 'success') bad('transaction not found or failed', 404);
+    if (lc(tx.to) !== lc(vault)) bad('that transaction did not pay this vault', 409);
+    if (lc(tx.from) !== lc(feeWallet(env))) bad('only the MultiSea fee wallet\'s transfers are counted as fee share', 409);
+    const amt = B(tx.value); if (amt <= 0n) bad('no value sent', 409);
+    const f = (await kvj(env, 'rs:fund:' + slug)) || { perChain: {} }; const c = f.perChain[k] || { total: '0', n: 0 };
+    c.total = (B(c.total) + amt).toString(); c.n++; f.perChain[k] = c; await put(env, 'rs:fund:' + slug, f); await put(env, dk, { slug, amount: amt.toString(), at: new Date().toISOString() });
+    return { ok: true, amount: amt.toString(), ...(await fundState(env, slug)) };
   }
 
   // ======================= quests / badges =======================
@@ -290,7 +345,7 @@ export function makeGrowth(d) {
       if (seller && seller !== p.offerer) bad('all legs must come from the same seller'); seller = p.offerer;
       // every item must belong to a MultiSea collection; royalties required pro-rata by item count
       const roys = {};
-      for (const o of p.offer) { const sl = (await slugsFor(env, k, o.token))[0]; if (!sl) bad(`${o.token} is not a MultiSea collection`); const r = native ? await native.royaltyFor(env, sl) : null; if (r) roys[r.recipient] = Math.max(roys[r.recipient] || 0, 0) + r.bps / p.offer.length; }
+      for (const o of p.offer) { const sl = (await slugsFor(env, k, o.token))[0]; if (!sl) bad(`${o.token} is not a MultiSea collection`); const r = native ? await native.royaltyFor(env, sl, k) : null; if (r) roys[r.recipient] = Math.max(roys[r.recipient] || 0, 0) + r.bps / p.offer.length; }
       for (const [rcp, bps] of Object.entries(roys)) { const got = p.consideration.slice(1).filter(c => c.recipient === rcp).reduce((s, c) => s + B(c.startAmount), 0n); if (got * 10000n + 10000n < total * BigInt(Math.floor(bps))) bad('creator royalty missing for an item in this bundle'); }
       const hash = native.orderHash(p);
       const ok = await chain.verify(k, { address: p.offerer, signature: L.signature, ...native.typedData(k, p) }); if (!ok) bad('signature does not match seller', 401);
@@ -347,7 +402,7 @@ export function makeGrowth(d) {
     if (p[0] === 'revshare') {
       if (M === 'GET' && p.length === 1) { const ks = await listAll(env, 'rs:cfg:', 300); const cfg = await cfgOf(env); return { capBps: cfg.rsFeeCapBps, payouts: payoutState(env, [{ chain: 'ethereum' }]), collections: (await Promise.all(ks.map(async k => { const c = await kvj(env, k.name); const slug = k.name.slice(7); const col = await getCollection(env, slug); return c && col ? { slug, name: col.name, logo: col.logo || null, ...c, acc: (await kvj(env, 'rs:acc:' + slug)) || { perChain: {}, sales: 0 } } : null; }))).filter(Boolean) }; }
       const slug = p[1]; if (!/^[a-z0-9-]{2,40}$/.test(slug || '')) bad('bad slug');
-      if (M === 'GET' && p.length === 2) { const col = await getCollection(env, slug); if (!col) bad('not found', 404); const cfg = await cfgOf(env); return { slug, name: col.name, config: (await kvj(env, 'rs:cfg:' + slug)) || { enabled: false }, acc: (await kvj(env, 'rs:acc:' + slug)) || { perChain: {}, sales: 0 }, capBps: cfg.rsFeeCapBps, payouts: payoutState(env, [{ chain: col.deployments?.[0]?.chain || 'ethereum' }]), payoutWallet: env.PAYOUT_WALLET || null }; }
+      if (M === 'GET' && p.length === 2) { const col = await getCollection(env, slug); if (!col) bad('not found', 404); const cfg = await cfgOf(env); return { slug, name: col.name, config: (await kvj(env, 'rs:cfg:' + slug)) || { enabled: false }, acc: (await kvj(env, 'rs:acc:' + slug)) || { perChain: {}, sales: 0 }, capBps: cfg.rsFeeCapBps, payouts: payoutState(env, [{ chain: col.deployments?.[0]?.chain || 'ethereum' }]), payoutWallet: env.PAYOUT_WALLET || null, factories: CFG.revshareVaults?.factories || {}, fund: await fundState(env, slug) }; }
       if (M === 'GET' && p[2] === 'claimable') { const ids = (url.searchParams.get('ids') || '').split(',').filter(x => /^\d{1,9}$/.test(x)).slice(0, 200); return claimable(env, slug, ids); }
       if (M === 'POST' && p[2] === 'optin') {
         const s = await requireSession(req, env); const perm = await canEdit(env, slug, s.address); if (!perm.ok) bad('only the collection owner or an admin can opt in', 403);
@@ -357,8 +412,10 @@ export function makeGrowth(d) {
         const supply = Math.floor(+(b.supply || col.supply || CFG.collections.find(c => c.slug === slug)?.supply || 0)); if (!(supply > 0 && supply <= 100000)) bad('collection supply (1-100000) required');
         const v = { enabled: !!b.enabled, feeShareBps: fee, royaltyShareBps: roy, supply, by: s.address, at: new Date().toISOString(), acceptedTerms: !!b.acceptedTerms };
         if (v.enabled && !v.acceptedTerms) bad('accept the revenue-share terms first');
+        const prev = await kvj(env, 'rs:cfg:' + slug); if (prev?.vaults && Object.keys(prev.vaults).length) { v.vaults = prev.vaults; if (prev.firstId != null) v.firstId = prev.firstId; v.supply = prev.supply || v.supply; } // vault registrations survive a settings save
         await put(env, 'rs:cfg:' + slug, v); return { ok: true, config: v };
       }
+      if (M === 'POST' && p[2] === 'vaults' && p.length === 3) { const s = await requireSession(req, env); const perm = await canEdit(env, slug, s.address); if (!perm.ok) bad('only the collection owner or an admin can set up revenue share', 403); return registerVault(env, slug, s.address, await body()); }
       if (M === 'POST' && p[2] === 'claim') { const s = await requireSession(req, env); return revshareClaim(env, slug, s.address, await body()); }
     }
     // quests
@@ -380,7 +437,7 @@ export function makeGrowth(d) {
     }
     // admin
     if (p[0] === 'admin' && p[1] === 'growth') {
-      const s = await requireSession(req, env); if (!admins(env).includes(s.address)) bad('admin only', 403);
+      const s = await requireSession(req, env); if (!(admins(env).includes(s.address) || (p[2] === 'vault-funded' && s.address === lc(feeWallet(env))))) bad('admin only', 403);
       if (M === 'GET' && p.length === 2) {
         const cfg = await cfgOf(env);
         const earn = await listAll(env, 'refearn:', 500); const top = (await Promise.all(earn.map(async k => ({ address: k.name.slice(8), ...(await kvj(env, k.name)) })))).sort((a, b) => b.sales - a.sales).slice(0, 50);
@@ -388,9 +445,10 @@ export function makeGrowth(d) {
         const reqs = (await listAll(env, 'rs:req:', 500)).slice(-50); const claims = (await Promise.all(reqs.map(k => kvj(env, k.name)))).filter(Boolean).reverse();
         return { config: cfg, referrers: top, refSales: recent, revshareClaims: claims, payouts: payoutState(env, [{ chain: 'ethereum' }]), badgeSigner: !!env.BADGE_SIGNER_KEY };
       }
+      if (M === 'POST' && p[2] === 'vault-funded') { const b = await body(); const slug = String(b.slug || ''); if (!/^[a-z0-9-]{2,40}$/.test(slug)) bad('bad slug'); return recordVaultFunding(env, slug, b); }
       if (M === 'POST' && p[2] === 'config') { const b = await body(); const cur = await cfgOf(env); const refBps = b.refBps == null ? cur.refBps : Math.floor(+b.refBps); const rsFeeCapBps = b.rsFeeCapBps == null ? cur.rsFeeCapBps : Math.floor(+b.rsFeeCapBps); if (!(refBps >= 0 && refBps <= 5000) || !(rsFeeCapBps >= 0 && rsFeeCapBps <= 8000) || refBps + rsFeeCapBps > 10000) bad('referral 0-50%, revshare cap 0-80%, sum <= 100% of the fee'); const v = { refBps, rsFeeCapBps, by: s.address, at: new Date().toISOString() }; await put(env, 'cfg:growth', v); return { ok: true, config: v }; }
     }
     return undefined;
   }
-  return { handle, recordSale, reportTx, bindReferral, registerCode, accrueReferral, refStats, accrueRevshare, claimable, revshareClaim, questEvent, quests, eligibility, bridgeQuest, cleanLeg, createBundle, checkout, bundleLegFilled, settleBundle, bundles, payoutState, cfgOf, chain };
+  return { handle, registerVault, recordVaultFunding, fundState, recordSale, reportTx, bindReferral, registerCode, accrueReferral, refStats, accrueRevshare, claimable, revshareClaim, questEvent, quests, eligibility, bridgeQuest, cleanLeg, createBundle, checkout, bundleLegFilled, settleBundle, bundles, payoutState, cfgOf, chain };
 }

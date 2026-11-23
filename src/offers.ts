@@ -152,7 +152,7 @@ export async function openMakeOffer(ctx: MakeCtx, onDone?: () => void) {
     const to = offersAddr(chain)!;
     const collection = ctx.deployments.find(d => d.chain === chain)!.address as Hex;
     const expiry = BigInt(Math.floor(Date.now() / 1000) + EXPIRY[exp]);
-    const royTo = (cfg.royalty?.recipient || ZERO) as Hex;
+    const royTo = (cfg.royalty?.vaults?.[chain] || cfg.royalty?.recipient || ZERO) as Hex; // a RevShareVault on this chain, if the founder set one up
     const royBps = Number(cfg.royalty?.bps || 0);
     const data = encodeFunctionData({ abi: ABI, functionName: 'makeOffer', args: [collection, price, qty, expiry, royTo, royBps] });
     const c = chains[chain]; const me = wallet.address as Hex;

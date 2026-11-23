@@ -11,6 +11,7 @@ import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, op
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { revshareBadgeHtml, loadRevshareConfig, type RsConfig } from './rsbadge';
+import { vaultCardHtml, loadVaultView, runVaultClaim, type VaultView } from './rsvault';
 import { addrHtml } from './names';
 import { mergeHolders, mergedAway } from './holdersmerge';
 import { resolveProfiles } from './walletlinks';
@@ -38,7 +39,8 @@ const listingsLiveP: Promise<[Response | null, Response | null]> = API
   : Promise.resolve([null, null]);
 // Owner-editable overrides (logo, banner, description, links) served by the Worker when online.
 let ovr: any = {}; let editable = false; let founder = false;
-let rsCfg: RsConfig | null = null;
+let rsCfg: (RsConfig & { vaults?: Record<string, string>; supply?: number }) | null = null;
+let vview: VaultView | null = null; // on-chain RevShareVault claim card (only when the founder set vaults up)
 document.title = `${COL.name} · MultiSea`;
 const app = document.getElementById('app')!;
 const $ = (s: string, r: ParentNode = document) => r.querySelector(s) as HTMLElement;
@@ -323,6 +325,7 @@ function header() {
     </div>
   </div>
   <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${anyOffersLive(COL.deployments) ? '<button class="obtn sm" data-act="makeoffer">Make collection offer</button>' : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
+  ${vaultCardHtml(vview, rsCfg, !!wallet.address)}
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${st.tab === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
@@ -560,7 +563,8 @@ app.addEventListener('click', e => {
   if (ca) { const k = ca.dataset.cancelall!; import('./sell').then(m => m.cancelAllNative(k, myNative()[k] || 0, () => { const me = wallet.address?.toLowerCase(); [...listMap].forEach(([id, l]) => { if (l.source === 'multisea' && l.chain === k && l.seller?.toLowerCase() === me) listMap.delete(id); }); render(); })); return; }
   if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
   if (act?.dataset.act === 'makeoffer') { openMakeOffer({ slug: COL.slug, name: COL.name, deployments: COL.deployments }, () => { loadOfferData().then(() => render()); }); return; }
-  if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator }); return; }
+  if (act?.dataset.act === 'vclaim') { if (vview) runVaultClaim(vview, act.dataset.chain!, render); return; }
+  if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator, supply: COL.supply }); return; }
   if (act?.dataset.act === 'sweep') { import('./cart').then(c => c.openSweep(cartItems(), COL.name)); return; }
   if (act) { const a = act.dataset.act; if (a === 'more') st.limit += 60; if (a === 'toggle-side') st.sidebar = !st.sidebar; if (a === 'close-side') st.sidebar = false; if (a === 'clear') st.traits.clear(); render(); return; }
   const rm = t.closest('[data-rm-trait]') as HTMLElement; if (rm) { st.traits.get(rm.dataset.rmTrait!)?.delete(rm.dataset.v!); render(); return; }
@@ -603,7 +607,13 @@ async function loadOfferData() {
   offerData = d; offerRates = r;
 }
 loadOfferData().then(() => render());
-loadRevshareConfig(API, COL.slug).then(cfg => { rsCfg = cfg; if (cfg?.enabled) render(); });
+async function loadVaults() {
+  if (!rsCfg?.vaults || !Object.keys(rsCfg.vaults).length) return;
+  vview = { slug: COL.slug, rows: [], loading: true, wallet: wallet.address }; render();
+  vview = await loadVaultView(COL.slug, rsCfg, COL.deployments, wallet.address).catch(() => null); render();
+}
+loadRevshareConfig(API, COL.slug).then(cfg => { rsCfg = cfg as any; if (cfg?.enabled) render(); loadVaults(); });
+onWallet(() => { if (rsCfg?.vaults) loadVaults(); });
 
 // Launchpad drops: primary mint volume read from chain (null for collections that are not drops).
 import('./dropstats').then(D => D.primaryVolume(COL.deployments)).then(p => { if (p) { primVol = p; render(); } }).catch(() => {});

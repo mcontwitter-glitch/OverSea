@@ -247,5 +247,9 @@
       ]
     }
   ],
-  "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100"
+  "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100",
+  "revshareVaults": {
+    "_note": "RevShareVaultFactory addresses per EVM chain. MC deploys them from /deploy-revshare-factory, then records them here. Empty until then: the Founder 'Set up revenue share' box shows Coming soon.",
+    "factories": {}
+  }
 }

@@ -8,6 +8,7 @@ import { localDrops, saveLocal, isLocalHost } from './launchdata';
 import LPC from '../config/launchpad.json';
 import { LP_LIVE } from './lpchain';
 import { loadFlush, flushHtml, doFlush } from './flushadmin';
+import { loadVaultFund, vaultFundHtml, doVaultFund, bindVaultFundInputs } from './rsvfund';
 // Mainnet deploy approvals: the factory approver wallet signs EIP-712 approvals here (signature only, never a transaction).
 const APPROVER = String((LPC as any).approver || '').toLowerCase();
 let appr: any[] | null = null; let apprLog = '';
@@ -54,16 +55,18 @@ function render() {
   ${dropsHtml(!!s?.isAdmin)}
   ${apprHtml()}
   ${s?.isAdmin ? flushHtml() : ''}
+  ${s && (s.isAdmin || s.isFee) ? vaultFundHtml() : ''}
   ${s && (s.isAdmin || s.isFee) ? feesHtml() : ''}
   </section>`;
 }
-async function load() { err = ''; const s = getSession(); loadFees(render); if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
+async function load() { err = ''; const s = getSession(); loadFees(render); if (s && (s.isAdmin || s.isFee)) loadVaultFund(render); if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
 app.addEventListener('click', async e => {
   const t = e.target as HTMLElement;
   if (t.dataset.act === 'connect') openConnect();
   if (t.dataset.lsign) { const slug = t.dataset.lsign; apprLog = ''; try { const { signApprovals } = await import('./lpchain'); await signApprovals(slug, l => { apprLog += l + '\n'; render(); }); await loadAppr(); } catch (e: any) { apprLog += 'Error: ' + (e?.shortMessage || e?.message || e) + '\n'; render(); } return; }
   if (t.dataset.flush) { if (getSession()?.isAdmin) doFlush(+t.dataset.flush); return; }
   if (t.dataset.claim) { claim(+t.dataset.claim, render); return; }
+  if (t.dataset.vfund) { doVaultFund(t.dataset.vfund, render); return; }
   if (t.dataset.act === 'signin') { try { await signIn('Sign in to MultiSea admin'); await load(); await loadAppr(); } catch (e: any) { err = e.message; render(); } }
   if (t.dataset.dapprove || t.dataset.dreject) { const ap = !!t.dataset.dapprove; const slug = (t.dataset.dapprove || t.dataset.dreject)!;
     const reason = ap ? '' : prompt('Reason for rejection (optional)') || '';
@@ -73,5 +76,5 @@ app.addEventListener('click', async e => {
     const reason = ap ? '' : prompt('Reason for rejection (optional)') || '';
     try { await api(`/admin/${ap ? 'approve' : 'reject'}/${slug}`, { auth: true, body: { reason } }); await load(); } catch (e: any) { err = e.message; render(); } }
 });
-bindNav(); render(); const ok = () => { const s = getSession(); return !!(s?.isAdmin || s?.isFee || (s && isApprover())); };
+bindVaultFundInputs(app); bindNav(); render(); const ok = () => { const s = getSession(); return !!(s?.isAdmin || s?.isFee || (s && isApprover())); };
 onWallet(() => { if (ok()) load().then(loadAppr); else render(); }); checkApi().then(() => { if (ok()) load().then(loadAppr); else render(); });

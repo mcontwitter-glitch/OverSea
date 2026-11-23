@@ -6,9 +6,10 @@ import CFG from '../config/collections.json';
 import { wallet, readClient, ensureChain, vchain, friendly } from './wallet';
 import { logo, esc, short } from './gx';
 import { loadFlush, founderFlushHtml, doFlush } from './flushadmin';
+import { initRevshareFounder, mountRevshareFounder, bindRevshareFounder } from './rsvfounder';
 
 export type Dep = { chain: string; address: string };
-export type FounderCol = { name: string; slug?: string; deployments: Dep[]; creator?: string | null };
+export type FounderCol = { name: string; slug?: string; deployments: Dep[]; creator?: string | null; supply?: number };
 const chains = CFG.chains as Record<string, { name: string; chainId: number; native: string; explorer: string }>;
 const DROP = parseAbi([
   'function owner() view returns (address)',
@@ -71,7 +72,7 @@ export function openFounder(col: FounderCol) {
   box = m.querySelector('.fndbody');
   m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) { m.remove(); S = null; box = null; } });
   S = { col, rows: [], roy: null, canSet: false, royTo: '', royPct: '', picked: new Set(), amounts: {}, all: false, prev: {}, msg: '', busy: false, withdrawn: new Set(), sent: new Set(), chunkAt: {} };
-  load().then(draw); bind(m);
+  load().then(draw); bind(m); bindRevshareFounder(m); initRevshareFounder(col);
 }
 
 async function load() {
@@ -150,7 +151,9 @@ function draw() {
       <label class="chk"><input type="checkbox" data-fnd="all" ${S.all ? 'checked' : ''}> Include every token's wallet (including ones in escrow)</label>
       ${amts}
       <button class="bbtn" data-fnd="air" ${S.busy || !airTodo.length ? 'disabled' : ''}>${S.busy ? 'Working…' : airLabel}</button></div>
+    <div class="fndsec" id="rsvsec"></div>
     ${S.msg ? `<p class="small fndmsg">${S.msg}</p>` : ''}`;
+  mountRevshareFounder(box.querySelector('#rsvsec'));
 }
 
 function bind(m: HTMLElement) {

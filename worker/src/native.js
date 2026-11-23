@@ -31,7 +31,9 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     const out = CFG.collections.filter(c => c.deployments.some(d => d.chain === k && lc(d.address) === lc(contract))).map(c => c.slug);
     const idx = await env.COLLECTIONS.get('idx:' + k + ':' + lc(contract)); if (idx && !out.includes(idx)) out.push(idx); return out;
   };
-  const royaltyFor = async (env, slug) => { const c = slug ? await getCollection(env, slug) : null; const r = c?.royalty; return r && ADDR.test(r.recipient || '') && r.bps > 0 ? { recipient: lc(r.recipient), bps: Math.min(1000, Math.floor(r.bps)) } : null; };
+  // Creator royalty for a collection. With a chain, `recipient` is that chain's RevShareVault when the founder set one up
+  // (royalty.vaults[chain]), else the default recipient. Without a chain the stored record is returned, incl. `vaults`.
+  const royaltyFor = async (env, slug, chain) => { const c = slug ? await getCollection(env, slug) : null; const r = c?.royalty; if (!(r && r.bps > 0)) return null; const to = (chain && r.vaults?.[chain]) || r.recipient; if (!ADDR.test(to || '')) return null; return { recipient: lc(to), bps: Math.min(1000, Math.floor(r.bps)), ...(r.vaults && Object.keys(r.vaults).length ? { vaults: Object.fromEntries(Object.entries(r.vaults).filter(([, a]) => ADDR.test(a || '')).map(([k, a]) => [k, lc(a)])), defaultRecipient: ADDR.test(r.recipient || '') ? lc(r.recipient) : null } : {}) }; };
 
   // Shape + economics (no RPC). Returns normalized parameters.
   function clean(o, fee) {
@@ -104,7 +106,7 @@ export function makeNative({ CFG, chains, lc, bad, ADDR, HASH, getCollection, fe
     if (!/^0x[0-9a-fA-F]{128,4096}$/.test(b.signature || '')) bad('bad signature');
     const p = clean(b.parameters, feeWallet(env)); const total = p._total; delete p._total;
     const slugs = await slugsFor(env, k, p.offer[0].token); if (!slugs.length) bad('collection not listed on MultiSea');
-    const roy = await royaltyFor(env, slugs[0]);
+    const roy = await royaltyFor(env, slugs[0], k);
     if (roy) { const got = p.consideration.slice(1).filter(c => c.recipient === roy.recipient).reduce((s, c) => s + BigInt(c.startAmount), 0n); if (got * 10000n + 10000n < total * BigInt(roy.bps)) bad(`creator royalty (${roy.bps / 100}%) required by this collection`); }
     const hash = orderHash(p);
     const td = { domain: domain(k), types: TYPES, primaryType: 'OrderComponents', message: message(p) };
