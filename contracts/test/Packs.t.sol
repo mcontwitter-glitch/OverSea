@@ -3,6 +3,8 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { MultiSeaPacks } from "../src/packs/MultiSeaPacks.sol";
+import { MultiSeaPacksOps } from "../src/packs/MultiSeaPacksOps.sol";
+import { MultiSeaPacksStorage } from "../src/packs/MultiSeaPacksStorage.sol";
 import { MultiSeaPackCards } from "../src/packs/MultiSeaPackCards.sol";
 import { MultiSeaPackFactory } from "../src/packs/MultiSeaPackFactory.sol";
 
@@ -24,13 +26,13 @@ contract PacksTest is Test {
     function setUp() public {
         vm.warp(1_800_000_000);
         approver = vm.addr(apk);
-        f = new MultiSeaPackFactory(timelock, address(new MultiSeaPacks()), address(new MultiSeaPackCards()), feeWallet, approver, 50);
+        f = new MultiSeaPackFactory(timelock, address(new MultiSeaPacks(address(new MultiSeaPacksOps()))), address(new MultiSeaPackCards()), feeWallet, approver, 50);
         vm.deal(alice, 1000 ether);
         vm.deal(bob, 1000 ether);
         vm.deal(creator, 100 ether);
     }
 
-    function baseInit() internal view returns (MultiSeaPacks.PackInit memory p) {
+    function baseInit() internal view returns (MultiSeaPacksStorage.PackInit memory p) {
         p.name = "Island Cards";
         p.symbol = "ICARD";
         p.packName = "Island Packs";
@@ -41,34 +43,34 @@ contract PacksTest is Test {
         p.royaltyBps = 500;
         p.cardBaseURI = "ipfs://cards/";
         p.packBaseURI = "ipfs://packs/";
-        p.rarities = new MultiSeaPacks.Rarity[](3);
-        p.rarities[0] = MultiSeaPacks.Rarity("Common", 70, 700);
-        p.rarities[1] = MultiSeaPacks.Rarity("Rare", 25, 250);
-        p.rarities[2] = MultiSeaPacks.Rarity("Legendary", 5, 50);
-        p.cards = new MultiSeaPacks.CardType[](6);
-        p.cards[0] = MultiSeaPacks.CardType(1, 0);
-        p.cards[1] = MultiSeaPacks.CardType(1, 0);
-        p.cards[2] = MultiSeaPacks.CardType(2, 0);
-        p.cards[3] = MultiSeaPacks.CardType(2, 0);
-        p.cards[4] = MultiSeaPacks.CardType(3, 0);
-        p.cards[5] = MultiSeaPacks.CardType(3, 0);
-        p.tiers = new MultiSeaPacks.Tier[](2);
-        p.tiers[0] = MultiSeaPacks.Tier("Standard", 5, 0, 0, 0);
-        p.tiers[1] = MultiSeaPacks.Tier("Rare pack", 5, 2, 40, 0); // guaranteed 1 rare, max 40 packs
-        p.phases = new MultiSeaPacks.Phase[](1);
-        p.phases[0] = MultiSeaPacks.Phase(uint64(block.timestamp), 0, 0.01 ether, 0, 0, bytes32(0));
+        p.rarities = new MultiSeaPacksStorage.Rarity[](3);
+        p.rarities[0] = MultiSeaPacksStorage.Rarity("Common", 70, 700);
+        p.rarities[1] = MultiSeaPacksStorage.Rarity("Rare", 25, 250);
+        p.rarities[2] = MultiSeaPacksStorage.Rarity("Legendary", 5, 50);
+        p.cards = new MultiSeaPacksStorage.CardType[](6);
+        p.cards[0] = MultiSeaPacksStorage.CardType(1, 0);
+        p.cards[1] = MultiSeaPacksStorage.CardType(1, 0);
+        p.cards[2] = MultiSeaPacksStorage.CardType(2, 0);
+        p.cards[3] = MultiSeaPacksStorage.CardType(2, 0);
+        p.cards[4] = MultiSeaPacksStorage.CardType(3, 0);
+        p.cards[5] = MultiSeaPacksStorage.CardType(3, 0);
+        p.tiers = new MultiSeaPacksStorage.Tier[](2);
+        p.tiers[0] = MultiSeaPacksStorage.Tier("Standard", 5, 0, 0, 0);
+        p.tiers[1] = MultiSeaPacksStorage.Tier("Rare pack", 5, 2, 40, 0); // guaranteed 1 rare, max 40 packs
+        p.phases = new MultiSeaPacksStorage.Phase[](1);
+        p.phases[0] = MultiSeaPacksStorage.Phase(uint64(block.timestamp), 0, 0.01 ether, 0, 0, bytes32(0));
         p.eids = new uint32[](1);
         p.eids[0] = EID;
         p.hubEid = EID;
     }
 
-    function cfg(MultiSeaPacks.PackInit memory p) public pure returns (bytes32) {
+    function cfg(MultiSeaPacksStorage.PackInit memory p) public pure returns (bytes32) {
         p.feeWallet = address(0);
         p.platformFeeBps = 0;
         return keccak256(abi.encode(p));
     }
 
-    function sign(MultiSeaPacks.PackInit memory p, bytes32 cid, uint256 dl) internal view returns (bytes memory) {
+    function sign(MultiSeaPacksStorage.PackInit memory p, bytes32 cid, uint256 dl) internal view returns (bytes memory) {
         bytes32 d = f.approvalDigest(creator, this.cfg(p), cid, dl);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(apk, d);
         return abi.encodePacked(r, s, v);
@@ -79,7 +81,7 @@ contract PacksTest is Test {
     }
 
     function deployCid(bytes32 cid) internal returns (MultiSeaPacks packs, MultiSeaPackCards cards) {
-        MultiSeaPacks.PackInit memory p = baseInit();
+        MultiSeaPacksStorage.PackInit memory p = baseInit();
         uint256 dl = block.timestamp + 1 days;
         bytes memory sig = sign(p, cid, dl);
         uint256 g = gasleft();
@@ -112,13 +114,13 @@ contract PacksTest is Test {
 
     function testCannotReinitialize() public {
         (MultiSeaPacks packs, MultiSeaPackCards cards) = deploy();
-        MultiSeaPacks.PackInit memory p = baseInit();
+        MultiSeaPacksStorage.PackInit memory p = baseInit();
         vm.expectRevert();
         packs.initialize(p, address(cards), address(0), bytes32(uint256(1)));
     }
 
     function testSignatureReplayAndTamper() public {
-        MultiSeaPacks.PackInit memory p = baseInit();
+        MultiSeaPacksStorage.PackInit memory p = baseInit();
         uint256 dl = block.timestamp + 1 hours;
         bytes32 cid = keccak256("s");
         bytes memory sig = sign(p, cid, dl);
@@ -162,13 +164,13 @@ contract PacksTest is Test {
         vm.prank(alice);
         packs.open(1, 1);
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.RevealTooEarly.selector);
+        vm.expectRevert(MultiSeaPacksStorage.RevealTooEarly.selector);
         packs.reveal(1);
         uint32 rb;
         (, rb,,,,) = packs.commits(1);
         vm.roll(rb); // still the reveal block itself
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.RevealTooEarly.selector);
+        vm.expectRevert(MultiSeaPacksStorage.RevealTooEarly.selector);
         packs.reveal(1);
         vm.roll(rb + 1);
         uint256 g = gasleft();
@@ -200,15 +202,15 @@ contract PacksTest is Test {
         // hash still available: cannot recommit (would let the user grind)
         vm.roll(rb + 1);
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.NotPending.selector);
+        vm.expectRevert(MultiSeaPacksStorage.NotPending.selector);
         packs.recommit(1);
         // expire the hash (257 blocks after the reveal block: blockhash is 0)
         vm.roll(uint256(rb) + 257);
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.HashExpired.selector);
+        vm.expectRevert(MultiSeaPacksStorage.HashExpired.selector);
         packs.reveal(1);
         vm.prank(bob);
-        vm.expectRevert(MultiSeaPacks.NotCommitOwner.selector);
+        vm.expectRevert(MultiSeaPacksStorage.NotCommitOwner.selector);
         packs.recommit(1);
         vm.prank(alice);
         packs.recommit(1);
@@ -221,7 +223,7 @@ contract PacksTest is Test {
         assertEq(cards.balanceOf(alice), 5);
         // cannot recommit after a successful reveal
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.NotPending.selector);
+        vm.expectRevert(MultiSeaPacksStorage.NotPending.selector);
         packs.recommit(1);
     }
 
@@ -234,7 +236,7 @@ contract PacksTest is Test {
         uint32 rb; (, rb,,,,) = packs.commits(1);
         vm.roll(rb + 1);
         vm.prank(bob);
-        vm.expectRevert(MultiSeaPacks.NotCommitOwner.selector);
+        vm.expectRevert(MultiSeaPacksStorage.NotCommitOwner.selector);
         packs.reveal(1);
     }
 
@@ -247,11 +249,11 @@ contract PacksTest is Test {
         }
         assertEq(packs.remainingSlots(), 0);
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.SoldOut.selector);
+        vm.expectRevert(MultiSeaPacksStorage.SoldOut.selector);
         packs.mint{ value: 0.01 ether }(alice, 0, 1, 1, new bytes32[](0));
         // guaranteed rare packs also consume remaining rare reservation — none left
         vm.prank(bob);
-        vm.expectRevert(MultiSeaPacks.SoldOut.selector);
+        vm.expectRevert(MultiSeaPacksStorage.SoldOut.selector);
         packs.mint{ value: 0.01 ether }(bob, 0, 2, 1, new bytes32[](0));
     }
 
@@ -262,7 +264,7 @@ contract PacksTest is Test {
         vm.prank(alice);
         packs.mint{ value: 0.20 ether }(alice, 0, 2, 20, new bytes32[](0));
         vm.prank(alice);
-        vm.expectRevert(MultiSeaPacks.SoldOut.selector);
+        vm.expectRevert(MultiSeaPacksStorage.SoldOut.selector);
         packs.mint{ value: 0.01 ether }(alice, 0, 2, 1, new bytes32[](0));
         // open and reveal all 40 guaranteed-rare packs in batches of 10
         for (uint256 b; b < 4; ++b) {
@@ -357,7 +359,7 @@ contract PacksTest is Test {
     }
 
     function testConfigHashMatchesFactory() public view {
-        MultiSeaPacks.PackInit memory p = baseInit();
+        MultiSeaPacksStorage.PackInit memory p = baseInit();
         assertEq(this.cfg(p), f.configHash(p));
     }
 

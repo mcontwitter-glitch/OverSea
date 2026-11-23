@@ -31,7 +31,7 @@ let rows: Row[] = CHAINS.map(k => ({
 
 function draw() {
   app.innerHTML = `${navHtml('launchpad')}<main class="page ld"><h1>Deploy on-chain art factories</h1>
-    <p class="mut">Optional fully on-chain art for launchpad drops uses a <b>new</b> factory on each EVM chain (existing IPFS factories stay as they are). You pay the gas. Omni drops reuse the live OmniEscrowV2. After every chain has a factory, record the addresses in <span class="mono">config/launchpad.json</span> under <span class="mono">onchainDrops</span> and rebuild the site.</p>
+    <p class="mut">Optional fully on-chain art for launchpad drops uses a <b>new</b> factory on each EVM chain (existing IPFS factories stay as they are). Each transaction is simulated on-chain first; if it would fail, you see the error here and the wallet is not prompted. You pay the gas. Omni drops reuse the live OmniEscrowV2. After every chain has a factory, record the addresses in <span class="mono">config/launchpad.json</span> under <span class="mono">onchainDrops</span> and rebuild the site.</p>
     ${wallet.address ? `<p class="small">Connected: <span class="mono">${esc(wallet.address)}</span>${isOwner() ? ' · owner wallet' : ' · connect the MultiSea owner wallet to deploy'}</p>` : '<p><button class="bbtn sm" data-act="connect">Connect wallet</button></p>'}
     <div class="fcard">${rows.map(r => `<div class="ldchrow" style="align-items:flex-start">
       <div>${logo(r.k)} <b>${esc(r.k)}</b></div>
@@ -56,28 +56,39 @@ async function deploy(k: string) {
     const acc = wallet.address as Address;
     const w = createWalletClient({ account: acc, chain: vchain(k), transport: custom((window as any).ethereum) });
     const pub = readClient(k);
-    const send = async (label: string, data: Hex) => {
+    const send = async (label: string, data: Hex, to?: Address, expectContract = true) => {
+      row.busy = `Checking ${label}…`; draw();
+      const req = { account: acc, data, ...(to ? { to } : {}) };
+      try {
+        await pub.estimateGas(req);
+      } catch (e: any) {
+        const reason = friendly(e) || e?.shortMessage || e?.details || e?.message || 'simulation failed';
+        throw new Error(`${label} would fail on this chain (${String(reason).split('\n')[0].slice(0, 200)}). No transaction was sent.`);
+      }
       row.busy = label; draw();
-      const hash = await w.sendTransaction({ account: acc, chain: vchain(k), data });
+      const hash = await w.sendTransaction({ account: acc, chain: vchain(k), data, ...(to ? { to } : {}) });
       log += `${k} ${label}: ${hash}\n`; draw();
       const r = await pub.waitForTransactionReceipt({ hash });
       if (r.status !== 'success') throw new Error(label + ' reverted');
-      if (!r.contractAddress) throw new Error(label + ' produced no contract address');
-      return r.contractAddress as Address;
+      if (expectContract && !r.contractAddress) throw new Error(label + ' produced no contract address');
+      return (r.contractAddress || to) as Address;
     };
-    const impl = await send('On-chain drop implementation', ART.dropBytecode as Hex);
-    const omniImpl = await send('On-chain omni implementation', ART.omniBytecode as Hex);
+    const artLib = await send('OnchainArt library', (ART as any).artLibraryBytecode as Hex);
+    const placeholder = (ART as any).artLibraryPlaceholder as string;
+    if (!placeholder) throw new Error('on-chain artifact is missing the OnchainArt placeholder');
+    const link = (bytecode: string) => {
+      if (!bytecode.includes(placeholder)) throw new Error('implementation bytecode is missing the OnchainArt placeholder');
+      return bytecode.split(placeholder).join(artLib.slice(2).toLowerCase()) as Hex;
+    };
+    const impl = await send('On-chain drop implementation', link(ART.dropBytecode as string));
+    const omniImpl = await send('On-chain omni implementation', link(ART.omniBytecode as string));
     const facArgs = encodeAbiParameters(
       [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint16' }],
       [acc, impl, FEE as Address, APPROVER as Address, FEE_BPS],
     );
     const factory = await send('On-chain factory', (ART.factoryBytecode + facArgs.slice(2)) as Hex);
-    row.busy = 'setOmni(existing OmniEscrowV2)…'; draw();
     const data = encodeFunctionData({ abi: ART.factoryAbi as any, functionName: 'setOmni', args: [omniImpl, v2escrow(k)] });
-    const h = await w.sendTransaction({ account: acc, chain: vchain(k), to: factory, data });
-    const rec = await pub.waitForTransactionReceipt({ hash: h });
-    if (rec.status !== 'success') throw new Error('setOmni reverted');
-    log += `${k} setOmni: ${h}\n`;
+    await send('setOmni(existing OmniEscrowV2)', data, factory, false);
     row.factory = factory; row.impl = impl; row.omniImpl = omniImpl; row.escrow = v2escrow(k); row.busy = '';
     log += `${k}: factory ${factory}\n${k}: drop impl ${impl}\n${k}: omni impl ${omniImpl}\nAdd these to config/launchpad.json onchainDrops and rebuild.\n`;
     draw();

@@ -1,6 +1,6 @@
 // /deploy-pack-factories — MC deploys MultiSeaPackFactory + escrow on each of the 5 EVM chains from his own wallet.
 // Never uses a server key. After all 5 are live, set peers and put the addresses in config/launchpad.json packDrops.
-import { createWalletClient, custom, type Hex, type Address } from 'viem';
+import { createWalletClient, custom, encodeAbiParameters, encodeFunctionData, type Hex, type Address } from 'viem';
 import ART from '../config/pack-artifact.json';
 import LP from '../config/launchpad.json';
 import { wallet, openConnect, onWallet, ensureChain, vchain, readClient, friendly, esc } from './wallet';
@@ -23,7 +23,7 @@ let rows: Row[] = CHAINS.map(k => ({ k, factory: (LP as any).packDrops?.factorie
 
 function draw() {
   app.innerHTML = `${navHtml('launchpad')}<main class="page ld"><h1>Deploy pack factories</h1>
-    <p class="mut">Card packs use a new factory and LayerZero escrow on each EVM chain (existing launchpad factories are not touched). You pay the gas. After every chain has a factory, set peers so packs and cards can move. Then record the addresses in <span class="mono">config/launchpad.json</span> under <span class="mono">packDrops</span> and rebuild the site.</p>
+    <p class="mut">Card packs use a new factory and LayerZero escrow on each EVM chain (existing launchpad factories are not touched). Each transaction is simulated on-chain first; if it would fail, you see the error here and the wallet is not prompted. You pay the gas. After every chain has a factory, set peers so packs and cards can move. Then record the addresses in <span class="mono">config/launchpad.json</span> under <span class="mono">packDrops</span> and rebuild the site.</p>
     ${!wallet.address ? `<div class="fcard cta"><button class="bbtn" data-act="connect">Connect wallet</button></div>`
       : !isOwner() ? `<p class="err">Connect the MultiSea owner wallet (${esc(String(OWNER).slice(0, 6))}…${esc(String(OWNER).slice(-4))}) to deploy.</p>`
       : ''}
@@ -52,18 +52,27 @@ async function deploy(k: string) {
     const pub = readClient(k);
     const endpoint = chains[k].endpoint as Address;
     const moveFee = BigInt((LP as any).moveFeeWei?.[k] || '0');
-    const send = async (label: string, data: Hex, value = 0n) => {
+    const send = async (label: string, data: Hex, value = 0n, to?: Address) => {
+      row.busy = `Checking ${label}…`; draw();
+      const req = { account: acc, data, value, ...(to ? { to } : {}) };
+      try {
+        await pub.estimateGas(req);
+      } catch (e: any) {
+        const reason = friendly(e) || e?.shortMessage || e?.details || e?.message || 'simulation failed';
+        throw new Error(`${label} would fail on this chain (${String(reason).split('\n')[0].slice(0, 200)}). No transaction was sent.`);
+      }
       row.busy = label; draw();
-      const hash = await w.sendTransaction({ account: acc, chain: vchain(k), data, value });
+      const hash = await w.sendTransaction({ account: acc, chain: vchain(k), data, value, ...(to ? { to } : {}) });
       log += `${k} ${label}: ${hash}\n`; draw();
       const r = await pub.waitForTransactionReceipt({ hash });
       if (r.status !== 'success') throw new Error(label + ' reverted');
       return r.contractAddress as Address;
     };
-    const packImpl = await send('Packs implementation', ART.packBytecode as Hex);
+    const ops = await send('Packs ops module', (ART as any).opsBytecode as Hex);
+    const packArgs = encodeAbiParameters([{ type: 'address' }], [ops]);
+    const packImpl = await send('Packs implementation', ((ART as any).packBytecode + packArgs.slice(2)) as Hex);
     const cardImpl = await send('Cards implementation', ART.cardBytecode as Hex);
     // escrow constructor(address endpoint, address owner, address feeWallet, uint256 moveFee)
-    const { encodeAbiParameters, encodeFunctionData, keccak256, toBytes } = await import('viem');
     const escArgs = encodeAbiParameters(
       [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
       [endpoint, acc, FEE as Address, moveFee]
@@ -74,13 +83,10 @@ async function deploy(k: string) {
       [acc, packImpl, cardImpl, FEE as Address, APPROVER as Address, FEE_BPS]
     );
     const factory = await send('Pack factory', (ART.factoryBytecode + facArgs.slice(2)) as Hex);
-    row.busy = 'Linking factory ↔ escrow…'; draw();
     const setFac = encodeFunctionData({ abi: ART.escrowAbi as any, functionName: 'setFactory', args: [factory] });
-    const h1 = await w.sendTransaction({ account: acc, chain: vchain(k), to: escrow, data: setFac });
-    await pub.waitForTransactionReceipt({ hash: h1 });
+    await send('setFactory', setFac, 0n, escrow);
     const setEsc = encodeFunctionData({ abi: ART.factoryAbi as any, functionName: 'setEscrow', args: [escrow] });
-    const h2 = await w.sendTransaction({ account: acc, chain: vchain(k), to: factory, data: setEsc });
-    await pub.waitForTransactionReceipt({ hash: h2 });
+    await send('setEscrow', setEsc, 0n, factory);
     row.factory = factory; row.escrow = escrow; row.busy = '';
     log += `${k}: factory ${factory}\n${k}: escrow ${escrow}\n`;
     draw();
@@ -106,6 +112,13 @@ async function setPeers() {
         const eid = chains[b.k].eid;
         const peer = pad(b.escrow as Address, { size: 32 });
         const data = encodeFunctionData({ abi: ART.escrowAbi as any, functionName: 'setPeer', args: [eid, peer] });
+        log += `${a.k} checking setPeer ${b.k}…\n`; draw();
+        try {
+          await pub.estimateGas({ account: acc, to: a.escrow as Address, data });
+        } catch (e: any) {
+          const reason = friendly(e) || e?.shortMessage || e?.details || e?.message || 'simulation failed';
+          throw new Error(`setPeer ${a.k}→${b.k} would fail (${String(reason).split('\n')[0].slice(0, 200)}). No transaction was sent.`);
+        }
         log += `${a.k} setPeer ${b.k}…\n`; draw();
         const hash = await w.sendTransaction({ account: acc, chain: vchain(a.k), to: a.escrow as Address, data });
         const r = await pub.waitForTransactionReceipt({ hash });

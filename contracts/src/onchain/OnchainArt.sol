@@ -60,7 +60,7 @@ library OnchainArt {
         string calldata name,
         string calldata description,
         string calldata attributes
-    ) internal {
+    ) public {
         if (s.finalized) revert AlreadyFinalized();
         if (id == 0 || id > s.maxSupply) revert BadId();
         if (mime > MIME_GIF) revert BadMime();
@@ -84,7 +84,7 @@ library OnchainArt {
     }
 
     /// @notice Mark a remote (pointer) chain ready. Local chains require every id 1..maxSupply to be written.
-    function finalize(Store storage s) internal {
+    function finalize(Store storage s) public {
         if (s.finalized) revert AlreadyFinalized();
         if (s.storeLocal && s.written != s.maxSupply) revert Incomplete();
         if (!s.storeLocal && bytes(s.rendererBase).length == 0) revert Incomplete();
@@ -95,7 +95,7 @@ library OnchainArt {
         if (!s.finalized) revert NotFinalized();
     }
 
-    function tokenURI(Store storage s, uint256 id) internal view returns (string memory) {
+    function tokenURI(Store storage s, uint256 id) public view returns (string memory) {
         if (id == 0 || id > s.maxSupply) revert BadId();
         if (!s.storeLocal) {
             return string.concat(s.rendererBase, id.toString());

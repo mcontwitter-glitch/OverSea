@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Script } from "forge-std/Script.sol";
 import { MultiSeaPacks } from "../src/packs/MultiSeaPacks.sol";
+import { MultiSeaPacksOps } from "../src/packs/MultiSeaPacksOps.sol";
 import { MultiSeaPackCards } from "../src/packs/MultiSeaPackCards.sol";
 import { MultiSeaPackFactory } from "../src/packs/MultiSeaPackFactory.sol";
 import { MultiSeaPackEscrow } from "../src/packs/MultiSeaPackEscrow.sol";
@@ -20,7 +21,8 @@ contract DeployPackFactory is Script {
         uint16 feeBps = uint16(vm.envOr("PACK_FEE_BPS", uint256(50)));
         uint256 moveFee = vm.envOr("PACK_MOVE_FEE", uint256(0));
         vm.startBroadcast();
-        MultiSeaPacks packImpl = new MultiSeaPacks();
+        MultiSeaPacksOps packOps = new MultiSeaPacksOps();
+        MultiSeaPacks packImpl = new MultiSeaPacks(address(packOps));
         MultiSeaPackCards cardImpl = new MultiSeaPackCards();
         MultiSeaPackEscrow escrow = new MultiSeaPackEscrow(endpoint, owner, feeWallet, moveFee);
         MultiSeaPackFactory factory = new MultiSeaPackFactory(owner, address(packImpl), address(cardImpl), feeWallet, approver, feeBps);

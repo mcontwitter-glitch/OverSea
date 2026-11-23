@@ -6,6 +6,7 @@ import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MultiSeaPacks } from "./MultiSeaPacks.sol";
+import { MultiSeaPacksStorage } from "./MultiSeaPacksStorage.sol";
 import { MultiSeaPackCards } from "./MultiSeaPackCards.sol";
 
 interface IPackEscrowRegistry {
@@ -59,8 +60,8 @@ contract MultiSeaPackFactory is Ownable2Step, EIP712 {
     }
 
     /// @notice keccak256 of the ABI-encoded init params with factory-controlled fee fields zeroed.
-    function configHash(MultiSeaPacks.PackInit calldata p) public pure returns (bytes32) {
-        MultiSeaPacks.PackInit memory q = p;
+    function configHash(MultiSeaPacksStorage.PackInit calldata p) public pure returns (bytes32) {
+        MultiSeaPacksStorage.PackInit memory q = p;
         q.feeWallet = address(0);
         q.platformFeeBps = 0;
         return keccak256(abi.encode(q));
@@ -83,7 +84,7 @@ contract MultiSeaPackFactory is Ownable2Step, EIP712 {
     }
 
     /// @notice Creator deploys their approved pack drop (creator pays gas). msg.sender must be the signed creator.
-    function createPackDrop(MultiSeaPacks.PackInit calldata p, bytes32 cid, uint256 deadline, bytes calldata sig)
+    function createPackDrop(MultiSeaPacksStorage.PackInit calldata p, bytes32 cid, uint256 deadline, bytes calldata sig)
         external
         returns (address packs, address cards)
     {
@@ -91,7 +92,7 @@ contract MultiSeaPackFactory is Ownable2Step, EIP712 {
         if (usedSalt[cid]) revert SaltUsed();
         if (ECDSA.recover(approvalDigest(msg.sender, configHash(p), cid, deadline), sig) != approver) revert BadSignature();
         usedSalt[cid] = true;
-        MultiSeaPacks.PackInit memory q = p;
+        MultiSeaPacksStorage.PackInit memory q = p;
         q.feeWallet = feeWallet;
         q.platformFeeBps = platformFeeBps;
         packs = Clones.cloneDeterministic(packImplementation, cid);

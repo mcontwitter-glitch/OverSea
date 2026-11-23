@@ -3,6 +3,8 @@ pragma solidity ^0.8.24;
 
 import { TestHelperOz5 } from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
 import { MultiSeaPacks } from "../src/packs/MultiSeaPacks.sol";
+import { MultiSeaPacksOps } from "../src/packs/MultiSeaPacksOps.sol";
+import { MultiSeaPacksStorage } from "../src/packs/MultiSeaPacksStorage.sol";
 import { MultiSeaPackCards } from "../src/packs/MultiSeaPackCards.sol";
 import { MultiSeaPackFactory } from "../src/packs/MultiSeaPackFactory.sol";
 import { MultiSeaPackEscrow } from "../src/packs/MultiSeaPackEscrow.sol";
@@ -33,7 +35,7 @@ contract PacksOmniTest is TestHelperOz5 {
         for (uint256 i; i < 2; ++i) {
             uint32 e = E[i];
             esc[e] = new MultiSeaPackEscrow(address(endpoints[e]), timelock, FEE, 0.0001 ether);
-            fac[e] = new MultiSeaPackFactory(timelock, address(new MultiSeaPacks()), address(new MultiSeaPackCards()), FEE, approver, 50);
+            fac[e] = new MultiSeaPackFactory(timelock, address(new MultiSeaPacks(address(new MultiSeaPacksOps()))), address(new MultiSeaPackCards()), FEE, approver, 50);
             vm.startPrank(timelock);
             esc[e].setFactory(address(fac[e]));
             fac[e].setEscrow(address(esc[e]));
@@ -53,30 +55,30 @@ contract PacksOmniTest is TestHelperOz5 {
         assertEq(address(esc[B]).balance, 0, "spoke escrow starts empty");
     }
 
-    function initParams() internal view returns (MultiSeaPacks.PackInit memory p) {
+    function initParams() internal view returns (MultiSeaPacksStorage.PackInit memory p) {
         p.name = "Omni Cards"; p.symbol = "OCARD"; p.packName = "Omni Packs"; p.packSymbol = "OPACK";
         p.owner = creator; p.payout = creator; p.royaltyReceiver = creator; p.royaltyBps = 500;
         p.cardBaseURI = "ipfs://cards/"; p.packBaseURI = "ipfs://packs/";
-        p.rarities = new MultiSeaPacks.Rarity[](2);
-        p.rarities[0] = MultiSeaPacks.Rarity("Common", 80, 80);
-        p.rarities[1] = MultiSeaPacks.Rarity("Rare", 20, 20);
-        p.cards = new MultiSeaPacks.CardType[](2);
-        p.cards[0] = MultiSeaPacks.CardType(1, 0);
-        p.cards[1] = MultiSeaPacks.CardType(2, 0);
-        p.tiers = new MultiSeaPacks.Tier[](1);
-        p.tiers[0] = MultiSeaPacks.Tier("Standard", 5, 0, 0, 0);
-        p.phases = new MultiSeaPacks.Phase[](1);
-        p.phases[0] = MultiSeaPacks.Phase(uint64(block.timestamp), 0, 0.01 ether, 0, 0, bytes32(0));
+        p.rarities = new MultiSeaPacksStorage.Rarity[](2);
+        p.rarities[0] = MultiSeaPacksStorage.Rarity("Common", 80, 80);
+        p.rarities[1] = MultiSeaPacksStorage.Rarity("Rare", 20, 20);
+        p.cards = new MultiSeaPacksStorage.CardType[](2);
+        p.cards[0] = MultiSeaPacksStorage.CardType(1, 0);
+        p.cards[1] = MultiSeaPacksStorage.CardType(2, 0);
+        p.tiers = new MultiSeaPacksStorage.Tier[](1);
+        p.tiers[0] = MultiSeaPacksStorage.Tier("Standard", 5, 0, 0, 0);
+        p.phases = new MultiSeaPacksStorage.Phase[](1);
+        p.phases[0] = MultiSeaPacksStorage.Phase(uint64(block.timestamp), 0, 0.01 ether, 0, 0, bytes32(0));
         p.eids = new uint32[](2); p.eids[0] = A; p.eids[1] = B; p.hubEid = A;
         p.prices = new uint128[](2); p.prices[0] = 0.01 ether; p.prices[1] = 0.02 ether;
     }
 
-    function cfg(MultiSeaPacks.PackInit memory p) public pure returns (bytes32) {
+    function cfg(MultiSeaPacksStorage.PackInit memory p) public pure returns (bytes32) {
         p.feeWallet = address(0); p.platformFeeBps = 0; return keccak256(abi.encode(p));
     }
 
     function _deploy(uint32 e) internal returns (MultiSeaPacks) {
-        MultiSeaPacks.PackInit memory p = initParams();
+        MultiSeaPacksStorage.PackInit memory p = initParams();
         uint256 dl = block.timestamp + 1 days;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(apk, fac[e].approvalDigest(creator, this.cfg(p), CID, dl));
         vm.prank(creator);
@@ -217,7 +219,7 @@ contract PacksOmniTest is TestHelperOz5 {
         uint128 hv = mintHv(B, 1);
         (uint256 price, uint256 lz) = packs[B].quoteMint(0, 1, 1, hv);
         uint256 need = price + lz;
-        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, need, need - 1));
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacksStorage.InsufficientFee.selector, need, need - 1));
         vm.prank(alice);
         packs[B].mint{ value: need - 1 }(alice, 0, 1, 1, new bytes32[](0), hv);
         assertEq(packs[B].balanceOf(alice, 1), 0);
@@ -236,7 +238,7 @@ contract PacksOmniTest is TestHelperOz5 {
         vm.roll(rb + 1);
         uint128 hv = revealHv(B, 5);
         uint256 lz = packs[B].quoteReveal(id, hv);
-        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, lz, lz - 1));
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacksStorage.InsufficientFee.selector, lz, lz - 1));
         vm.prank(alice);
         packs[B].reveal{ value: lz - 1 }(id, hv);
         (,,,, uint8 status,) = packs[B].commits(id);
@@ -250,7 +252,7 @@ contract PacksOmniTest is TestHelperOz5 {
         uint32 rb; (, rb,,,,) = packs[A].commits(1);
         vm.roll(rb + 1);
         uint256 lz = packs[A].quoteReveal(1, 0);
-        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacks.InsufficientFee.selector, lz, lz - 1));
+        vm.expectRevert(abi.encodeWithSelector(MultiSeaPacksStorage.InsufficientFee.selector, lz, lz - 1));
         vm.prank(alice);
         packs[A].reveal{ value: lz - 1 }(1);
     }

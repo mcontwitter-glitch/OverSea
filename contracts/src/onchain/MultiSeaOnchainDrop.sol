@@ -165,6 +165,11 @@ contract MultiSeaOnchainDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
     function setPayout(address a) external onlyOwner { if (a == address(0)) revert BadParams(); payout = a; }
     function setRoyalty(address r, uint96 bps) external onlyOwner { if (bps > MAX_ROYALTY_BPS) revert BadParams(); _setDefaultRoyalty(r, bps); }
 
+
+    function _writeOne(uint256 id, uint8 mime_, bytes calldata image, string calldata name_, string calldata description, string calldata attributes) private {
+        OnchainArt.write(_art, id, mime_, image, name_, description, attributes);
+    }
+
     function writeArt(uint256 id, uint8 mime, bytes calldata image, string calldata name, string calldata description, string calldata attributes) external onlyOwner {
         OnchainArt.write(_art, id, mime, image, name, description, attributes);
         emit ArtWritten(id, image.length);
@@ -181,7 +186,7 @@ contract MultiSeaOnchainDrop is ERC721AUpgradeable, ERC2981, ReentrancyGuard {
         uint256 n = ids.length;
         if (n == 0 || n != mime.length || n != image.length || n != name.length || n != description.length || n != attributes.length) revert BadParams();
         for (uint256 i; i < n; ++i) {
-            OnchainArt.write(_art, ids[i], mime[i], image[i], name[i], description[i], attributes[i]);
+            _writeOne(ids[i], mime[i], image[i], name[i], description[i], attributes[i]);
             emit ArtWritten(ids[i], image[i].length);
         }
     }
