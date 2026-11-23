@@ -1,1 +1,0 @@
-export{n as autoNames,a as invalidateProfiles}from"./names-C-RPo0Km.js";
