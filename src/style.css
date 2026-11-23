@@ -11,7 +11,7 @@ a{color:#d9d9d9;text-decoration:none}button,select,input{font:inherit;color:inhe
 .banner-fade{position:absolute;inset:0;background:linear-gradient(180deg,#00000010 0%,#000000aa 55%,#000000 100%)}
 .hero{position:relative;display:flex;gap:18px;align-items:flex-end;padding:0 24px}
 .avatar{width:96px;height:96px;border-radius:14px;border:3px solid #000000;object-fit:cover;background:#222}
-h1{margin:0;font-size:34px;font-weight:800;letter-spacing:-.5px}.verified{display:inline-grid;place-items:center;width:22px;height:22px;background:#d9d9d9;border-radius:50%;font-size:13px;vertical-align:middle}
+h1{margin:0;font-size:34px;font-weight:800;letter-spacing:-.5px}.verified{display:inline-grid;place-items:center;width:22px;height:22px;background:#d9d9d9;border-radius:50%;font-size:13px;vertical-align:middle}.rsbadge{display:inline-grid;place-items:center;width:22px;height:22px;margin-left:6px;vertical-align:middle;font-size:15px;line-height:1;text-decoration:none;border-radius:50%}.rsbadge:hover{background:#1c1c1c}
 .by{display:flex;gap:4px;align-items:center;margin-top:6px;color:#bbb;font-size:13px}.by span{margin-left:6px}
 .stats{position:relative;display:flex;gap:34px;padding:18px 24px 20px;flex-wrap:wrap}
 .stat{display:flex;flex-direction:column}.stat b{font-size:18px;font-weight:700;display:flex;gap:6px;align-items:center}.stat span{color:#9a9aa3;font-size:12px}

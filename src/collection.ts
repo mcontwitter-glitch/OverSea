@@ -10,6 +10,7 @@ import { navHtml, bindNav, media , ethUsdRate, usdRates, type UsdRates, mcapUsd,
 import { anyOffersLive, loadOffers, offerStatHtml, bestOfferOn, myOpenOffers, openMakeOffer, openAccept, openCancel, offerUsd, type OffersPayload, type Offer } from './offers';
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
+import { revshareBadgeHtml, loadRevshareConfig, type RsConfig } from './rsbadge';
 import { addrHtml } from './names';
 import { mergeHolders, mergedAway } from './holdersmerge';
 import { resolveProfiles } from './walletlinks';
@@ -37,6 +38,7 @@ const listingsLiveP: Promise<[Response | null, Response | null]> = API
   : Promise.resolve([null, null]);
 // Owner-editable overrides (logo, banner, description, links) served by the Worker when online.
 let ovr: any = {}; let editable = false; let founder = false;
+let rsCfg: RsConfig | null = null;
 document.title = `${COL.name} · MultiSea`;
 const app = document.getElementById('app')!;
 const $ = (s: string, r: ParentNode = document) => r.querySelector(s) as HTMLElement;
@@ -305,7 +307,7 @@ function header() {
     <div class="hero">
       <img class="avatar" src="${avatarSrc}" alt="">
       <div class="hero-txt">
-        <h1>${esc(COL.name)} <span class="verified">✓</span></h1>
+        <h1>${esc(COL.name)} <span class="verified">✓</span>${revshareBadgeHtml(COL.slug, rsCfg)}</h1>
         <div class="by">${deployedChains.map(c => logo(c)).join('')}<span>${ordSoon() ? `${deployedChains.length} chains · Bitcoin coming soon` : ORD?.demo ? `${deployedChains.length - 1} chains + Bitcoin (demo)` : `${deployedChains.length} chains`} · ${COL.standard}</span></div>
         ${shareBtns(COL.slug, COL.name)}
       </div>
@@ -601,6 +603,7 @@ async function loadOfferData() {
   offerData = d; offerRates = r;
 }
 loadOfferData().then(() => render());
+loadRevshareConfig(API, COL.slug).then(cfg => { rsCfg = cfg; if (cfg?.enabled) render(); });
 
 // Launchpad drops: primary mint volume read from chain (null for collections that are not drops).
 import('./dropstats').then(D => D.primaryVolume(COL.deployments)).then(p => { if (p) { primVol = p; render(); } }).catch(() => {});
