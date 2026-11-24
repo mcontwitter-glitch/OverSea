@@ -8,7 +8,7 @@ import { localDrops, saveLocal, isLocalHost } from './launchdata';
 import LPC from '../config/launchpad.json';
 import { LP_LIVE } from './lpchain';
 import { loadFlush, flushHtml, doFlush } from './flushadmin';
-import { loadFeeAdmin, feeAdminHtml, doFeeSet } from './feeadmin';
+import { loadFeeAdmin, feeAdminHtml, doFeeSet, feeOwner } from './feeadmin';
 import { loadBridgeAdmin, bridgeAdminHtml, bridgeAdminAct } from './bridgeadmin';
 import { loadVaultFund, vaultFundHtml, doVaultFund, bindVaultFundInputs } from './rsvfund';
 // Mainnet deploy approvals: the factory approver wallet signs EIP-712 approvals here (signature only, never a transaction).
@@ -47,8 +47,8 @@ function dropsHtml(admin: boolean) {
 }
 function render() {
   const s = getSession();
-  app.innerHTML = `${navHtml('admin')}<section class="page"><h2>${(getSession()?.isFee || isApprover()) && !getSession()?.isAdmin ? 'Admin' : 'Admin: review queue'}</h2>
-  ${!apiReady ? soon('Admin review') : !wallet.address ? '<p>Connect the admin wallet.</p><button class="bbtn sm" data-act="connect">Connect wallet</button>' : !s ? '<p>Sign in to prove you control the admin wallet.</p><button class="bbtn sm" data-act="signin">Sign in</button>' : !s.isAdmin && !s.isFee && !isApprover() ? '<p class="err">This wallet is not an admin.</p>' : ''}
+  app.innerHTML = `${navHtml('admin')}<section class="page"><h2>${(getSession()?.isFee || isApprover() || feeOwner()) && !getSession()?.isAdmin ? 'Admin' : 'Admin: review queue'}</h2>
+  ${!apiReady ? soon('Admin review') : !wallet.address ? '<p>Connect the admin wallet.</p><button class="bbtn sm" data-act="connect">Connect wallet</button>' : !s ? (feeOwner() ? '' : '<p>Sign in to prove you control the admin wallet.</p><button class="bbtn sm" data-act="signin">Sign in</button>') : !s.isAdmin && !s.isFee && !isApprover() && !feeOwner() ? '<p class="err">This wallet is not an admin.</p>' : ''}
   ${err ? `<p class="err">${esc(err)}</p>` : ''}
   ${wallet.address && wallet.address.toLowerCase() === '0xb19f00e095b1387061d73751c772bba848d196b1' ? '<p class="mut small"><a href="/deploy-offers">Deploy collection offers ↗</a> · <a href="/deploy-island-wallets">Deploy Island wallets ↗</a></p>' : ''}
   ${pending ? (pending.length ? pending.map(p => `<div class="qcard"><div class="qh">${p.logo ? `<img src="${esc(media(p.logo))}" alt="">` : ''}<div><b>${esc(p.name)}</b> <span class="mut">/c/${esc(p.slug)}</span><div class="mut small">by ${esc(p.submitter)} · ${esc(p.submittedAt)}</div></div></div>
@@ -58,12 +58,12 @@ function render() {
   ${apprHtml()}
   ${s?.isAdmin ? flushHtml() : ''}
   ${s && s.isAdmin ? bridgeAdminHtml() : ''}
-  ${s && s.isAdmin ? feeAdminHtml() : ''}
+  ${feeAdminHtml(!!s?.isAdmin)}
   ${s && (s.isAdmin || s.isFee) ? vaultFundHtml() : ''}
   ${s && (s.isAdmin || s.isFee) ? feesHtml() : ''}
   </section>`;
 }
-async function load() { err = ''; const s = getSession(); loadFees(render); if (s && (s.isAdmin || s.isFee)) loadVaultFund(render); if (s && s.isAdmin) { loadBridgeAdmin(render); loadFeeAdmin(render); } if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
+async function load() { err = ''; const s = getSession(); loadFees(render); if (s && (s.isAdmin || s.isFee)) loadVaultFund(render); if (s && s.isAdmin) loadBridgeAdmin(render); if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
 app.addEventListener('click', async e => {
   const t = e.target as HTMLElement;
   if (t.dataset.act === 'connect') openConnect();
@@ -83,5 +83,6 @@ app.addEventListener('click', async e => {
     const reason = ap ? '' : prompt('Reason for rejection (optional)') || '';
     try { await api(`/admin/${ap ? 'approve' : 'reject'}/${slug}`, { auth: true, body: { reason } }); await load(); } catch (e: any) { err = e.message; render(); } }
 });
-bindVaultFundInputs(app); bindNav(); render(); const ok = () => { const s = getSession(); return !!(s?.isAdmin || s?.isFee || (s && isApprover())); };
+bindVaultFundInputs(app); bindNav(); render(); loadFeeAdmin(render); // fee card: public reads, shown to admins and factory owners (re-rendered on wallet change)
+ const ok = () => { const s = getSession(); return !!(s?.isAdmin || s?.isFee || (s && isApprover())); };
 onWallet(() => { if (ok()) load().then(loadAppr); else render(); }); checkApi().then(() => { if (ok()) load().then(loadAppr); else render(); });

@@ -34,7 +34,10 @@ export async function loadFeeAdmin(rerender: () => void) {
   } catch (e: any) { err = e.message || String(e); rows = rows || []; }
   rerender();
 }
-export function feeAdminHtml(): string {
+// True when the connected wallet is the owner() of any bridge factory. No SIWE needed: setGasCosts is onlyOwner/onlyOperator on-chain, which is the real check.
+export const feeOwner = () => !!wallet.address && !!rows?.some(r => r.owner.toLowerCase() === wallet.address!.toLowerCase());
+export function feeAdminHtml(isAdmin = false): string {
+  if (!isAdmin && !feeOwner()) return '';
   if (!rows && !err) return '';
   return `<div class="fees"><div class="fh"><h2>Listing fees (bridge factories)</h2></div>
     <p class="mut small">What an owner pays for a ${rows?.length || 5}-chain listing. It must cover, from the fee alone, the deployer's gas on every chain including the LayerZero gas drop + fee that funds Ethereum. Gas prices move, so the fee is recomputed from live prices with a safety buffer (2x on gas, 1.3x on LayerZero) and stored on each factory with <span class="mono">setGasCosts</span> (factory owner, signed in your wallet; simulated first). Update when "recommended" drifts above "current".</p>
