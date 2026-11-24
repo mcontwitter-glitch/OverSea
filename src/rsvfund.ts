@@ -34,7 +34,7 @@ export function vaultFundHtml(): string {
   if (!items?.length && !err) return '';
   const isFee = !!s?.isFee && !!wallet.address;
   return `<div class="fees"><div class="fh"><h2>Fund revenue-share vaults</h2></div>
-    <p class="mut small">Collections with an on-chain vault get their <b>creator royalty</b> paid straight into the vault by each sale. Only MultiSea's <b>fee share</b> has to be added by hand: the amount below is the fee share accrued in the ledger minus what you already funded. It is sent from your connected fee wallet to the vault (your signature, you pay gas); nothing is sent until you confirm in your wallet.</p>
+    <p class="mut small">Collection owners can also fund their own vault from the Founder tab on the collection page. Collections with an on-chain vault get their <b>creator royalty</b> paid straight into the vault by each sale. Only MultiSea's <b>fee share</b> has to be added by hand: the amount below is the fee share accrued in the ledger minus what you already funded. It is sent from your connected fee wallet to the vault (your signature, you pay gas); nothing is sent until you confirm in your wallet.</p>
     ${err ? `<p class="err">${esc(err)}</p>` : ''}
     ${(items || []).map(i => { const c = chains[i.chain]; return `<div class="fcard"><div class="fndr"><img class="cl" src="/logos/${esc(i.chain)}.svg" alt=""><div class="fndm"><b>${esc(i.name)}</b> · ${esc(c?.name || i.chain)}
       <div class="mut small">Vault <a class="mono" href="${esc(c?.explorer)}/address/${esc(i.vault)}" target="_blank" rel="noopener">${esc(i.vault.slice(0, 8))}…${esc(i.vault.slice(-6))}</a> · owed ${fe(i.owed, 8)} ${esc(c?.native)} · already funded ${fe(i.funded, 8)}</div>

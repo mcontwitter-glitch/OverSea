@@ -1,7 +1,7 @@
 // Founder box: "Set up revenue share". Deploy one RevShareVault per chain from the collection owner's own wallet (one tx, founder pays gas;
 // simulated before the wallet is prompted), register it with the Worker (SIWE, collection owner/editor), show balance / paid / pending and
 // pause toggles. The vault has no owner withdraw: holders are paid by the contract and nobody else can take the funds.
-import { createWalletClient, custom, type Address, type Hex } from 'viem';
+import { createWalletClient, custom, parseEther, type Address, type Hex } from 'viem';
 import CFG from '../config/collections.json';
 import { wallet, readClient, ensureChain, vchain, friendly, API } from './wallet';
 import { api } from './auth';
@@ -12,9 +12,9 @@ const chains = CFG.chains as Record<string, { name: string; chainId: number; nat
 const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const logo = (k: string) => `<img class="cl" src="/logos/${k}.svg" alt="">`;
 const ZERO = '0x0000000000000000000000000000000000000000';
-type Row = { k: string; collection: Address; factory?: Address; vault?: Address; stats?: VaultStats | null; registered: boolean; busy: string; err: string; tx: string };
+type Row = { k: string; collection: Address; factory?: Address; vault?: Address; stats?: VaultStats | null; registered: boolean; busy: string; err: string; tx: string; famt?: string; fb?: string; ferr?: string; ftx?: string };
 type St = { col: FounderCol; slug: string; rows: Row[]; fee: string; roy: string; supply: string; firstId: string; terms: boolean; msg: string; loaded: boolean; cap: number; cfg: any; busy: boolean };
-let S: St | null = null; let host: HTMLElement | null = null;
+let S: St | null = null; let host: HTMLElement | null = null; let fundHost: HTMLElement | null = null;
 
 export async function initRevshareFounder(col: FounderCol) {
   S = null; if (!col.slug) return;
@@ -41,9 +41,10 @@ export async function initRevshareFounder(col: FounderCol) {
   } catch (e: any) { st.msg = `<span class="err">${esc(errText(e))}</span>`; }
   st.loaded = true; paint();
 }
-export function mountRevshareFounder(el: HTMLElement | null) { host = el; paint(); }
+export function mountRevshareFounder(el: HTMLElement | null, fundEl: HTMLElement | null = null) { host = el; fundHost = fundEl; paint(); }
 
 function paint() {
+  if (fundHost) fundHost.innerHTML = fundHtml();
   if (!host) return;
   if (!S) { host.innerHTML = ''; return; }
   const st = S;
@@ -73,6 +74,46 @@ function paint() {
     <p class="mut small">Existing listings keep their old royalty recipient (they are not changed). New listings, offers and bundles on a vault chain pay the royalty to the vault. A token that sits on another chain earns on that chain's vault only when it is there, so deposits for tokens elsewhere wait in the vault for them.</p>
     ${!st.loaded ? '<div class="spin"></div>' : rowsHtml || '<p class="mut small">This collection has no deployments on a chain with a revenue-share factory yet.</p>'}
     ${st.msg ? `<p class="small fndmsg">${st.msg}</p>` : ''}`;
+}
+
+// "Fund revenue share vault": the collection owner sends native tokens into each chain's vault (vault.deposit, own wallet, simulated first).
+// Anyone can deposit; nobody can withdraw. Not to be confused with the ERC-6551 token-bound wallet airdrop (founder.ts).
+function fundHtml(): string {
+  const st = S; if (!st || !hasFactories()) return '';
+  const rows = st.rows.filter(r => r.factory);
+  const body = !st.loaded ? '<div class="spin"></div>' : rows.map(r => {
+    const c = chains[r.k]; const s = r.stats;
+    if (!r.vault || !s) return `<div class="fndr">${logo(r.k)}<div class="fndm"><b>${esc(c.name)}</b><div class="mut small">No vault on this chain yet. Create it under “Set up revenue share” above, then fund it here.</div></div></div>`;
+    const dis = !!r.fb || !wallet.address || s.depositsPaused;
+    return `<div class="fndr">${logo(r.k)}<div class="fndm"><b>${esc(c.name)}</b>
+      <div class="mut small">Vault <a class="mono" href="${esc(c.explorer)}/address/${esc(r.vault)}" target="_blank" rel="noopener">${esc(String(r.vault))}</a></div>
+      <div class="mut small">In the vault now: <b>${fe(s.balance, 6)} ${esc(c.native)}</b> · claimable by holders: ${fe(s.owed, 6)} · already paid out: ${fe(s.claimed, 6)} · total ever funded: ${fe(s.deposited, 6)}</div>
+      ${s.depositsPaused ? '<div class="small warn">Deposits are paused on this vault.</div>' : ''}
+      <div class="crow"><input data-rsvf-amt="${esc(r.k)}" inputmode="decimal" placeholder="0.0" value="${esc(r.famt || '')}" style="width:150px;flex:none"><span class="mut">${esc(c.native)}</span>
+        <button class="bbtn sm" data-rsvf="fund" data-chain="${esc(r.k)}" ${dis ? 'disabled' : ''}>${r.fb ? 'Working…' : `Fund vault on ${esc(c.name)}`}</button></div>
+      ${r.fb ? `<div class="mut small"><span class="spin"></span> ${esc(r.fb)}</div>` : ''}${r.ferr ? `<div class="err small">${esc(r.ferr)}</div>` : ''}${r.ftx ? `<div class="small ok">✓ Funded. <a href="${esc(c.explorer)}/tx/${esc(r.ftx)}" target="_blank" rel="noopener">Tx ↗</a></div>` : ''}</div></div>`;
+  }).join('') || '<p class="mut small">This collection has no deployments on a chain with a revenue-share factory yet.</p>';
+  return `<h4>Fund revenue share vault</h4>
+    <p class="mut small">Send ${esc('native tokens')} from your wallet into this collection's <b>revenue share vault</b> on each chain. Whatever is in a vault is split equally across all ${esc(st.supply || 'N')} tokens (the reward follows the token) and holders claim it on the collection page. Anyone can add funds; nobody, including you and MultiSea, can take them out. <b>This is not the token-bound wallet airdrop below.</b></p>${body}`;
+}
+async function fund(k: string) {
+  const st = S; const r = st?.rows.find(x => x.k === k); if (!st || !r || !r.vault || r.fb) return; r.ferr = ''; r.ftx = '';
+  try {
+    if (!wallet.address || !wallet.provider) throw new Error('Connect your wallet first.');
+    let v: bigint; try { v = parseEther(r.famt || '0'); } catch { throw new Error('Enter a valid amount.'); }
+    if (v <= 0n) throw new Error('Enter an amount greater than 0.');
+    const me = wallet.address as Address;
+    r.fb = 'Switching chain…'; paint(); await ensureChain(k);
+    const pc = readClient(k); const req = { address: r.vault, abi: VAULT_ABI, functionName: 'deposit', value: v, account: me } as any;
+    r.fb = 'Checking the deposit…'; paint();
+    await pc.simulateContract(req).catch((e: any) => { throw new Error(`The deposit would fail (${String(friendly(e, k) || e?.shortMessage || e?.message).split('\n')[0].slice(0, 160)}). Nothing was sent.`); });
+    r.fb = 'Confirm in your wallet…'; paint();
+    const hash = await wc(k).writeContract({ ...req, chain: vchain(k), gas: await bufferedGas(k, req, 100_000n) });
+    r.fb = 'Waiting for confirmation…'; paint();
+    const rc = await pc.waitForTransactionReceipt({ hash }); if (rc.status !== 'success') throw new Error('The deposit reverted.');
+    r.ftx = hash; r.famt = ''; r.stats = await readVault(k, r.vault);
+  } catch (e: any) { r.ferr = errText(e, k); }
+  r.fb = ''; paint();
 }
 
 const wc = (k: string) => createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) });
@@ -131,6 +172,8 @@ async function act(a: string, k: string) {
 }
 
 export function bindRevshareFounder(root: HTMLElement) {
+  root.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-rsvf="fund"]'); if (b) { e.preventDefault(); fund(b.dataset.chain!); } });
+  root.addEventListener('input', e => { const t = e.target as HTMLInputElement; const k = t.dataset.rsvfAmt; if (!k || !S) return; const r = S.rows.find(x => x.k === k); if (r) r.famt = t.value.trim(); });
   root.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-rsv]'); if (b) { e.preventDefault(); act(b.dataset.rsv!, b.dataset.chain!); } });
   root.addEventListener('input', e => { const t = e.target as HTMLInputElement; const k = t.dataset.rsvi; if (!S || !k) return; if (k === 'terms') return; (S as any)[k] = t.value.trim(); });
   root.addEventListener('change', e => { const t = e.target as HTMLInputElement; if (S && t.dataset.rsvi === 'terms') S.terms = t.checked; });

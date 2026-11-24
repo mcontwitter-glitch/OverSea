@@ -138,7 +138,7 @@ function draw() {
     return `<label>${logo(k)} Amount on ${esc(r.name)} (${r.native})<input data-fnd-amt="${k}" inputmode="decimal" placeholder="0.0" value="${esc(S!.amounts[k] || '')}"></label>${note}`;
   }).join('');
   const airTodo = [...S.picked].filter(k => !S!.sent.has(k) && S!.amounts[k]);
-  const airLabel = airTodo.length && S.sent.size ? 'Resume airdrop' : 'Send';
+  const airLabel = airTodo.length && S.sent.size ? 'Resume token-bound wallet airdrop' : 'Send to token-bound wallets';
 
   box.innerHTML = `
     ${founderFlushHtml(S.col.slug)}
@@ -146,14 +146,15 @@ function draw() {
       ${claimRows || '<p class="mut">No drop contracts.</p>'}
       <button class="bbtn" data-fnd="withdraw" ${S.busy || !todo.length ? 'disabled' : ''}>${S.busy ? 'Working…' : leftover}</button></div>
     <div class="fndsec"><h4>Change royalty</h4>${roy}</div>
-    <div class="fndsec"><h4>Fee sharing</h4><p class="mut small">Sends native tokens from your wallet, split evenly across this drop's tokenbound wallets on the chains you pick. Undeployed wallets can already receive funds. Default: only tokens currently Active on that chain (not in escrow).</p>
+    <div class="fndsec" id="rsvsec"></div>
+    <div class="fndsec" id="rsvfund"></div>
+    <div class="fndsec"><h4>Fund NFTs' ERC-6551 token-bound wallets</h4><p class="mut small"><b>This sends funds to each NFT's own ERC-6551 token-bound wallet, not to the revenue share vault.</b> Native tokens from your wallet, split evenly across this collection's token-bound wallets on the chains you pick. Undeployed wallets can already receive funds. Default: only tokens currently Active on that chain (not in escrow).</p>
       <div class="fndpick">${pick}</div>
       <label class="chk"><input type="checkbox" data-fnd="all" ${S.all ? 'checked' : ''}> Include every token's wallet (including ones in escrow)</label>
       ${amts}
       <button class="bbtn" data-fnd="air" ${S.busy || !airTodo.length ? 'disabled' : ''}>${S.busy ? 'Working…' : airLabel}</button></div>
-    <div class="fndsec" id="rsvsec"></div>
     ${S.msg ? `<p class="small fndmsg">${S.msg}</p>` : ''}`;
-  mountRevshareFounder(box.querySelector('#rsvsec'));
+  mountRevshareFounder(box.querySelector('#rsvsec'), box.querySelector('#rsvfund'));
 }
 
 function bind(m: HTMLElement) {
