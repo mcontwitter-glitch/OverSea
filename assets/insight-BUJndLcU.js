@@ -1,1 +1,0 @@
-export{n as collectionOwners,i as insightOn}from"./insight-BMp2QG8H.js";

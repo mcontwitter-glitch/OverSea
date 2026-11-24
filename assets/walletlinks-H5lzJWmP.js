@@ -1,0 +1,1 @@
+export{F as profileWallets}from"./wallet-COniINWV.js";
