@@ -40,6 +40,7 @@ const listingsLiveP: Promise<[Response | null, Response | null]> = API
 // Owner-editable overrides (logo, banner, description, links) served by the Worker when online.
 let ovr: any = {}; let editable = false; let founder = false;
 let rsCfg: (RsConfig & { vaults?: Record<string, string>; supply?: number }) | null = null;
+let rsOpen = false; // 💰 claim panel is hidden until the user taps the 💰 chip
 let vview: VaultView | null = null; // on-chain RevShareVault claim card (only when the founder set vaults up)
 document.title = `${COL.name} · MultiSea`;
 const app = document.getElementById('app')!;
@@ -324,8 +325,8 @@ function header() {
       ${mcapStat(fl?.priceEth ?? (fl && /^W?ETH$/.test(fl.currency) ? fl.price : null), COL.supply, findEthUsd(summary) ?? liveUsd)}
     </div>
   </div>
-  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${anyOffersLive(COL.deployments) ? '<button class="obtn sm" data-act="makeoffer">Make collection offer</button>' : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
-  ${vaultCardHtml(vview, rsCfg, !!wallet.address)}
+  <div class="descrow"><p class="desc">${esc(ovr.description || COL.description)}</p><div class="links">${linksHtml(ovr)}${(GATES as any).gates[COL.slug] ? `<a class="obtn sm" href="/holders/${COL.slug}">💬 Holders chat</a>` : ''}${anyOffersLive(COL.deployments) ? '<button class="obtn sm" data-act="makeoffer">Make collection offer</button>' : ''}${rsCfg?.vaults && Object.keys(rsCfg.vaults).length ? `<button class="obtn sm rsvtoggle${rsOpen ? ' on' : ''}" data-act="rsvtoggle" title="Revenue share · claim" aria-label="Revenue share · claim" aria-expanded="${rsOpen}">💰</button>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
+  ${rsOpen ? vaultCardHtml(vview, rsCfg, !!wallet.address) : ''}
   <div class="tabs"><button data-tab="items" class="${st.tab === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${st.tab === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${st.tab === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${st.tab === 'chains' ? 'on' : ''}">Chains</button><button data-tab="bridge" data-bridge-flag hidden class="${st.tab === 'bridge' ? 'on' : ''}">Bridge</button></div>
   <div class="chips"><button class="chip allchip ${st.chains.size ? '' : 'on'}" data-chain="">All <em>${items.length.toLocaleString()}</em></button>${deployedChains.map(c => `<button class="chip ${st.chains.has(c) ? 'on' : ''}" data-chain="${c}">${logo(c)}${chains[c].name}${pc[c] || c === 'bitcoin' ? ` <em>${chipCount(c).toLocaleString()}</em>` : ''}${c === 'bitcoin' && pc[c]?.floorSats ? ` <span class="chfl">floor ${ordKit!.D.fmtBtc(pc[c].floorSats)} · ${ordKit!.D.fmtSats(pc[c].floorSats)}${btcUsdR ? ' · ' + ordKit!.D.fmtUsd(pc[c].floorSats, btcUsdR) : ''}</span>` : ''}${chains[c].note ? ' <i class="need">' + esc(chains[c].note) + '</i>' : ''}</button>`).join('')}${btcSoonChip()}</div>`;
 }
@@ -563,6 +564,7 @@ app.addEventListener('click', e => {
   if (ca) { const k = ca.dataset.cancelall!; import('./sell').then(m => m.cancelAllNative(k, myNative()[k] || 0, () => { const me = wallet.address?.toLowerCase(); [...listMap].forEach(([id, l]) => { if (l.source === 'multisea' && l.chain === k && l.seller?.toLowerCase() === me) listMap.delete(id); }); render(); })); return; }
   if (act?.dataset.act === 'edit') { openEdit({ slug: COL.slug, name: COL.name, description: ovr.description || COL.description, ...ovr }, c => { ovr = c; render(); }); return; }
   if (act?.dataset.act === 'makeoffer') { openMakeOffer({ slug: COL.slug, name: COL.name, deployments: COL.deployments }, () => { loadOfferData().then(() => render()); }); return; }
+  if (act?.dataset.act === 'rsvtoggle') { rsOpen = !rsOpen; render(); return; }
   if (act?.dataset.act === 'vclaim') { if (vview) runVaultClaim(vview, act.dataset.chain!, render); return; }
   if (act?.dataset.act === 'founder') { openFounder({ name: COL.name, slug: COL.slug, deployments: COL.deployments, creator: ovr.creator, supply: COL.supply }); return; }
   if (act?.dataset.act === 'sweep') { import('./cart').then(c => c.openSweep(cartItems(), COL.name)); return; }
