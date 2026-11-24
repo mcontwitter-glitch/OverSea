@@ -8,6 +8,7 @@ import { localDrops, saveLocal, isLocalHost } from './launchdata';
 import LPC from '../config/launchpad.json';
 import { LP_LIVE } from './lpchain';
 import { loadFlush, flushHtml, doFlush } from './flushadmin';
+import { loadFeeAdmin, feeAdminHtml, doFeeSet } from './feeadmin';
 import { loadBridgeAdmin, bridgeAdminHtml, bridgeAdminAct } from './bridgeadmin';
 import { loadVaultFund, vaultFundHtml, doVaultFund, bindVaultFundInputs } from './rsvfund';
 // Mainnet deploy approvals: the factory approver wallet signs EIP-712 approvals here (signature only, never a transaction).
@@ -57,17 +58,19 @@ function render() {
   ${apprHtml()}
   ${s?.isAdmin ? flushHtml() : ''}
   ${s && s.isAdmin ? bridgeAdminHtml() : ''}
+  ${s && s.isAdmin ? feeAdminHtml() : ''}
   ${s && (s.isAdmin || s.isFee) ? vaultFundHtml() : ''}
   ${s && (s.isAdmin || s.isFee) ? feesHtml() : ''}
   </section>`;
 }
-async function load() { err = ''; const s = getSession(); loadFees(render); if (s && (s.isAdmin || s.isFee)) loadVaultFund(render); if (s && s.isAdmin) loadBridgeAdmin(render); if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
+async function load() { err = ''; const s = getSession(); loadFees(render); if (s && (s.isAdmin || s.isFee)) loadVaultFund(render); if (s && s.isAdmin) { loadBridgeAdmin(render); loadFeeAdmin(render); } if (!s?.isAdmin) { render(); return; } loadFlush(render).catch(() => {}); try { pending = (await api('/admin/pending', { auth: true })).pending; if (apiFeatures.includes('launchpad')) drops = (await api('/admin/launchpad/pending', { auth: true })).pending; } catch (e: any) { err = e.message; } render(); }
 app.addEventListener('click', async e => {
   const t = e.target as HTMLElement;
   if (t.dataset.act === 'connect') openConnect();
   if (t.dataset.lsign) { const slug = t.dataset.lsign; apprLog = ''; try { const { signApprovals } = await import('./lpchain'); await signApprovals(slug, l => { apprLog += l + '\n'; render(); }); await loadAppr(); } catch (e: any) { apprLog += 'Error: ' + (e?.shortMessage || e?.message || e) + '\n'; render(); } return; }
   if (t.dataset.flush) { if (getSession()?.isAdmin) doFlush(+t.dataset.flush); return; }
   if (t.dataset.claim) { claim(+t.dataset.claim, render); return; }
+  if (t.dataset.feeset) { doFeeSet(t.dataset.feeset, render); return; }
   if (t.dataset.bscan) { bridgeAdminAct('scan', '', render); return; }
   if (t.dataset.bretry) { bridgeAdminAct('retry', t.dataset.bretry, render); return; }
   if (t.dataset.vfund) { doVaultFund(t.dataset.vfund, render); return; }

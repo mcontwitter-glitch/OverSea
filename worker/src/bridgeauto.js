@@ -83,7 +83,9 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     }
     const keys = () => job.eids.map(e => keyByEid(c, e)).filter(Boolean);
     const remotes = () => keys().filter(k => k !== job.native);
-    const setupWei = async k => BigInt(c.setupGas || 6300000) * await mk(c, k).pub.getGasPrice() * 13n / 10n;
+    // Same units as the creator's fee (src/feeplan.ts): the fee sizes each chain's gas drop at feePlan.dropMarkup (2x) of its price at fee time; the job sizes it at 1.3x the live price, so the fee covers a ~1.5x gas move.
+    const setupGas = c.gasUnits ? c.gasUnits.deployMirror + c.gasUnits.wire : c.setupGas || 6300000;
+    const setupWei = async k => BigInt(setupGas) * await mk(c, k).pub.getGasPrice() * 13n / 10n;
     // The creator's prepay (received on the native chain) carries each other chain's setup gas there via LayerZero native drops.
     if (job.step === 'refuel') {
       const ref = c.chains[job.native].refuel;
