@@ -13,6 +13,7 @@ import { makeLaunchpad } from './launchpad.js';
 import { makeHolderAllow } from './holderallow.js';
 import { verifySolanaSetup } from './solswitch.js';
 import { makeBridgeAuto } from './bridgeauto.js';
+import { makeLinkBridge } from './bridgelink.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
@@ -276,7 +277,8 @@ const isDropOnTestnet = async (k, factory, drop) => { const c = TCH[k]; if (!c) 
 const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet, resnapAuto }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr), resnapAuto }));
-let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto());
+const linkBridge = (...a) => makeLinkBridge({ chains, lc, saveCollectionPatch })(...a);
+let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto({ onPublish: async (env, job) => { const slug = await env.COLLECTIONS.get('idx:' + job.native + ':' + job.nft); if (slug) await linkBridge(env, slug); } }));
 // EVM message check shared with SIWE: EOA first, then ERC-1271 smart wallets on each chain.
 async function verifyEvmMessage(address, message, signature) {
   if (await verifyMessage({ address, message, signature }).catch(() => false)) return true;
@@ -321,11 +323,20 @@ async function handle(req, env, url, ctx) {
   { const b = await btcRoutes().handle(req, env, url, p, M, body); if (b !== undefined) return b; }
   // MultiSea bridge auto-listing (see bridgeauto.js). Public: listed collections. Admin: status / run now / retry a failed job.
   if (M === 'GET' && p[0] === 'bridge' && p[1] === 'collections' && p.length === 2) return { collections: await bridgeAuto().collections(env) };
+  // Direct listings: after factory.list the site posts the tx; the Worker verifies the Listed event on-chain and queues the mirror job.
+  if (M === 'POST' && p[0] === 'bridge' && p[1] === 'direct' && p.length === 2) {
+    const b = await body(); let st;
+    try { st = await bridgeAuto().enqueueDirect(env, { chain: String(b.chain || ''), tx: String(b.tx || '') }); } catch (e) { if (e.perm) bad(e.message, e.status || 400); throw e; }
+    if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet' && st.known) ctx?.waitUntil?.(bridgeAuto().run(env).then(r => console.log('bridge run (direct)', JSON.stringify(r))).catch(e => console.log('bridge run error', e?.message)));
+    return st;
+  }
+  if (M === 'GET' && p[0] === 'bridge' && p[1] === 'direct' && p.length === 4) { if (!ADDR.test(p[3])) bad('bad address'); return bridgeAuto().directStatus(env, p[2], p[3]); }
   if (p[0] === 'admin' && p[1] === 'bridge') {
     const s = await requireSession(req, env); if (!admins(env).includes(s.address)) bad('admin only', 403);
     if (M === 'GET' && p[2] === 'status') return bridgeAuto().status(env);
     if (M === 'POST' && p[2] === 'run') return { results: await bridgeAuto().run(env) };
-    if (M === 'POST' && p[2] === 'retry' && p[3]) { const j = await bridgeAuto().retry(env, p[3]); if (!j) bad('no job', 404); return { job: j.step }; }
+    if (M === 'POST' && p[2] === 'scan') return { scan: await bridgeAuto().scan(env), results: await bridgeAuto().run(env) };
+    if (M === 'POST' && p[2] === 'retry' && p[3]) { const ov = await req.json().catch(() => ({})); const j = await bridgeAuto().retry(env, p[3], ov && typeof ov === 'object' ? ov : {}); if (!j) bad('no job', 404); return { job: j.step }; }
   }
   if (p[0] === 'launchpad' && (p[1] === 'holder-allowlist' || p[1] === 'holder-collections')) {
     if (M === 'POST' && limited('ha:' + (req.headers.get('cf-connecting-ip') || 'local'), 20)) bad('rate limited', 429);
@@ -540,7 +551,8 @@ async function handle(req, env, url, ctx) {
       const col = { ...rec, status: 'approved', approvedBy: s.address, approvedAt: new Date().toISOString() };
       await env.COLLECTIONS.put('col:' + p[2], JSON.stringify(col));
       for (const d of col.deployments) await env.COLLECTIONS.put('idx:' + d.chain + ':' + d.address, p[2]);
-      return { ok: true, status: 'approved', collection: col };
+      const linked = await linkBridge(env, p[2], col).catch(e => { console.log('bridge link failed', e?.message); return null; }); // mirrors of a direct listing that finished before approval
+      return { ok: true, status: 'approved', collection: linked || col };
     }
   }
 
@@ -698,7 +710,7 @@ export default {
     ctx.waitUntil(native().sweep(env).then(r => console.log('native sweep', JSON.stringify(r)))
       .then(() => native().precompute(env, Object.keys(STATIC))).then(r => console.log('native precompute', JSON.stringify(r))).catch(e => console.log('native sweep error', e?.message)));
     ctx.waitUntil(offers().sweep(env).then(r => console.log('offers sweep', JSON.stringify(r))).catch(e => console.log('offers sweep error', e?.message)));
-    if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().run(env).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
+    if (env.BRIDGE_OPERATOR_PK && env.LP_NETWORK !== 'testnet') ctx.waitUntil(bridgeAuto().scan(env).then(r => console.log('bridge scan', JSON.stringify(r))).catch(e => console.log('bridge scan error', e?.message)).then(() => bridgeAuto().run(env)).then(r => console.log('bridge auto', JSON.stringify(r))).catch(e => console.log('bridge auto error', e?.message)));
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url); const ch = corsHeaders(req, env); const H = ch || {};

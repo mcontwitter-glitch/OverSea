@@ -2,7 +2,7 @@
 // read from the factory), prove ownership with SIWE (wallet must be the contract's owner()), then pay it on the native chain.
 import { formatEther, recoverMessageAddress, type Address } from 'viem';
 import { createSiweMessage, generateSiweNonce } from 'viem/siwe';
-import { wallet, openConnect, onWallet } from './wallet';
+import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 import { bridgeCfg, pubFor, walletFor, NFT, FACTORY, sym, type BCfg } from './bridgekit';
 
@@ -62,22 +62,48 @@ export async function mountListPay(el: HTMLElement) {
     } catch (e: any) { s.msg = e?.code === 4001 ? 'Rejected in wallet.' : 'Could not verify: ' + (e.shortMessage || e.message); s.cls = 'err'; }
     s.busy = false; draw();
   }
+  // Live progress from the Worker's bridge job for this listing (queued -> deploying -> wiring -> live). `existing` = only report if a job is known.
+  async function track(existing = false): Promise<boolean> {
+    const url = `${API}/bridge/direct/${s.native}/${s.nft}`; let seen = false;
+    for (let i = 0; i < 150; i++) {
+      const j: any = await fetch(url, { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      if (j?.known) {
+        seen = true; const others = Math.max(0, (j.chains || 1) - 1);
+        const m: Record<string, string> = {
+          queued: 'Paid ✓. Queued: MultiSea is moving gas to the other chains…',
+          deploying: `Paid ✓. Deploying mirror collections (${Math.max(0, (j.mirrors || 1) - 1)}/${others})…`,
+          wiring: `Paid ✓. Mirrors deployed. Connecting the chains over LayerZero (${j.wired || 0}/${j.chains})…`,
+          publishing: 'Paid ✓. Almost done, publishing to the Bridge page…',
+          'waiting-gas': 'Paid ✓. Waiting for deployment gas to reach one of the chains. This continues automatically; nothing more for you to do.',
+          held: 'Paid ✓. MultiSea is double-checking your collection’s token range before deploying; an admin will resume it. Nothing more to pay.',
+          failed: 'Paid ✓. A deployment step hit an error. MultiSea has been alerted and will retry; nothing more to pay.' };
+        if (j.state === 'live') { s.msg = '✓ Live on ' + (j.chains || '') + ' chains. Holders can bridge from the Bridge page.'; s.cls = 'ok'; draw(); return true; }
+        s.msg = m[j.state] || 'Paid ✓. Working…'; s.cls = j.state === 'failed' || j.state === 'held' || j.state === 'waiting-gas' ? 'mut' : 'ok'; draw();
+        if (j.state === 'failed' || j.state === 'held') return true;
+      } else if (existing) return false;
+      await new Promise(r => setTimeout(r, 4000)); if (!el.isConnected) return seen;
+    }
+    if (seen) { s.msg += ' (Still in progress; you can leave this page. It finishes on its own.)'; draw(); }
+    return seen;
+  }
   async function pay() {
     s.busy = true; s.msg = 'Switching network…'; s.cls = 'mut'; draw();
     try {
       const c = cfg.chains[s.native]; const pub = pubFor(c); const w = await walletFor(c);
       const eids = eidsOf();
       const ex = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'escrowOf', args: [s.nft as Address] });
-      if (!/^0x0{40}$/i.test(ex)) throw new Error('This collection is already listed on MultiSea (escrow ' + ex + ').');
+      if (!/^0x0{40}$/i.test(ex)) { if (await track(true)) { s.busy = false; draw(); return; } throw new Error('This collection is already listed on MultiSea (escrow ' + ex + ').'); }
       const fee = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'listingFee', args: [eids] });
       s.msg = `Confirm ${fmt(fee)} ${N()} in your wallet…`; draw();
+      try { await pub.simulateContract({ account: wallet.address as Address, address: c.factory as Address, abi: FACTORY, functionName: 'list', args: [s.nft as Address, eids], value: fee * 103n / 100n }); }
+      catch (e: any) { throw new Error('This listing would fail, so nothing was sent: ' + String(e.shortMessage || e.message).split('\n')[0].slice(0, 160)); }
       const h = await w.writeContract({ address: c.factory as Address, abi: FACTORY, functionName: 'list', args: [s.nft as Address, eids], value: fee * 103n / 100n }); // 3% buffer, refunded
       const r = await pub.waitForTransactionReceipt({ hash: h }); if (r.status !== 'success') throw new Error('Transaction reverted');
-      s.paid = h; s.msg = `✓ Paid ${fmt(fee)} ${N()} (any extra was refunded). The MultiSea deployer is now deploying mirrors and wiring LayerZero peers…`; s.cls = 'ok'; draw();
-      for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 3000));
-        const j = await fetch('/bridge.json', { cache: 'no-cache' }).then(r => r.json()).catch(() => null);
-        const col = j?.collections?.find((x: any) => x.contracts[s.native]?.toLowerCase() === s.nft.toLowerCase());
-        if (col && Object.keys(col.escrows).length >= eids.length) { s.msg = `✓ Live on ${Object.keys(col.contracts).map(k => cfg.chains[k].name).join(' + ')}. Holders can bridge from the Bridge page.`; break; } }
+      s.paid = h; s.cls = 'ok'; s.msg = `✓ Paid ${fmt(fee)} ${N()} (any extra was refunded). Telling MultiSea to deploy your mirrors…`; draw();
+      let ok = false;
+      try { const rr = await fetch(API + '/bridge/direct', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chain: s.native, tx: h }) }); ok = rr.ok; if (!rr.ok) console.warn('bridge/direct', rr.status, await rr.text().catch(() => '')); } catch (e) { console.warn('bridge/direct', e); }
+      if (!ok) { s.msg = `✓ Paid ${fmt(fee)} ${N()}. MultiSea's deployer couldn't be reached from here; it also scans for new listings every 15 minutes and will pick yours up on its own. Nothing else to pay.`; }
+      else await track();
     } catch (e: any) { s.msg = e?.code === 4001 ? 'Rejected in wallet.' : (e.shortMessage || e.message); s.cls = 'err'; }
     s.busy = false; draw();
   }
