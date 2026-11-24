@@ -250,6 +250,12 @@
   "seaportZone": "0x000056F7000000EcE9003ca63978907A00FFD100",
   "revshareVaults": {
     "_note": "RevShareVaultFactory addresses per EVM chain. MC deploys them from /deploy-revshare-factory, then records them here. Empty until then: the Founder 'Set up revenue share' box shows Coming soon.",
-    "factories": {}
+    "factories": {
+      "base": "0x45287f6F18D77adDC516B076d3FCF61480fB1E49",
+      "ethereum": "0x68E712847C58B489f648F5397e3dDd3a5f915ce4",
+      "apechain": "0x7D1314E31483e3BE5978fbb89D8Cdc9E9EdFEAbF",
+      "bnb": "0xac702E27618df2F2bc155078B8DC118438257E34",
+      "robinhood": "0x7D1314E31483e3BE5978fbb89D8Cdc9E9EdFEAbF"
+    }
   }
 }
