@@ -89,8 +89,8 @@ function fundHtml(): string {
       <div class="mut small">Vault <a class="mono" href="${esc(c.explorer)}/address/${esc(r.vault)}" target="_blank" rel="noopener">${esc(String(r.vault))}</a></div>
       <div class="mut small">In the vault now: <b>${fe(s.balance, 6)} ${esc(c.native)}</b> · claimable by holders: ${fe(s.owed, 6)} · already paid out: ${fe(s.claimed, 6)} · total ever funded: ${fe(s.deposited, 6)}</div>
       ${s.depositsPaused ? '<div class="small warn">Deposits are paused on this vault.</div>' : ''}
-      <div class="crow"><input data-rsvf-amt="${esc(r.k)}" inputmode="decimal" placeholder="0.0" value="${esc(r.famt || '')}" style="width:150px;flex:none"><span class="mut">${esc(c.native)}</span>
-        <button class="bbtn sm" data-rsvf="fund" data-chain="${esc(r.k)}" ${dis ? 'disabled' : ''}>${r.fb ? 'Working…' : `Fund vault on ${esc(c.name)}`}</button></div>
+      <div class="crow rsvfrow"><input data-rsvf-amt="${esc(r.k)}" inputmode="decimal" placeholder="0.0" value="${esc(r.famt || '')}" style="width:150px;flex:none"><span class="mut">${esc(c.native)}</span>
+        <button class="bbtn sm rsvfbtn" data-rsvf="fund" data-chain="${esc(r.k)}" aria-label="Fund vault on ${esc(c.name)}" ${dis ? 'disabled' : ''}>${r.fb ? 'WORKING…' : 'FUND VAULT'}</button></div>
       ${r.fb ? `<div class="mut small"><span class="spin"></span> ${esc(r.fb)}</div>` : ''}${r.ferr ? `<div class="err small">${esc(r.ferr)}</div>` : ''}${r.ftx ? `<div class="small ok">✓ Funded. <a href="${esc(c.explorer)}/tx/${esc(r.ftx)}" target="_blank" rel="noopener">Tx ↗</a></div>` : ''}</div></div>`;
   }).join('') || '<p class="mut small">This collection has no deployments on a chain with a revenue-share factory yet.</p>';
   return `<h4>Fund revenue share vault</h4>
