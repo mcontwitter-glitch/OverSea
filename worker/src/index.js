@@ -4,7 +4,7 @@
 // - Media uploads to R2 (images only, <=2MB; re-encoded to WebP client-side, validated here)
 // Secrets: OPENSEA_API_KEY (wrangler secret put). Never in code.
 import CFG from '../../config/collections.json';
-import { verifyMessage, createPublicClient, http, getContractAddress, concat, encodeAbiParameters } from 'viem';
+import { verifyMessage, createPublicClient, http, fallback, getContractAddress, concat, encodeAbiParameters } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
 import { makeNative, NATIVE_FEE_BPS } from './native.js';
 import { makeOffers } from './offers.js';
@@ -99,14 +99,53 @@ async function rpcFanout(c, payload) {
   try { return await rpcRace(urls, payload, big ? { timeoutMs: 8000, hedgeMs: 1500 } : {}); }
   catch (e) { bad('all RPCs failed for ' + c.name + ': ' + String(e?.message || e).slice(0, 160), 502); }
 }
+const isHex = v => typeof v === 'string' && /^0x[0-9a-fA-F]+$/.test(v);
+const isHexWord1 = v => isHex(v) && BigInt(v) === 1n;
+const isHexWord = v => isHex(v) && v.length >= 66;
+async function rpcExec(chainKey, method, params) {
+  const c = chains[chainKey]; if (!c) return { rpcErr: true, result: null };
+  try {
+    const j = await rpcFanout(c, { jsonrpc: '2.0', id: 1, method, params });
+    if (j?.error) return { revert: true, result: null };
+    return { result: j?.result ?? null };
+  } catch { return { rpcErr: true, result: null }; }
+}
 async function rpcCall(chainKey, to, data) {
-  const c = chains[chainKey]; if (!c) return null;
-  const r = await fetch(c.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }) });
-  const j = await r.json().catch(() => ({})); return j.result || null;
+  const r = await rpcExec(chainKey, 'eth_call', [{ to, data }, 'latest']);
+  return r.result || null;
 }
 async function isERC721(chainKey, address) {
-  const res = await rpcCall(chainKey, address, '0x01ffc9a7' + ERC721_IFACE.slice(2).padEnd(64, '0'));
-  return !!res && res !== '0x' && BigInt(res) === 1n;
+  const c = chains[chainKey]; if (!c) return false;
+  const s721 = await rpcExec(chainKey, 'eth_call', [{ to: address, data: '0x01ffc9a7' + ERC721_IFACE.slice(2).padEnd(64, '0') }, 'latest']);
+  if (s721.rpcErr) bad('Could not reach ' + c.name + ' RPC to verify the contract. Please try again.', 502);
+  if (isHexWord1(s721.result)) return true;
+  // Explicit ERC-165 false? Check if contract supports ERC-165 itself or ERC-1155, while still allowing legacy
+  // non-ERC165 ERC-721 contracts (e.g. CryptoKitties, which returns supportsInterface(0x01ffc9a7)=true, 0x80ac58cd=false).
+  const s1155 = await rpcCall(chainKey, address, '0x01ffc9a7d9b67a26' + '0'.repeat(56));
+  if (isHexWord1(s1155)) return false;
+  const code = await rpcExec(chainKey, 'eth_getCode', [address, 'latest']);
+  if (code.rpcErr) bad('Could not reach ' + c.name + ' RPC to verify the contract. Please try again.', 502);
+  if (!code.result || code.result === '0x') return false;
+  // Rule out ERC-20 (has decimals()) and catch-all fallback contracts (respond with 32 bytes to nonsense selector).
+  const [dec, dead, bal, own1, own0, appAll, allow] = await Promise.all([
+    rpcCall(chainKey, address, '0x313ce567'),
+    rpcCall(chainKey, address, '0xdeadbeef'),
+    rpcCall(chainKey, address, '0x70a08231' + '0'.repeat(63) + '1'),
+    rpcCall(chainKey, address, '0x6352211e' + '0'.repeat(63) + '1'),
+    rpcCall(chainKey, address, '0x6352211e' + '0'.repeat(64)),
+    rpcCall(chainKey, address, '0xe985e9c5' + '0'.repeat(63) + '1' + '0'.repeat(63) + '2'),
+    rpcCall(chainKey, address, '0xdd62ed3e' + '0'.repeat(63) + '1' + '0'.repeat(63) + '2'),
+  ]);
+  if (isHexWord(dec) || isHexWord(dead) || isHexWord(allow)) return false;
+  const hasBal = isHexWord(bal);
+  const validOwnerWord = w => isHexWord(w) && BigInt(w) !== 0n && BigInt(w) < (1n << 160n);
+  if (hasBal && (validOwnerWord(own1) || validOwnerWord(own0))) return true;
+  if (hasBal && isHexWord(appAll) && BigInt(appAll) <= 1n) {
+    // Unminted / non-1-indexed non-ERC165 ERC-721: confirm getApproved(1) does not silently return non-address garbage and decimals/allowance stayed absent.
+    const ga = await rpcCall(chainKey, address, '0x081812fc' + '0'.repeat(63) + '1');
+    if (ga === null || validOwnerWord(ga) || (isHexWord(ga) && BigInt(ga) === 0n)) return true;
+  }
+  return false;
 }
 async function ownerOfContract(chainKey, address) {
   const res = await rpcCall(chainKey, address, '0x8da5cb5b');
@@ -153,8 +192,38 @@ async function allowedContract(env, osChain, contract) {
 
 // ---------- validation ----------
 const str = (v, max, re) => { if (v == null || v === '') return ''; v = String(v).trim(); if (v.length > max) bad('field too long'); if (re && v && !re.test(v)) bad('invalid field: ' + v.slice(0, 40)); return v; };
-const URLRE = /^https:\/\/[^\s<>"']+$/i, MEDIA = /^\/media\/[0-9a-f]{64}\.(webp|png|jpg|gif)$/;
-function cleanLinks(b) { return { website: str(b.website, 200, URLRE), x: str(b.x, 200, /^(https:\/\/(x|twitter)\.com\/[A-Za-z0-9_]{1,15}\/?|@?[A-Za-z0-9_]{1,15})$/), discord: str(b.discord, 200, /^https:\/\/(discord\.gg|discord\.com\/invite)\/[A-Za-z0-9-]+\/?$/) }; }
+const MEDIA = /^\/media\/[0-9a-f]{64}\.(webp|png|jpg|gif)$/;
+function cleanWebsite(raw) {
+  let v = str(raw, 200); if (!v) return '';
+  if (/[\s<>"']/.test(v)) bad('Website must be a valid https:// URL');
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(v) && /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(\/.*)?$/.test(v)) v = 'https://' + v;
+  let u; try { u = new URL(v); } catch { bad('Website must be a valid https:// URL'); }
+  if (!['https:', 'http:'].includes(u.protocol) || !u.hostname.includes('.')) bad('Website must be a valid https:// URL');
+  return u.toString();
+}
+function cleanX(raw) {
+  let v = str(raw, 200); if (!v) return '';
+  if (/[\s<>"']/.test(v)) bad('X link must be an x.com/handle URL or @handle');
+  if (/^@?[A-Za-z0-9_]{1,15}$/.test(v)) return 'https://x.com/' + v.replace(/^@/, '');
+  if (/^(?:www\.)?(x|twitter)\.com\//i.test(v)) v = 'https://' + v;
+  let u; try { u = new URL(v); } catch { bad('X link must be an x.com/handle URL or @handle'); }
+  if (!['https:', 'http:'].includes(u.protocol) || !/^(?:www\.|mobile\.)?(x|twitter)\.com$/i.test(u.hostname)) bad('X link must be an x.com/handle URL or @handle');
+  const seg = u.pathname.replace(/^\/+|\/+$/g, '');
+  if (!seg) bad('X link must include a handle or page path');
+  const m = seg.match(/^@?([A-Za-z0-9_]{1,15})$/);
+  if (m) return 'https://x.com/' + m[1];
+  return 'https://x.com/' + seg;
+}
+function cleanDiscord(raw) {
+  let v = str(raw, 200); if (!v) return '';
+  if (/[\s<>"']/.test(v)) bad('Discord link must be a discord.gg or discord.com URL');
+  if (/^(?:www\.)?(discord\.gg|discord\.com|discordapp\.com)\//i.test(v)) v = 'https://' + v;
+  let u; try { u = new URL(v); } catch { bad('Discord link must be a discord.gg or discord.com URL'); }
+  if (!['https:', 'http:'].includes(u.protocol) || !/^(?:www\.)?(discord\.gg|discord\.com|discordapp\.com)$/i.test(u.hostname)) bad('Discord link must be a discord.gg or discord.com URL');
+  if (u.pathname === '/' || !u.pathname) bad('Discord link must include an invite code');
+  return 'https://' + u.hostname.replace(/^www\./i, '').toLowerCase() + u.pathname;
+}
+function cleanLinks(b) { return { website: cleanWebsite(b.website), x: cleanX(b.x), discord: cleanDiscord(b.discord) }; }
 
 // ---------- media ----------
 function sniff(buf) {
@@ -357,9 +426,15 @@ async function handle(req, env, url, ctx) {
     if (!f.expirationTime) bad('message must have an expiration time', 401);
     if (!validateSiweMessage({ message: f, domain: f.domain, nonce: f.nonce, time: new Date() })) bad('message expired or invalid', 401);
     let valid = await verifyMessage({ address: f.address, message, signature }).catch(() => false);
-    if (!valid && chains[Object.keys(chains).find(k => chains[k].chainId === f.chainId)]) { // ERC-1271 smart wallets
+    if (!valid) { // ERC-1271 smart wallets (fallback across configured RPCs)
       const key = Object.keys(chains).find(k => chains[k].chainId === f.chainId);
-      valid = await createPublicClient({ transport: http(chains[key].rpc) }).verifyMessage({ address: f.address, message, signature }).catch(() => false);
+      const tryKeys = key ? [key] : ['base', 'ethereum', 'abstract', 'apechain', 'robinhood', 'bnb'];
+      for (const k of tryKeys) {
+        const c = chains[k]; if (!c) continue;
+        const urls = c.rpcs?.length ? c.rpcs : [c.rpc];
+        valid = await createPublicClient({ transport: fallback(urls.map(u => http(u))) }).verifyMessage({ address: f.address, message, signature }).catch(() => false);
+        if (valid) break;
+      }
     }
     if (!valid) bad('bad signature', 401);
     await holderChat().verifyHolderSignature(env, f);
@@ -402,18 +477,28 @@ async function handle(req, env, url, ctx) {
 
   if (M === 'POST' && p[0] === 'submit') {
     const s = await requireSession(req, env); const b = await body();
-    const slug = str(b.slug, 40, SLUG); if (!slug || RESERVED.has(slug) || STATIC[slug]) bad('slug invalid or taken');
+    const slug = str(b.slug, 40).toLowerCase();
+    if (!slug || !SLUG.test(slug) || RESERVED.has(slug) || STATIC[slug]) bad('Slug must be 3-40 lowercase letters, digits, or dashes (start and end with a letter or digit), and not reserved');
     if ((await env.COLLECTIONS.get('col:' + slug)) || (await env.COLLECTIONS.get('pending:' + slug))) bad('slug already used');
-    const name = str(b.name, 60); if (!name) bad('name required');
-    const deployments = Array.isArray(b.deployments) ? b.deployments.slice(0, 10) : []; if (!deployments.length) bad('add at least one chain + contract');
+    const name = str(b.name, 60); if (!name) bad('Project name is required');
+    const deployments = Array.isArray(b.deployments) ? b.deployments.slice(0, 10) : []; if (!deployments.length) bad('Add at least one chain and contract address');
     const checked = [];
     for (const d of deployments) {
-      if (!chains[d.chain] || !ADDR.test(d.address || '')) bad('unsupported chain or bad address');
-      if (!(await isERC721(d.chain, d.address))) bad(`${d.address} on ${chains[d.chain].name} is not an ERC-721 (supportsInterface 0x80ac58cd)`);
-      checked.push({ chain: d.chain, address: d.address.toLowerCase() });
+      const addr = String(d?.address || '').trim();
+      if (!chains[d?.chain] || !ADDR.test(addr)) bad(`Unsupported chain or invalid contract address${addr ? ': ' + addr.slice(0, 42) : ''}`);
+      if (!(await isERC721(d.chain, addr))) bad(`${addr} on ${chains[d.chain].name} is not an ERC-721 contract`);
+      checked.push({ chain: d.chain, address: addr.toLowerCase() });
     }
-    const escrow = (Array.isArray(b.escrow) ? b.escrow.slice(0, 20) : []).map(e => { if (!chains[e.chain] || !ADDR.test(e.address || '')) bad('bad escrow'); return { chain: e.chain, address: e.address.toLowerCase(), label: str(e.label, 40) }; });
-    const rec = { slug, name, description: str(b.description, 1000), ...cleanLinks(b), logo: str(b.logo, 120, MEDIA), banner: str(b.banner, 120, MEDIA), deployments: checked, escrow, submitter: s.address, status: 'pending', submittedAt: new Date().toISOString() };
+    const escrow = [];
+    for (const e of (Array.isArray(b.escrow) ? b.escrow.slice(0, 20) : [])) {
+      const addr = String(e?.address || '').trim();
+      if (!addr) continue;
+      if (!chains[e?.chain] || !ADDR.test(addr)) bad('Invalid escrow address' + (addr ? ': ' + addr.slice(0, 42) : ''));
+      escrow.push({ chain: e.chain, address: addr.toLowerCase(), label: str(e.label, 40) });
+    }
+    const logo = str(b.logo, 120); if (logo && !MEDIA.test(logo)) bad('Invalid logo upload reference — please re-upload');
+    const banner = str(b.banner, 120); if (banner && !MEDIA.test(banner)) bad('Invalid banner upload reference — please re-upload');
+    const rec = { slug, name, description: str(b.description, 1000), ...cleanLinks(b), logo, banner, deployments: checked, escrow, submitter: s.address, status: 'pending', submittedAt: new Date().toISOString() };
     await env.COLLECTIONS.put('pending:' + slug, JSON.stringify(rec));
     return { ok: true, status: 'pending', slug };
   }

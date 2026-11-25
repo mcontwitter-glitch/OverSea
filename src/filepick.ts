@@ -15,4 +15,5 @@ export function picked(inp: HTMLInputElement) {
   (pick.querySelector('.pv') as HTMLImageElement).src = local[k];
   (pick.querySelector('.fname') as HTMLElement).textContent = f.name;
 }
+export function clearPick(k: 'logo' | 'banner') { if (local[k]) URL.revokeObjectURL(local[k]); delete local[k]; delete names[k]; }
 export function resetPicks() { for (const k in local) URL.revokeObjectURL(local[k]); for (const o of [names, local]) for (const k in o) delete o[k]; }

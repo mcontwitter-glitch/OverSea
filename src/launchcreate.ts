@@ -9,7 +9,7 @@ import { holderCollections, snapshotHolders, srcLabel, snapNote, type HolderSrc,
 import { encodeAbiParameters } from 'viem';
 import { checkApi, onWallet, wallet, openConnect, apiFeatures } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
-import { api } from './auth';
+import { api, getSession, errMsg } from './auth';
 import { uploadHtml, addMedia, clearMedia, loadCsv, downloadTemplate, uploadProblem, usingUpload, pinAll, media, ph as phd, setPlaceholder, placeholderHtml, pinPlaceholder, agentMediaProblem, agentPin, death, setDeath, deathHtml, pinDeath, DEATH_RE, pinJson, pinningReady, onchainMediaProblem, ONCHAIN_MAX } from './lpmedia';
 import { estimateCosts, costHtml, hubChain, fmtBytes } from './onchainart';
 import { AGENT_UI, AGENT_PREVIEW, DEATH_CHAINS, AGENT_CHAINS, ORA_FEE_WEI } from './agentdrop';
@@ -39,7 +39,7 @@ let st: St = (() => { try { return { ...blank(), ...JSON.parse(sessionStorage.ge
 if ((st.storage as string) === 'arweave') st.storage = 'ipfs'; if (!st.onchainStore) st.onchainStore = 'home';
 let artCostBox = ''; let artCostKey = '';
 const isOnchain = () => st.storage === 'onchain'; if (!st.ag) st.ag = AG0(); st.ag = { ...AG0(), ...st.ag }; if (!st.nftType) st.nftType = 'erc721'; if (!st.packs) st.packs = defaultPacks(); st.packs = { ...defaultPacks(), ...st.packs, rarities: st.packs.rarities?.length ? st.packs.rarities : defaultPacks().rarities, tiers: st.packs.tiers?.length ? st.packs.tiers : defaultPacks().tiers, cardRarity: st.packs.cardRarity || [] };
-let msg = ''; let msgCls = 'mut'; let done = ''; let hsCols: HolderCol[] = []; let hsBusy = -1;
+let msg = ''; let msgCls = 'mut'; let done = ''; let hsCols: HolderCol[] = []; let hsBusy = -1; let subBusy = false;
 const save = () => sessionStorage.setItem(SKEY, JSON.stringify(st));
 const isOrd = () => st.mode === 'ordinals';
 const ORD_LIMIT_MAX = 100, ORD_FEE_PCT = 0.5, ORD_HOURS = 6;
@@ -95,7 +95,7 @@ const convLine = (p: PhaseIn) => { const u = p.usd ?? ''; if (u === '' || !(+u >
 const ts = (v: string) => (v ? Math.floor(new Date(v).getTime() / 1000) : 0);
 
 function validate(step: number): string {
-  if (step === 0) { if (!st.name.trim()) return 'Project name is required.'; if (!/^[A-Za-z0-9]{1,12}$/.test(st.symbol)) return 'Symbol: 1-12 letters or digits.'; if (!/^[a-z0-9-]{3,40}$/.test(st.slug)) return 'Slug: 3-40 lowercase letters, digits, dashes.'; }
+  if (step === 0) { if (!st.name.trim()) return 'Project name is required.'; st.symbol = st.symbol.trim(); if (!/^[A-Za-z0-9]{1,12}$/.test(st.symbol)) return 'Symbol: 1-12 letters or digits.'; st.slug = st.slug.trim().toLowerCase(); if (!/^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/.test(st.slug)) return 'Slug: 3-40 lowercase letters, digits, dashes (start and end with a letter or digit).'; }
   if (step === 1) {
     if (isOnchain()) {
       if (st.nftType !== 'erc721') return 'Fully on-chain art is available for standard ERC-721 drops only.';
@@ -132,7 +132,7 @@ function validate(step: number): string {
     if (st.ag.repo && !pct(st.ag.repoPct)) return 'Repo rarity: 0-100%.';
     if (st.ag.queen) { const tf = String(st.ag.tribEth).trim(); if (!pct(st.ag.queenPct)) return 'Queen rarity: 0-100% of females.'; if (!(Number.isInteger(+st.ag.queenCap) && +st.ag.queenCap >= 1 && +st.ag.queenCap <= 10000)) return 'Queen cap: 1-10000.'; if (!/^\d{1,2}(\.\d{1,18})?$/.test(tf) || !(+tf > 0 && +tf <= 0.005)) return 'Tribute fee: above 0 and at most 0.005.'; if (!(Number.isInteger(+st.ag.tribDays) && +st.ag.tribDays >= 1 && +st.ag.tribDays <= 365)) return 'Tribute period: 1-365 days.'; }
     if (st.ag.zombie && !pct(st.ag.zombiePct)) return 'Zombie rarity: 0-100%.'; }
-  if (step === 4) { if (!(+st.royalty >= 0 && +st.royalty <= 10)) return 'Royalty must be 0-10%.'; if (st.payout && !ADDR.test(st.payout.toLowerCase())) return 'Payout must be a 0x address.'; if (st.royaltyReceiver && !ADDR.test(st.royaltyReceiver.toLowerCase())) return 'Royalty receiver must be a 0x address.'; }
+  if (step === 4) { if (!(+st.royalty >= 0 && +st.royalty <= 10)) return 'Royalty must be 0-10%.'; st.payout = st.payout.trim(); st.royaltyReceiver = st.royaltyReceiver.trim(); if (st.payout && !ADDR.test(st.payout.toLowerCase())) return 'Payout must be a 0x address.'; if (st.royaltyReceiver && !ADDR.test(st.royaltyReceiver.toLowerCase())) return 'Royalty receiver must be a 0x address.'; }
   if (step === 5) { if (!st.agree) return 'Confirm you own the rights to the art.'; }
   return '';
 }
@@ -333,7 +333,7 @@ function render() {
   ${st.step === 0 && !st.name ? '<button type="button" class="pill ldfill" data-act="demo">Fill with LIL FOOTS demo</button>' : ''}
   <fieldset>${stepHtml()}</fieldset>
   <p class="msg ${msgCls}">${esc(msg)}</p>
-  <div class="ldnav">${st.step ? '<button type="button" class="obtn" data-act="back">Back</button>' : '<span></span>'}${st.step < STEPS.length - 1 ? '<button type="button" class="bbtn sm" data-act="next">Continue</button>' : `<button type="button" class="bbtn sm" data-act="submit">${apiFeatures.includes('launchpad') ? (wallet.address ? 'Sign in & submit for review' : 'Connect wallet to submit') : 'Submit for review (preview)'}</button>`}</div>`}
+  <div class="ldnav">${st.step ? '<button type="button" class="obtn" data-act="back">Back</button>' : '<span></span>'}${st.step < STEPS.length - 1 ? '<button type="button" class="bbtn sm" data-act="next">Continue</button>' : `<button type="button" class="bbtn sm" data-act="submit" ${subBusy ? 'disabled' : ''}>${subBusy ? 'Submitting…' : apiFeatures.includes('launchpad') ? (wallet.address ? (getSession() ? 'Submit for review' : 'Sign in & submit for review') : 'Connect wallet to submit') : 'Submit for review (preview)'}</button>`}</div>`}
   </section>`;
   if (isOnchain() && st.step === 5 && !done) {
     const bytes = [...media.files.values()].reduce((a, f) => a + f.size, 0);
@@ -383,23 +383,26 @@ app.addEventListener('change', e => {
   if (t.dataset.csv != null && t.files?.[0]) { const i = +t.dataset.csv; t.files[0].text().then(txt => { const { ok, bad } = parseAllowlist(txt, solOn()); const p = st.phases[i]; p.allowlist = [...new Set([...addrs(p.allowlist), ...ok])].join('\n'); if (p.autoHolders) p.holderFrozen = true; msg = `CSV: added ${ok.length} addresses${bad.length ? `, skipped ${bad.length} invalid` : ''}.`; msgCls = bad.length ? 'err' : 'ok'; save(); render(); }); }
 });
 async function submit() {
+  if (subBusy) return;
   const err = [0, 1, 2, 3, 4, 5].map(validate).find(Boolean); if (err) { msg = err; msgCls = 'err'; render(); return; }
+  if (apiFeatures.includes('launchpad') && !wallet.address) { openConnect(); msg = 'Connect your wallet first, then click Submit again.'; msgCls = 'mut'; render(); return; }
+  subBusy = true; render();
   if (st.reveal === 'delayed' && !st.phOwn && phd.file && (!apiFeatures.includes('launchpad') || wallet.address)) {
     try { st.preRevealURI = await pinPlaceholder({ name: st.phName?.trim() || `${st.name} (Unrevealed)`, description: st.phDesc?.trim() || 'Revealing soon.' }, s => { msg = s; msgCls = 'mut'; render(); }); setPlaceholder(null); save(); }
-    catch (er: any) { msg = 'IPFS upload failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+    catch (er: any) { subBusy = false; msg = 'IPFS upload failed: ' + errMsg(er); msgCls = 'err'; render(); return; }
   }
   const isAg = st.nftType === 'erc463n7';
   if (isAg && !st.deathOwn && death.file && (!apiFeatures.includes('launchpad') || wallet.address)) {
     try { st.deathURI = await pinDeath(s => { msg = s; msgCls = 'mut'; render(); }); setDeath(null); save(); }
-    catch (er: any) { msg = 'IPFS upload failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+    catch (er: any) { subBusy = false; msg = 'IPFS upload failed: ' + errMsg(er); msgCls = 'err'; render(); return; }
   }
-  if (isAg) { const e = agentEnc(); if (typeof e === 'string') { msg = e; msgCls = 'err'; render(); return; }
+  if (isAg) { const e = agentEnc(); if (typeof e === 'string') { subBusy = false; msg = e; msgCls = 'err'; render(); return; }
     if (e && media.rows.length) { st.traitRows = e.rows; saveTraits(st.slug, e); // kept in this browser for the post-deploy upload
       if (pinningReady() && (!apiFeatures.includes('launchpad') || wallet.address)) try { msg = 'Pinning the traits table…'; msgCls = 'mut'; render(); st.traitsURI = await pinJson('traits.json', e); } catch { st.traitsURI = ''; } }
     else if (!e) { st.traitRows = 0; st.traitsURI = ''; } save(); }
   if (st.storage !== 'own' && st.storage !== 'onchain' && usingUpload() && (!apiFeatures.includes('launchpad') || wallet.address)) {
     try { st.baseURI = await pinAll({ description: st.description, website: st.website }, s => { msg = s; msgCls = 'mut'; render(); }, isAg); if (isAg) { st.mediaBase = agentPin.mediaBase; st.mediaExt = agentPin.mediaExt; } clearMedia(); media.rows = []; media.csvName = ''; save(); }
-    catch (er: any) { msg = 'IPFS upload failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+    catch (er: any) { subBusy = false; msg = 'IPFS upload failed: ' + errMsg(er); msgCls = 'err'; render(); return; }
   }
   const me = (wallet.address || '').toLowerCase();
   syncUsd();
@@ -412,11 +415,11 @@ async function submit() {
       p.holderNote = snapNote(snap) + (snap.warning ? ' · ' + snap.warning : '') + (snap.notes?.length ? ' · ' + snap.notes.join(' ') : '');
       if (snap.truncated) { msg = snap.warning || p.holderNote; msgCls = 'err'; }
       save();
-    } catch (er: any) { msg = 'Holder snapshot failed: ' + (er?.message || er); msgCls = 'err'; render(); return; }
+    } catch (er: any) { subBusy = false; msg = 'Holder snapshot failed: ' + errMsg(er); msgCls = 'err'; render(); return; }
   }
   const phases = st.phases.map(p => ({ name: p.name, priceUsd: isMc() ? p.usd || '0' : undefined, kind: p.kind, start: ts(p.start), end: ts(p.end), maxPerWallet: parseInt(p.maxPerWallet) || 0, maxSupply: parseInt(p.maxSupply || '0') || 0, merkleRoot: p.kind === 'allowlist' ? merkle(addrs(p.allowlist)).root : undefined, price: p.price, prices: isMc() ? Object.fromEntries([...Object.keys(st.chains).map(k => [k, priceOn(p, k) || '0'] as [string, string]), ...(solOn() ? [['solana', p.prices?.solana || '0'] as [string, string]] : [])]) : undefined, allowlist: p.kind === 'allowlist' ? addrs(p.allowlist) : undefined, holderSources: p.autoHolders && p.holderSources?.length ? p.holderSources : undefined, includeLinked: p.autoHolders ? p.includeLinked !== false : undefined, holderFrozen: p.autoHolders ? !!p.holderFrozen : undefined }));
   if (apiFeatures.includes('launchpad')) {
-    if (!wallet.address) { openConnect(); return; }
+    if (!wallet.address) { subBusy = false; openConnect(); msg = 'Connect your wallet first, then click Submit again.'; msgCls = 'mut'; render(); return; }
     let bridgePrepay: { chain: string; dropId: string; eids: number[]; tx: string } | undefined;
     if (st.bridge && !isOrd() && !isMc() && BR.cfg && brNative()) {
       try {
@@ -427,9 +430,9 @@ async function submit() {
         const h = await w.writeContract({ address: c.factory as `0x${string}`, abi: kit.FACTORY, functionName: 'prepay', args: [dropId, eids], value: fee * 103n / 100n });
         if ((await pub.waitForTransactionReceipt({ hash: h })).status !== 'success') throw new Error('Bridge prepay reverted');
         bridgePrepay = { chain: n, dropId, eids, tx: h };
-      } catch (er: any) { msg = er?.code === 4001 ? 'Bridge listing payment rejected in wallet. Untick it to submit without the bridge.' : 'Bridge listing payment failed: ' + (er?.shortMessage || er?.message || er); msgCls = 'err'; render(); return; }
+      } catch (er: any) { subBusy = false; msg = er?.code === 4001 ? 'Bridge listing payment rejected in wallet. Untick it to submit without the bridge.' : 'Bridge listing payment failed: ' + errMsg(er); msgCls = 'err'; render(); return; }
     }
-    msg = 'Check your wallet to sign…'; msgCls = 'mut'; render();
+    msg = getSession() ? 'Submitting for review…' : 'Check your wallet to sign…'; msgCls = 'mut'; render();
     try {
       const j = await api('/launchpad/submit', { auth: true, body: { mode: st.mode, ...(bridgePrepay ? { bridgePrepay } : {}), slug: st.slug, name: st.name, symbol: st.symbol, description: st.description, website: st.website, x: st.x, chains: Object.keys(st.chains), allocations: isMc() ? undefined : Object.fromEntries(Object.entries(st.chains).map(([k, v]) => [k, parseInt(v) || 0])), maxSupply: supply(), creatorReserve: isMc() ? 0 : parseInt(st.reserve) || 0,
         ...(isMc() ? solOn() ? { copyMode: 'at-mint', solana: true, solanaCreator: st.solCreator } : { copyMode: st.copyMode, batchK: st.copyMode === 'batched' ? +st.batchK : undefined, batchTMin: st.copyMode === 'batched' ? +st.batchT : undefined } : {}),
@@ -437,16 +440,16 @@ async function submit() {
         nftType: st.nftType, packs: st.nftType === 'packs' ? packPayload(st.packs, media.rows?.length || 0, st.storage === 'own', st.baseURI) : undefined, agent: st.nftType === 'erc463n7' ? { ...st.ag, mediaBase: st.storage === 'own' ? '' : st.mediaBase || '', mediaExt: st.storage === 'own' ? '' : st.mediaExt || '', deathURI: st.deathURI || '', traitRows: st.storage === 'own' ? 0 : st.traitRows || 0, traitsURI: st.storage === 'own' ? '' : st.traitsURI || '', starvation: true, starveDays: +st.ag.starveDays, skillPct: +st.ag.skillPct, fertPct: st.ag.fertility ? +st.ag.fertPct : 0, twinPct: +st.ag.twinPct, mutPct: st.ag.mutation ? +st.ag.mutPct : 0, mutSkillPct: +st.ag.mutSkillPct, infPct: st.ag.infect ? +st.ag.infPct : 0, infCooldownH: st.ag.infect ? +st.ag.infCooldownH : 0, infScore: st.ag.infect ? +st.ag.infScore : 0, infMaxEth: st.ag.infect ? String(st.ag.infMaxEth).trim() : undefined, repo: st.ag.repo && st.ag.deathSkill, repoPct: st.ag.repo ? +st.ag.repoPct : 0, queenPct: st.ag.queen ? +st.ag.queenPct : 0, queenCap: st.ag.queen ? +st.ag.queenCap : undefined, tribEth: st.ag.queen ? String(st.ag.tribEth).trim() : undefined, tribDays: st.ag.queen ? +st.ag.tribDays : undefined, zombiePct: st.ag.zombie ? +st.ag.zombiePct : 0, limits: st.ag.deathSkill ? { grace: Math.round(+st.ag.graceH * 3600) } : undefined } : undefined, royaltyBps: Math.round(+st.royalty * 100), payout: st.payout || undefined, royaltyReceiver: st.royaltyReceiver || undefined, reveal: isOnchain() ? 'instant' : st.reveal, baseURI: isOnchain() ? '' : st.baseURI, preRevealURI: isOnchain() ? '' : st.preRevealURI, metadataHost: st.storage, onchainStore: isOnchain() ? (st.onchainStore || 'home') : undefined,
         phases: phases.map(p => ({ ...p, price: parseEther(p.price || '0').toString(), prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, (k === 'solana' ? parseUnits(v, 9) : parseEther(v)).toString()])) : undefined })) } });
       done = j.slug;
-    } catch (er: any) { msg = er.message; msgCls = 'err'; render(); return; }
+    } catch (er: any) { subBusy = false; msg = errMsg(er, 'Submission failed'); msgCls = 'err'; render(); return; }
   } else {
-    const l = localDrops(); if (l.some(d => d.slug === st.slug)) { msg = 'You already submitted that slug in this browser.'; msgCls = 'err'; render(); return; }
+    const l = localDrops(); if (l.some(d => d.slug === st.slug)) { subBusy = false; msg = 'You already submitted that slug in this browser.'; msgCls = 'err'; render(); return; }
     const art = st.slug.includes('foot') ? [2396, 1858, 3958, 4356].map(i => `/img/lil-foots/m/${i}.webp`) : ['/brand/icon-128.webp'];
     const d: Drop = { slug: st.slug, name: st.name, symbol: st.symbol.toUpperCase(), nftType: st.nftType, packs: st.nftType === 'packs' ? packPayload(st.packs, media.rows?.length || 0, st.storage === 'own', st.baseURI) as any : undefined, creator: me, description: st.description, website: st.website, x: st.x, local: true, mode: st.mode, ...(isOrd() ? { ordinals: { priceUsdc: +(st.ordPrice || 0), orderLimit: +(st.ordLimit || 50), deliveryHours: ORD_HOURS, feeBps: ORD_FEE_PCT * 100 } } : {}), ...(isMc() ? { copyMode: st.copyMode, batchK: +st.batchK, batchTMin: +st.batchT, queue: { ids: 0, ageMin: 0, batch: 1 } } : {}), status: 'pending', submittedAt: new Date().toISOString(),
       chains: isOrd() ? [{ chain: 'base', supply: supply(), minted: 0 }] : Object.entries(st.chains).map(([chain, v]) => ({ chain, supply: parseInt(v) || 0, minted: 0 })), maxSupply: supply(), creatorReserve: isMc() ? 0 : parseInt(st.reserve) || 0, royaltyBps: Math.round(+st.royalty * 100), reveal: isOnchain() ? 'instant' : st.reveal, storage: st.storage, onchainStore: isOnchain() ? (st.onchainStore || 'home') : undefined, baseURI: isOnchain() ? '' : st.baseURI, preRevealURI: isOnchain() ? '' : st.preRevealURI, payout: st.payout || me,
       phases: phases.map(p => ({ name: p.name, kind: p.kind, start: p.start, end: p.end, price: +p.price, prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, +v])) : undefined, priceUsd: p.priceUsd !== undefined ? +p.priceUsd : undefined, maxPerWallet: p.maxPerWallet, maxSupply: p.maxSupply, merkleRoot: p.merkleRoot, allowlist: p.allowlist, allowCount: p.allowlist?.length })) as Phase[], img: art[0], art };
     l.push(d); saveLocal(l); done = st.slug;
   }
-  sessionStorage.removeItem(SKEY); msg = ''; render(); window.scrollTo(0, 0);
+  subBusy = false; sessionStorage.removeItem(SKEY); msg = ''; render(); window.scrollTo(0, 0);
 }
 app.addEventListener('click', e => {
   const sa = (e.target as HTMLElement).closest('[data-solact]') as HTMLElement | null;
@@ -489,7 +492,7 @@ app.addEventListener('click', e => {
   if (a === 'new') { done = ''; st = blank(); save(); render(); }
   if (a === 'demo') { st = { ...blank(), name: 'LIL FOOTS', symbol: 'FOOT', slug: 'lil-foots-v2', description: '4,404 tiny feet walking every chain. Demo drop for the launchpad preview.', website: 'https://multisea.io', x: 'https://x.com/lilfoots',
     storage: 'own', baseURI: 'ipfs://bafybeidemolilfootsmetadata/', reveal: 'instant', mode: 'multichain', total: '4404', chains: { base: '', ethereum: '', apechain: '', bnb: '', robinhood: '' }, reserve: '0', royalty: '5',
-    phases: [{ name: 'Foot holders', kind: 'allowlist', start: iso(Date.now() + 2 * 86400e3), end: iso(Date.now() + 3 * 86400e3), price: '0', prices: { apechain: '0', bnb: '0' }, maxPerWallet: '1', allowlist: '0xca89ae48a5c61d13e78236daa4ac29ee588ea475\n0x000000000000000000000000000000000000f007' }, { name: 'Public', kind: 'public', start: iso(Date.now() + 3 * 86400e3), end: '', price: '0.003', prices: { apechain: '50', bnb: '0.01' }, maxPerWallet: '10', allowlist: '' }] }; save(); render(); }
+    phases: [{ name: 'Foot holders', kind: 'allowlist', start: iso(Date.now() + 2 * 86400e3), end: iso(Date.now() + 3 * 86400e3), usd: '0', price: '0', prices: { apechain: '0', bnb: '0' }, maxPerWallet: '1', allowlist: '0xca89ae48a5c61d13e78236daa4ac29ee588ea475\n0x000000000000000000000000000000000000f007' }, { name: 'Public', kind: 'public', start: iso(Date.now() + 3 * 86400e3), end: '', usd: '5', price: '0.003', prices: { apechain: '50', bnb: '0.01' }, maxPerWallet: '10', allowlist: '' }] }; save(); render(); }
 });
 app.addEventListener('dragover', e => { const d = (e.target as HTMLElement).closest('[data-drop]'); if (d) { e.preventDefault(); d.classList.add('over'); } });
 app.addEventListener('dragleave', e => (e.target as HTMLElement).closest('[data-drop]')?.classList.remove('over'));

@@ -3,32 +3,44 @@ import { createSiweMessage } from 'viem/siwe';
 import { wallet, API, openConnect } from './wallet';
 const KEY = 'multisea-session';
 type Sess = { token: string; address: string; isAdmin: boolean; isFee?: boolean; exp: number };
+export const errMsg = (e: any, fallback = 'Request failed') => e?.shortMessage || e?.message || (typeof e === 'string' && e) || fallback;
 export function getSession(): Sess | null {
-  try { const s = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (s && s.exp > Date.now() && s.address === wallet.address?.toLowerCase()) return s; } catch {}
+  try { const s = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (s && s.exp > Date.now() + 5000 && s.address === wallet.address?.toLowerCase()) return s; } catch {}
   return null;
 }
 export async function signIn(statement = 'Sign in to MultiSea', resources?: string[]): Promise<Sess> {
   if (!wallet.address) { openConnect(); throw new Error('Connect a wallet first'); }
   const cur = getSession(); if (cur) return cur;
-  const { nonce } = await (await fetch(API + '/auth/nonce')).json();
-  const chainId = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16) || 1;
-  const message = createSiweMessage({ domain: location.host, address: wallet.address as `0x${string}`, statement, uri: location.origin, version: '1', chainId, nonce, resources, issuedAt: new Date(), expirationTime: new Date(Date.now() + 8 * 3600e3) });
+  const nr = await fetch(API + '/auth/nonce');
+  const nj = await nr.json().catch(() => ({}));
+  if (!nr.ok || !nj.nonce) throw new Error(nj.error || `Could not start sign-in (HTTP ${nr.status})`);
+  const rawCid = await wallet.provider.request({ method: 'eth_chainId' }).catch(() => 1);
+  const chainId = Number(rawCid) || 1;
+  const message = createSiweMessage({ domain: location.host, address: wallet.address as `0x${string}`, statement, uri: location.origin, version: '1', chainId, nonce: nj.nonce, resources, issuedAt: new Date(), expirationTime: new Date(Date.now() + 8 * 3600e3) });
   const signature = await wallet.provider.request({ method: 'personal_sign', params: [toHex(message), wallet.address] });
   const r = await fetch(API + '/auth/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, signature }) });
-  const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Sign-in failed');
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Sign-in failed');
   const s = { token: j.token, address: j.address, isAdmin: j.isAdmin, isFee: !!j.isFee, exp: Date.now() + j.expiresIn * 1000 };
   sessionStorage.setItem(KEY, JSON.stringify(s)); return s;
 }
 const toHex = (s: string) => '0x' + [...new TextEncoder().encode(s)].map(b => b.toString(16).padStart(2, '0')).join('');
 export async function api(path: string, opts: { method?: string; body?: any; raw?: Blob; auth?: boolean; statement?: string } = {}) {
-  const h: Record<string, string> = {};
-  if (opts.auth) { const s = await signIn(opts.statement); h.authorization = 'Bearer ' + s.token; }
-  if (opts.body) h['content-type'] = 'application/json';
-  if (opts.raw) h['content-type'] = opts.raw.type;
-  const r = await fetch(API + path, { method: opts.method || (opts.body || opts.raw ? 'POST' : 'GET'), headers: h, body: opts.raw || (opts.body ? JSON.stringify(opts.body) : undefined) });
-  const j = await r.json().catch(() => ({}));
-  if (r.status === 401 && opts.auth) sessionStorage.removeItem(KEY);
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j;
+  const send = async (fresh = false) => {
+    const hadCached = !fresh && !!getSession();
+    const h: Record<string, string> = {};
+    if (opts.auth) { const s = await signIn(opts.statement); h.authorization = 'Bearer ' + s.token; }
+    if (opts.body) h['content-type'] = 'application/json';
+    if (opts.raw) h['content-type'] = opts.raw.type;
+    const r = await fetch(API + path, { method: opts.method || (opts.body || opts.raw ? 'POST' : 'GET'), headers: h, body: opts.raw || (opts.body ? JSON.stringify(opts.body) : undefined) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && opts.auth) {
+      sessionStorage.removeItem(KEY);
+      if (hadCached) return send(true);
+    }
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  };
+  return send(false);
 }
 // Re-encode any picked image to WebP (max dimension) in the browser before upload (Worker re-validates type/size/dims).
 export async function uploadImage(file: File, max: number): Promise<string> {

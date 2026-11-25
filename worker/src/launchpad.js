@@ -138,7 +138,7 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
   const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const int = (v, lo, hi, what) => { const n = Number(v); if (!Number.isInteger(n) || n < lo || n > hi) bad(`${what} must be an integer ${lo}-${hi}`); return n; };
   const wei = (v, what) => { if (!/^\d{1,30}$/.test(String(v ?? ''))) bad(`${what} must be a wei integer string`); return String(v); };
-  const uri = (v, what) => { const s = str(v, 200); if (s && !/^(ipfs:\/\/|ar:\/\/|https:\/\/)[\w\-./?=&%#]+$/.test(s)) bad(`${what} must be ipfs://, ar:// or https://`); return s; };
+  const uri = (v, what) => { const s = str(v, 200); if (s && (/\s|[<>"']/.test(s) || !/^(ipfs:\/\/|ar:\/\/|https:\/\/)\S+$/.test(s))) bad(`${what} must be ipfs://, ar:// or https://`); return s; };
   // deployed: true only once POST /launchpad/deployed verified a contract on-chain against a factory (status 'live').
   // Approved drops without one stay deployed: false, and the site shows them as "Coming soon". (Additive field.)
   // Delayed reveal: the revealed baseURI stays private until the creator reveals (GET /launchpad/reveal-uri/<slug>).
@@ -196,10 +196,11 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
 
   function validate(b, creator) {
     const isAgent = b.nftType === 'erc463n7'; const isPack = b.nftType === 'packs';
-    const slug = str(b.slug, 40); if (!SLUG.test(slug)) bad('slug must be 3-40 chars a-z 0-9 -');
+    const slug = str(b.slug, 40).toLowerCase(); if (!SLUG.test(slug)) bad('slug must be 3-40 chars a-z 0-9 -');
     const name = str(b.name, 60); if (!name) bad('name required');
     const symbol = str(b.symbol, 12).toUpperCase(); if (!/^[A-Z0-9]{1,12}$/.test(symbol)) bad('symbol must be 1-12 letters/digits');
     const chainsSel = Array.isArray(b.chains) ? [...new Set(b.chains)] : []; if (!chainsSel.length || chainsSel.some(k => !LP.chains.includes(k) || !chains[k])) bad('pick supported chains: ' + LP.chains.join(', '));
+    if (b.mode === 'ordinals') bad('Bitcoin Ordinals drops are preview-only right now');
     const mode = b.mode === 'multichain' ? 'multichain' : 'single';
     if (mode === 'multichain' && chainsSel.length < 2) bad('multichain drops need at least 2 chains');
     // Multichain: the hub chain (Base) assigns every token id and enforces the shared supply, so it must be in the drop.
