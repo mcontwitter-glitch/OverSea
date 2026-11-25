@@ -1,0 +1,1 @@
+export{n as autoNames,a as invalidateProfiles}from"./names-CRMp7Ib5.js";
