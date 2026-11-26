@@ -41,9 +41,10 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     const chain = defineChain({ id: ch.chainId, name: ch.name, nativeCurrency: { name: ch.native, symbol: ch.native, decimals: 18 }, rpcUrls: { default: { http: [ch.rpc] } } });
     // Public RPCs often answer 429 to Cloudflare Worker egress (Robinhood's own RPC always does), so fall through a list of endpoints.
     const urls = [...new Set([...(rpcsFor?.(k) || []), ch.rpc])];
-    const transport = () => urls.length > 1 ? fallback(urls.map(u => http(u, { timeout: 10000, retryCount: 0 })), { retryCount: 1 }) : http(ch.rpc, { timeout: 15000, retryCount: 2 });
-    const pub = createPublicClient({ chain, transport: transport() });
-    const wal = pk ? createWalletClient({ chain, account: privateKeyToAccount(pk), transport: transport() }) : null;
+    // Reads fall through on any RPC error (some endpoints lack eth_getLogs or cap ranges); sends use viem's default so a real rejection is not replayed elsewhere.
+    const transport = reads => urls.length > 1 ? fallback(urls.map(u => http(u, { timeout: 10000, retryCount: 0 })), { retryCount: 1, ...(reads ? { shouldThrow: () => false } : {}) }) : http(ch.rpc, { timeout: 15000, retryCount: 2 });
+    const pub = createPublicClient({ chain, transport: transport(true) });
+    const wal = pk ? createWalletClient({ chain, account: privateKeyToAccount(pk), transport: transport(false) }) : null;
     return { pub, wal };
   });
 
