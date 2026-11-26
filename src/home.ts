@@ -3,6 +3,7 @@ import CFG from '../config/collections.json';
 import { checkApi, onApiUp, onWallet, API, apiReady } from './wallet';
 import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml, priceInEth, bestFloor } from './shell';
 import { SOLANA_ON, SOL_SOON, onSolanaFlag } from './solflag';
+import { getHomeCache, putHomeCache } from './colcache';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
 type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; supply?: number; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
@@ -116,35 +117,62 @@ function bindHome() {
   app.querySelector('.home2')?.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-act="all"]')) { showAll = true; regrid(); } });
   app.querySelector('[data-act="explore"]')?.addEventListener('click', e => { e.preventDefault(); document.getElementById('collections')?.scrollIntoView({ behavior: 'smooth' }); });
 }
+function applyHomeSnap(snap: { cards: Card[] } | null) {
+  if (!snap?.cards?.length) return false;
+  const have = new Set(cards.map(c => c.slug));
+  for (const c of snap.cards) {
+    const cur = cards.find(x => x.slug === c.slug);
+    if (cur) { if (c.floor) cur.floor = c.floor; if (c.volume) cur.volume = c.volume; if (c.owners) cur.owners = c.owners; if (c.mcap) cur.mcap = c.mcap; if (c.logo) cur.logo = c.logo; if (c.banner) cur.banner = c.banner; }
+    else if (!have.has(c.slug)) { cards.push(c); have.add(c.slug); }
+  }
+  return true;
+}
+async function fillDynCard(c: Card, sj: any, lj: any) {
+  const s = sj?.stats || {}; const v = Object.values(s) as any[];
+  c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : (c.owners || '-');
+  const vol = v.reduce((a, x) => a + (x.volume || 0), 0); if (v.length) c.volume = fmt(vol) + ' ETH';
+  const usd = await ethUsdRate();
+  const fromList = bestFloor(lj?.listings || [], usd);
+  const fromStats = v.map(x => ({ price: x.floor_price, currency: x.floor_price_symbol || '' })).filter(x => x.price > 0 && x.currency);
+  const fl = fromList || bestFloor(fromStats, usd);
+  if (fl) c.floor = /^W?ETH$/i.test(fl.currency) ? `${fmt(fl.price)} ETH` : `${fmt(fl.price)} ${fl.currency}`;
+  else if (!c.floor) c.floor = '-';
+  c.mcap = mcapUsd(fl?.priceEth, c.supply || 0, usd);
+}
 bindNav();
-cards = await staticCards(); render(); liveStatic().catch(() => {});
+cards = await staticCards();
+applyHomeSnap(await getHomeCache());
+render(); liveStatic().catch(() => {});
 onWallet(render); onSolanaFlag(render);
 let homeLoaded = false;
 const homeLoad = async () => {
   if (homeLoaded) return;
   try {
-    const j = await (await fetch(API + '/collections')).json();
+    const r = await fetch(API + '/collections');
+    if (!r.ok) return; // keep cached community cards silently on 429 / 5xx
+    const j = await r.json();
     for (const [slug, o] of Object.entries(j.overrides || {})) { const c = cards.find(x => x.slug === slug); if (c && o) Object.assign(c, { logo: (o as any).logo || c.logo, banner: (o as any).banner || c.banner }); }
+    const staticSlugs = new Set(CFG.collections.map(c => c.slug));
+    const liveDyn = (j.collections || []) as any[];
     const have = new Set(cards.map(x => x.slug));
-    const dyn: Card[] = (j.collections || []).filter((c: any) => !have.has(c.slug)).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain), supply: Number(c.supply || (c.idEnd ? c.idEnd - (Number(c.idStart) || 1) + 1 : 0)) || undefined }));
+    const dyn: Card[] = liveDyn.filter((c: any) => !have.has(c.slug)).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain), supply: Number(c.supply || (c.idEnd ? c.idEnd - (Number(c.idStart) || 1) + 1 : 0)) || undefined }));
+    for (const c of liveDyn) { const cur = cards.find(x => x.slug === c.slug); if (cur && !staticSlugs.has(c.slug)) Object.assign(cur, { name: c.name, logo: c.logo || cur.logo, banner: c.banner || cur.banner, chains: c.deployments.map((d: any) => d.chain), supply: Number(c.supply || cur.supply || 0) || cur.supply }); }
     cards.push(...dyn); render();
-    await Promise.all(dyn.map(async c => { try {
-      const [sj, lj] = await Promise.all([
-        fetch(`${API}/os/${c.slug}/stats`).then(r => r.json()).catch(() => ({})),
-        fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
-      ]);
-      const s = sj.stats || {}; const v = Object.values(s) as any[];
-      c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : '-';
-      const vol = v.reduce((a, x) => a + (x.volume || 0), 0); c.volume = v.length ? fmt(vol) + ' ETH' : '-';
-      const usd = await ethUsdRate();
-      const fromList = bestFloor(lj?.listings || [], usd);
-      const fromStats = v.map(x => ({ price: x.floor_price, currency: x.floor_price_symbol || '' })).filter(x => x.price > 0 && x.currency);
-      const fl = fromList || bestFloor(fromStats, usd);
-      if (fl) c.floor = /^W?ETH$/i.test(fl.currency) ? `${fmt(fl.price)} ETH` : `${fmt(fl.price)} ${fl.currency}`;
-      else c.floor = '-';
-      c.mcap = mcapUsd(fl?.priceEth, c.supply || 0, usd);
+    const market = j.market || {};
+    await Promise.all([...cards.filter(c => !staticSlugs.has(c.slug))].map(async c => { try {
+      let sj = market[c.slug]?.stats != null ? { stats: market[c.slug].stats } : null;
+      let lj = market[c.slug]?.listings != null ? { listings: market[c.slug].listings } : null;
+      // Only hit per-collection routes when the list response didn't already include a snapshot.
+      if (!sj || !lj) {
+        const [s, l] = await Promise.all([
+          sj ? null : fetch(`${API}/os/${c.slug}/stats`).then(r => r.ok ? r.json() : null).catch(() => null),
+          lj ? null : fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
+        ]);
+        if (s) sj = s; if (l) lj = l;
+      }
+      if (sj || lj) await fillDynCard(c, sj, lj);
     } catch {} }));
-    render(); homeLoaded = true;
+    render(); putHomeCache(cards).catch(() => {}); homeLoaded = true;
   } catch {}
 };
 checkApi().then(homeLoad); onApiUp(homeLoad);

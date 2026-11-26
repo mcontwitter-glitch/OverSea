@@ -73,6 +73,35 @@ function listingJson(body) {
 // and refreshed in the background (ctx.waitUntil). If a refresh fails, a copy up to STALE_IF_ERROR old is still served.
 // Concurrent misses in one isolate share one fn() call. Default stale window when a ctx is given: 4 x ttl.
 const STALE_IF_ERROR = 3600; const inflight = new Map();
+// Last-good HTTP snapshots for public collection GETs. Edge cache is kept for a day (freshness is decided
+// with x-ms-cached-at); KV survives colo eviction so a first-time visitor still gets a copy on 429 / KV blip.
+const EDGE_KEEP = 86400, SNAP_MIN_MS = 120_000;
+function snapKey(url, req) {
+  if (req?.method && req.method !== 'GET') return null;
+  const p = url.pathname, parts = p.split('/').filter(Boolean);
+  if (p === '/collections') return 'snap:cols';
+  if (parts[0] === 'collections' && parts.length === 2 && SLUG.test(parts[1])) return 'snap:col:' + parts[1];
+  if (parts[0] === 'os' && parts.length === 3 && SLUG.test(parts[1]) && (parts[2] === 'stats' || parts[2] === 'listings')) return 'snap:' + parts[2] + ':' + parts[1];
+  return null;
+}
+async function readSnap(env, key) {
+  try { const v = await env.COLLECTIONS.getWithMetadata(key); if (!v?.value) return null; return { body: v.value, at: Number(v.metadata?.at || 0) }; }
+  catch { return null; }
+}
+function snapRes(snap, kind) {
+  return new Response(snap.body, { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=0, stale-while-revalidate=300, stale-if-error=86400', 'x-ms-cached-at': String(snap.at || 0), 'x-ms-cache': kind || 'snap' } });
+}
+async function writeSnap(env, ctx, key, body) {
+  if (!key || !env?.COLLECTIONS || body == null) return;
+  const go = async () => {
+    try {
+      const cur = await env.COLLECTIONS.getWithMetadata(key);
+      if (cur?.metadata?.at && Date.now() - Number(cur.metadata.at) < SNAP_MIN_MS) return;
+      await kput(env.COLLECTIONS, key, body, { metadata: { at: Date.now() } });
+    } catch {}
+  };
+  if (ctx?.waitUntil) ctx.waitUntil(go()); else await go();
+}
 async function cached(key, ttl, fn, swrTtl, ctx) {
   const swr = swrTtl ?? (ctx ? ttl * 4 : 0);
   const cache = caches.default; const req = new Request('https://cache.multisea/' + key);
@@ -519,7 +548,19 @@ async function handle(req, env, url, ctx) {
     const list = await env.COLLECTIONS.list({ prefix: 'col:' });
     const cols = (await Promise.all(list.keys.map(k => env.COLLECTIONS.get(k.name, 'json')))).filter(Boolean).map(c => ({ ...c, creator: c.creator || c.submitter || undefined, submitter: undefined }));
     const ovr = Object.fromEntries(await Promise.all(Object.keys(STATIC).map(async s => [s, await env.COLLECTIONS.get('ovr:' + s, 'json')])));
-    return { collections: cols, overrides: ovr };
+    const market = {};
+    await Promise.all(cols.map(async c => {
+      if (!c?.slug) return;
+      const [st, ls] = await Promise.all([
+        env.COLLECTIONS.get('snap:stats:' + c.slug).catch(() => null),
+        env.COLLECTIONS.get('snap:listings:' + c.slug).catch(() => null),
+      ]);
+      let stats, listings;
+      try { stats = st ? JSON.parse(st).stats : undefined; } catch {}
+      try { listings = ls ? JSON.parse(ls).listings : undefined; } catch {}
+      if (stats != null || listings != null) market[c.slug] = { stats, listings };
+    }));
+    return { collections: cols, overrides: ovr, market };
   }
   if (M === 'GET' && p[0] === 'collections' && p.length === 2) { const c = await getCollection(env, p[1]); if (!c) bad('not found', 404); return { collection: { ...c, creator: c.creator || c.submitter || undefined, submitter: undefined } }; }
   if (M === 'GET' && p[0] === 'collections' && p[2] === 'can-edit') { const a = url.searchParams.get('address'); if (!ADDR.test(a || '')) bad('address required'); return await canEdit(env, p[1], a); }
@@ -862,26 +903,68 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
     // Separate buckets: RPC/media/owner-snapshot traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
     const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') || url.pathname.startsWith('/owners/'); // /owners replaces ~140 browser RPC calls
-    if (limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60)) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '10', ...H } });
     const ttl = edgeTtl(url, req);
+    const snapK = snapKey(url, req);
     const cache = globalThis.caches?.default;
+    const cors = (res) => { const r = new Response(res.body, res); for (const [k, v] of Object.entries(H)) r.headers.set(k, v); return r; };
+    const serveCached = (hit, kind) => {
+      const r = cors(hit);
+      const at = Number(hit.headers.get('x-ms-cached-at') || 0);
+      const age = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : 0;
+      const fresh = ttl || 30;
+      r.headers.set('cache-control', `public, max-age=${Math.max(0, fresh - age)}, stale-while-revalidate=300, stale-if-error=86400`);
+      r.headers.set('x-ms-cache', kind);
+      return r;
+    };
+    // Cheap public GETs: a fresh (or SWR) edge/KV copy is served without spending the 60/min cap.
+    let staleHit = null;
     if (ttl && cache) {
       const hit = await cache.match(edgeCacheKey(url)).catch(() => null);
-      if (hit) { const r = new Response(hit.body, hit); r.headers.set('cache-control', `public, max-age=${ttl}`); for (const [k, v] of Object.entries(H)) r.headers.set(k, v); return r; }
+      if (hit) {
+        const at = Number(hit.headers.get('x-ms-cached-at') || 0);
+        const age = at ? (Date.now() - at) / 1000 : 0;
+        if (!at || age < ttl) return serveCached(hit, 'fresh');
+        staleHit = hit;
+      }
     }
-    try {
+    const over = limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60);
+    const fallback = async () => {
+      if (staleHit) return serveCached(staleHit, 'stale');
+      if (snapK) { const snap = await readSnap(env, snapK); if (snap) return cors(snapRes(snap, 'snap')); }
+      return null;
+    };
+    if (over) {
+      const fb = await fallback();
+      if (fb) return fb;
+      return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '10', ...H } });
+    }
+    const live = async () => {
       const out = await handle(req, env, url, ctx);
       const res = out instanceof Response ? out : new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json' } });
       for (const [k, v] of Object.entries(H)) res.headers.set(k, v);
-      if (ttl && res.ok && !res.headers.has('cache-control')) res.headers.set('cache-control', `public, max-age=${ttl}`);
+      if (ttl && res.ok && !res.headers.has('cache-control')) res.headers.set('cache-control', `public, max-age=${ttl}, stale-while-revalidate=300, stale-if-error=86400`);
       if (ttl && res.ok && cache) {
-        const store = new Response(res.clone().body, { headers: { 'content-type': res.headers.get('content-type') || 'application/json', 'cache-control': `public, max-age=${ttl}`, 'x-ms-cached-at': String(Date.now()) } });
+        const body = await res.clone().text();
+        const store = new Response(body, { headers: { 'content-type': res.headers.get('content-type') || 'application/json', 'cache-control': `public, max-age=${EDGE_KEEP}`, 'x-ms-cached-at': String(Date.now()) } });
         const put = cache.put(edgeCacheKey(url), store).catch(() => {});
         if (ctx?.waitUntil) ctx.waitUntil(put); else await put;
+        if (snapK) writeSnap(env, ctx, snapK, body);
       }
       return res;
+    };
+    if (staleHit) {
+      const bg = live().catch(() => {});
+      if (ctx?.waitUntil) ctx.waitUntil(bg);
+      return serveCached(staleHit, 'swr');
+    }
+    try {
+      return await live();
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
+      if (status !== 404 && status !== 400 && status !== 401 && status !== 403) {
+        const fb = await fallback();
+        if (fb) return fb;
+      }
       return new Response(JSON.stringify({ error: e instanceof HttpError ? e.message : 'internal', ...(e.extra || {}), ...(status === 500 ? { message: String(e).slice(0, 200) } : {}) }), { status, headers: { 'content-type': 'application/json', ...H } });
     }
   },

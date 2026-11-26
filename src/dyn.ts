@@ -16,6 +16,7 @@ import { resolveProfiles } from './walletlinks';
 import { addrHtml } from './names';
 import { short } from './gx';
 import type { Loc } from './liveowners';
+import { getColCache, putColCache } from './colcache';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; openseaSlug: string | null; explorer?: string }>;
 const slug = location.pathname.split('/')[2];
@@ -116,7 +117,19 @@ async function loadActivity() {
   catch { activityState = 'error'; }
   if (view === 'activity') render();
 }
-async function loadItems(reset = false) { if (reset) { items = []; next = null; } const j = await (await fetch(`${API}/os/${slug}/items?chain=${chain}${next ? '&next=' + encodeURIComponent(next) : ''}`)).json(); items.push(...(j.nfts || [])); next = j.next; render(); }
+function persistCol() { if (!col) return; putColCache(slug, { at: Date.now(), collection: col, stats, listings, items: items.slice(0, 200), chain, next }).catch(() => {}); }
+async function loadItems(reset = false) {
+  const prev = items, prevNext = next;
+  try {
+    const q = (!reset && next) ? '&next=' + encodeURIComponent(next) : '';
+    const r = await fetch(`${API}/os/${slug}/items?chain=${chain}${q}`);
+    if (!r.ok) return;
+    const j = await r.json();
+    items = reset ? (j.nfts || []) : [...items, ...(j.nfts || [])];
+    next = j.next || null;
+    render(); persistCol();
+  } catch { if (reset) { items = prev; next = prevNext; } }
+}
 async function refreshEditable() {
   editable = false; founder = false;
   const addr = wallet.address;
@@ -144,19 +157,31 @@ app.addEventListener('click', e => {
   if (b) { const [ch, id] = b.dataset.buy!.split(':'); const l = lmap().get(ch + ':' + id); const d = col.deployments.find((x: any) => x.chain === ch); const it = items.find(x => x.chain === ch && x.id === +id);
     if (l && d) startBuy({ id: +id, name: it?.name || l.name || '#' + id, img: it?.image || l.image || '', chain: ch, contract: d.address, listing: l }, () => { listings = listings.filter(x => !(x.chain === ch && x.id === +id)); render(); }, () => { listings = listings.filter(x => !(x.chain === ch && x.id === +id)); render(); }); }
 });
-bindNav(); render(); onWallet(refreshEditable);
-await checkApi(); // retried with backoff; even if /health is blocked, try the real route
+bindNav(); onWallet(refreshEditable);
+const cached = await getColCache(slug);
+if (cached?.collection) {
+  col = cached.collection; stats = cached.stats || {}; listings = cached.listings || []; items = cached.items || [];
+  next = cached.next ?? null; chain = cached.chain || col.deployments?.[0]?.chain || '';
+  document.title = `${col.name} · MultiSea`; state = 'ok';
+}
+render();
+checkApi(); // retried with backoff; even if /health is blocked, try the real route
 async function loadCol() {
   let last: Response | null = null;
   for (let i = 0; i < 2; i++) {
     last = await fetch(`${API}/collections/${slug}`).catch(() => null);
     if (last?.ok) {
-      col = (await last.json()).collection; document.title = `${col.name} · MultiSea`; chain = col.deployments[0].chain; state = 'ok'; render();
-      await Promise.all([loadItems(true), fetch(`${API}/os/${slug}/stats`).then(r => r.json()).then(j => { stats = j.stats || {}; }).catch(() => {}), fetch(`${API}/os/${slug}/listings`).then(r => r.json()).then(j => { listings = j.listings || []; }).catch(() => {})]);
-      render(); refreshEditable(); loadLiveCounts(); return;
+      col = (await last.json()).collection; document.title = `${col.name} · MultiSea`; chain = chain && col.deployments.some((d: any) => d.chain === chain) ? chain : col.deployments[0].chain; state = 'ok'; render(); persistCol();
+      await Promise.all([
+        loadItems(true),
+        fetch(`${API}/os/${slug}/stats`).then(r => r.ok ? r.json() : null).then(j => { if (j) stats = j.stats || {}; }).catch(() => {}),
+        fetch(`${API}/os/${slug}/listings`).then(r => r.ok ? r.json() : null).then(j => { if (j) listings = j.listings || []; }).catch(() => {}),
+      ]);
+      render(); persistCol(); refreshEditable(); loadLiveCounts(); return;
     }
     if (i === 0) await new Promise(r => setTimeout(r, 500));
   }
+  if (col) return; // keep the cached page silently on 429, 5xx, or a network miss
   state = !last ? 'offline' : last.status === 404 ? 'missing' : 'offline';
   render();
 }
