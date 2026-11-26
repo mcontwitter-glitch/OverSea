@@ -1,6 +1,6 @@
 // MultiSea Bridge: lock an NFT in the source-chain escrow, LayerZero v2 releases it on the destination.
 import { createPublicClient, createWalletClient, custom, http, parseAbi, formatEther, defineChain, type Address } from 'viem';
-import { wallet, openConnect, onWallet, API } from './wallet';
+import { wallet, openConnect, onWallet, API, readClient } from './wallet';
 import { esc } from './shell';
 import { chainPicker } from './chainpick';
 import { SOLANA_ON, SOL_SOON, onSolanaFlag } from './solflag';
@@ -21,6 +21,16 @@ export const FACTORY = parseAbi(['function listingFee(uint32[]) view returns (ui
 export const sym = (c: { native?: string }) => c.native || 'ETH';
 const chainOf = (c: BCfg['chains'][string]) => defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: sym(c), symbol: sym(c), decimals: 18 }, rpcUrls: { default: { http: [new URL(c.rpc, location.origin).href] } } });
 export const pubFor = (c: BCfg['chains'][string]) => createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href) });
+// Reads: same fallback as the rest of the site (Worker /rpc/:chain, then public RPCs). Writes still go through the wallet.
+const reader = (key: string, c: BCfg['chains'][string]) => { try { return readClient(key); } catch { return pubFor(c); } };
+function idsFromOwnersSnap(snap: any, chain: string, walletAddr: string): number[] {
+  if (!snap || snap.v !== 1 || !Array.isArray(snap.addrs) || !Array.isArray(snap.chains?.[chain]?.o)) return [];
+  const want = walletAddr.toLowerCase();
+  const ix = snap.addrs.findIndex((a: string) => String(a).toLowerCase() === want);
+  if (ix < 0) return [];
+  const start = Number(snap.idStart) || 1;
+  return (snap.chains[chain].o as number[]).map((j, i) => (j === ix ? start + i : 0)).filter((id) => id > 0);
+}
 export const lzOptions = (gas: number) => ('0x0003' + '01' + '0011' + '01' + gas.toString(16).padStart(32, '0')) as `0x${string}`;
 export async function walletFor(c: BCfg['chains'][string]) {
   if (!wallet.address) { openConnect(); throw new Error('Connect a wallet first'); }
@@ -133,10 +143,10 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (!wallet.address) return draw();
     s.loading = true; draw();
     try {
-      const c = cfg.chains[s.from]; const pub = pubFor(c); const token = C().contracts[s.from];
+      const c = cfg.chains[s.from]; const pub = reader(s.from, c); const token = C().contracts[s.from];
       if (C().kind === 'omni') { // fixed supply: read ownerOf for every id (one batched JSON-RPC call)
         // One Multicall3 eth_call (a 100-call JSON-RPC batch gets HTTP 429 from Robinhood's RPC, which read as "no NFTs").
-        const bp = createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href) });
+        const bp = reader(s.from, c);
         const all = Array.from({ length: C().supply || 0 }, (_, i) => i + 1);
         const read = (ids: number[]) => bp.multicall({ multicallAddress: '0xcA11bde05977b3631167028862bE2a173976CA11', allowFailure: true, batchSize: 0, contracts: ids.map(id => ({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] })) }) as Promise<{ status: string; result?: unknown }[]>;
         let res: { status: string; result?: unknown }[];
@@ -145,20 +155,38 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
         s.ids = all.filter((_, i) => res[i].status === 'success' && String(res[i].result).toLowerCase() === wallet.address!.toLowerCase());
         s.loading = false; return draw();
       }
-      const logs = await pub.getLogs({ address: token, event: NFT[5] as any, args: { to: wallet.address as Address }, fromBlock: BigInt(C().fromBlock?.[s.from] || 0) });
-      const cand = [...new Set(logs.map((l: any) => Number(l.args.tokenId)))];
-      const own = await Promise.all(cand.map(id => pub.readContract({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null)));
-      s.ids = cand.filter((_, i) => (own[i] as string | null)?.toLowerCase() === wallet.address!.toLowerCase()).sort((a, b) => a - b);
+      // Transfer logs from the listing's fromBlock miss anyone who already held the NFT before it was listed
+      // (almost every Claymons / Winnie holder). Use the Worker owner snapshot, then confirm with ownerOf.
+      const cand = new Set<number>();
+      try {
+        const r = await fetch(`${API}/owners/${C().slug || C().mirrorsSlug}`, { signal: AbortSignal.timeout(8000) });
+        if (r.ok) for (const id of idsFromOwnersSnap(await r.json(), s.from, wallet.address!)) cand.add(id);
+      } catch {}
+      try {
+        const latest = await pub.getBlockNumber();
+        const recent = latest > 40_000n ? latest - 40_000n : 0n;
+        const logs = await pub.getLogs({ address: token, event: NFT[5] as any, args: { to: wallet.address as Address }, fromBlock: recent });
+        for (const l of logs) cand.add(Number((l as any).args.tokenId));
+      } catch {}
+      if (!cand.size) {
+        try {
+          const logs = await pub.getLogs({ address: token, event: NFT[5] as any, args: { to: wallet.address as Address }, fromBlock: BigInt(C().fromBlock?.[s.from] || 0) });
+          for (const l of logs) cand.add(Number((l as any).args.tokenId));
+        } catch {}
+      }
+      const ids = [...cand];
+      const own = await Promise.all(ids.map(id => pub.readContract({ address: token, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null)));
+      s.ids = ids.filter((_, i) => (own[i] as string | null)?.toLowerCase() === wallet.address!.toLowerCase()).sort((a, b) => a - b);
     } catch (e: any) { s.status = 'Could not load NFTs: ' + (e.shortMessage || e.message); s.cls = 'err'; }
     s.loading = false; draw();
   }
   async function quote() {
     if (isSol(s.from)) { s.quote = null; return draw(); }
     if (isSol(s.to)) { try { const r = (s.recip && SX!.isSolAddr(s.recip)) ? s.recip : solMe() || '11111111111111111111111111111111';
-      const [p, lz] = await pubFor(cfg.chains[s.from]).readContract({ address: SX!.moverOf(s.from), abi: SX!.MOVER, functionName: 'quoteToSolana', args: [C().cid!, BigInt(s.sel ?? 1), SX!.sol32(r)] }) as [bigint, bigint];
+      const [p, lz] = await reader(s.from, cfg.chains[s.from]).readContract({ address: SX!.moverOf(s.from), abi: SX!.MOVER, functionName: 'quoteToSolana', args: [C().cid!, BigInt(s.sel ?? 1), SX!.sol32(r)] }) as [bigint, bigint];
       s.quote = { p, lz }; } catch (e: any) { s.quote = null; s.status = 'Fee quote unavailable: ' + (e.shortMessage || e.message); s.cls = 'err'; } return draw(); }
     try {
-      const c = cfg.chains[s.from]; const pub = pubFor(c); const to = (s.recip || wallet.address || cfg.feeWallet) as Address;
+      const c = cfg.chains[s.from]; const pub = reader(s.from, c); const to = (s.recip || wallet.address || cfg.feeWallet) as Address;
       const [p, lz] = C().kind === 'omni' ? await pub.readContract({ address: C().escrows[s.from], abi: OMNI, functionName: 'quoteMove', args: [C().cid!, cfg.chains[s.to].eid, BigInt(s.sel ?? 1), to] })
         : await pub.readContract({ address: C().escrows[s.from], abi: ESCROW, functionName: 'quote', args: [cfg.chains[s.to].eid, to, BigInt(s.sel ?? 1), lzOptions(cfg.lzGas)] });
       s.quote = { p, lz };
@@ -174,7 +202,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (!/^0x[0-9a-fA-F]{40}$/.test(to)) { s.status = 'Recipient must be a 0x address.'; s.cls = 'err'; return draw(); }
     s.busy = true; s.link = ''; s.status = 'Switching network…'; s.cls = 'mut'; draw();
     try {
-      const c = cfg.chains[s.from]; const pub = pubFor(c); const w = await walletFor(c); const token = C().contracts[s.from]; const escrow = C().escrows[s.from]; const id = BigInt(s.sel);
+      const c = cfg.chains[s.from]; const pub = reader(s.from, c); const w = await walletFor(c); const token = C().contracts[s.from]; const escrow = C().escrows[s.from]; const id = BigInt(s.sel);
       if (C().kind === 'omni') { // no approval: the drop locks the token in its escrow itself
         const [p, lz] = await pub.readContract({ address: escrow, abi: OMNI, functionName: 'quoteMove', args: [C().cid!, cfg.chains[s.to].eid, id, to] });
         s.quote = { p, lz }; s.status = `Confirm the move (${fmtE(p + lz)} ${N()}) in your wallet…`; draw();
@@ -196,7 +224,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       if (r.status !== 'success') throw new Error('Transaction reverted');
       s.link = cfg.mode === 'fork' ? '' : `https://${cfg.network === 'mainnet' ? '' : 'testnet.'}layerzeroscan.com/tx/${h}`;
       s.status = `✓ #${s.sel} locked on ${c.name}. LayerZero is delivering it to ${cfg.chains[s.to].name}${cfg.mode === 'fork' ? ' (preview relayer, a few seconds)' : ' (usually 1-3 minutes)'}.`; s.cls = 'ok';
-      const dst = cfg.chains[s.to]; const dpub = pubFor(dst); const dtoken = C().contracts[s.to];
+      const dst = cfg.chains[s.to]; const dpub = reader(s.to, dst); const dtoken = C().contracts[s.to];
       for (let i = 0; i < 60; i++) { await new Promise(r => setTimeout(r, 3000));
         const o = await dpub.readContract({ address: dtoken, abi: NFT, functionName: 'ownerOf', args: [id] }).catch(() => null);
         if ((o as string | null)?.toLowerCase() === to.toLowerCase()) { s.status = `✓ Delivered: #${s.sel} is now on ${dst.name}.`; break; } }
@@ -211,7 +239,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     if (!SX!.isSolAddr(to)) { s.status = 'Recipient must be a Solana address (connect Phantom / Solflare or paste one).'; s.cls = 'err'; return draw(); }
     s.busy = true; s.link = ''; s.status = 'Switching network…'; s.cls = 'mut'; draw();
     try {
-      const c = cfg.chains[s.from]; const pub = pubFor(c); const w = await walletFor(c); const token = C().contracts[s.from]; const mover = SX!.moverOf(s.from); const id = BigInt(s.sel!);
+      const c = cfg.chains[s.from]; const pub = reader(s.from, c); const w = await walletFor(c); const token = C().contracts[s.from]; const mover = SX!.moverOf(s.from); const id = BigInt(s.sel!);
       const ok = (await pub.readContract({ address: token, abi: NFT, functionName: 'getApproved', args: [id] })).toLowerCase() === mover.toLowerCase()
         || (await pub.readContract({ address: token, abi: NFT, functionName: 'isApprovedForAll', args: [wallet.address as Address, mover] }));
       if (!ok) { s.status = `Step 1/2: allow the MultiSea Solana mover to lock #${s.sel} in the escrow…`; draw();
@@ -241,7 +269,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       const id = s.sel; const sig = await SX!.solToEvm(C().cid!, id, cfg.chains[s.to].eid, C().escrows[s.to], to);
       s.link = sig ? `https://solscan.io/tx/${sig}` : ''; // '' = confirmation timed out but the chain shows it landed
       s.status = `✓ #${id} locked on Solana. LayerZero is delivering it to ${cfg.chains[s.to].name} (usually a few minutes).`; s.cls = 'ok'; draw();
-      const dpub = pubFor(cfg.chains[s.to]); const dtoken = C().contracts[s.to];
+      const dpub = reader(s.to, cfg.chains[s.to]); const dtoken = C().contracts[s.to];
       for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 6000));
         const o = await dpub.readContract({ address: dtoken, abi: NFT, functionName: 'ownerOf', args: [BigInt(id)] }).catch(() => null);
         if ((o as string | null)?.toLowerCase() === to.toLowerCase()) { s.status = `✓ Delivered: #${id} is now on ${cfg.chains[s.to].name}.`; break; } }
