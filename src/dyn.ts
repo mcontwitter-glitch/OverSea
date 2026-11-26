@@ -146,14 +146,21 @@ app.addEventListener('click', e => {
 });
 bindNav(); render(); onWallet(refreshEditable);
 await checkApi(); // retried with backoff; even if /health is blocked, try the real route
-const r = await fetch(`${API}/collections/${slug}`).catch(() => null);
-if (!r) { state = 'offline'; render(); }
-else {
-  if (!r.ok) { state = 'missing'; render(); }
-  else { col = (await r.json()).collection; document.title = `${col.name} · MultiSea`; chain = col.deployments[0].chain; state = 'ok'; render();
-    await Promise.all([loadItems(true), fetch(`${API}/os/${slug}/stats`).then(r => r.json()).then(j => { stats = j.stats || {}; }).catch(() => {}), fetch(`${API}/os/${slug}/listings`).then(r => r.json()).then(j => { listings = j.listings || []; }).catch(() => {})]);
-    render(); refreshEditable(); loadLiveCounts(); }
+async function loadCol() {
+  let last: Response | null = null;
+  for (let i = 0; i < 2; i++) {
+    last = await fetch(`${API}/collections/${slug}`).catch(() => null);
+    if (last?.ok) {
+      col = (await last.json()).collection; document.title = `${col.name} · MultiSea`; chain = col.deployments[0].chain; state = 'ok'; render();
+      await Promise.all([loadItems(true), fetch(`${API}/os/${slug}/stats`).then(r => r.json()).then(j => { stats = j.stats || {}; }).catch(() => {}), fetch(`${API}/os/${slug}/listings`).then(r => r.json()).then(j => { listings = j.listings || []; }).catch(() => {})]);
+      render(); refreshEditable(); loadLiveCounts(); return;
+    }
+    if (i === 0) await new Promise(r => setTimeout(r, 500));
+  }
+  state = !last ? 'offline' : last.status === 404 ? 'missing' : 'offline';
+  render();
 }
+await loadCol();
 async function loadLiveCounts() {
   if (!col || !isLiveCountsCol()) return;
   try {

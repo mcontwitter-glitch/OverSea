@@ -166,9 +166,30 @@ async function session(req, env) {
 async function requireSession(req, env) { const s = await session(req, env); if (!s) bad('sign in with your wallet first', 401); return s; }
 const rand = n => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, '0')).join('');
 
+async function kvJson(ns, key) {
+  try { return await ns.get(key, 'json'); }
+  catch (e) { await new Promise(r => setTimeout(r, 80)); return await ns.get(key, 'json'); }
+}
+// Bridge-listed collections also have bcol:<slug> (mirrors + escrow). Use it when col: is briefly unreadable
+// so a KV miss or throw never looks like "collection not found" for a finished listing.
+function collectionFromBcol(bc) {
+  if (!bc?.slug || !bc.native || !bc.contracts?.[bc.native]) return null;
+  const deployments = Object.entries(bc.contracts).filter(([k]) => chains[k]).map(([k, a]) => ({ chain: k, address: lc(a), ...(k !== bc.native ? { mirror: true } : {}) }));
+  const escrow = Object.entries(bc.escrows || {}).filter(([k]) => chains[k]).map(([k, a]) => ({ chain: k, address: lc(a), label: 'MultiSea bridge escrow' }));
+  if (!deployments.length) return null;
+  return { slug: bc.slug, name: bc.name || bc.slug, description: '', logo: '', banner: '', deployments, escrow, status: 'approved', source: 'bridge-listing' };
+}
 async function getCollection(env, slug) {
-  if (STATIC[slug]) { const ovr = await env.COLLECTIONS.get('ovr:' + slug, 'json'); return { ...publicStatic(STATIC[slug]), ...(ovr || {}), static: true }; }
-  return env.COLLECTIONS.get('col:' + slug, 'json');
+  if (STATIC[slug]) { const ovr = await kvJson(env.COLLECTIONS, 'ovr:' + slug).catch(() => null); return { ...publicStatic(STATIC[slug]), ...(ovr || {}), static: true }; }
+  let err;
+  try {
+    const c = await kvJson(env.COLLECTIONS, 'col:' + slug);
+    if (c) return c;
+  } catch (e) { err = e; }
+  const fb = collectionFromBcol(await kvJson(env.COLLECTIONS, 'bcol:' + slug).catch(() => null));
+  if (fb) return fb;
+  if (err) throw err; // genuine KV failure with no fallback: 500, not 404
+  return null;
 }
 const publicStatic = c => ({ slug: c.slug, name: c.name, description: c.description, deployments: c.deployments.map(d => ({ chain: d.chain, address: d.address })), escrow: c.escrow, status: 'approved' });
 async function canEdit(env, slug, address) {
