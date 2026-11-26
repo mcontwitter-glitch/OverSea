@@ -87,7 +87,7 @@ const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 // d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? }, referral? }
 export async function renderCard(d) {
   if (d.referral) {
-    const avatar = await dataUri(d.avatar, 86400, 200, d.partial);
+    const avatar = d.avatar && String(d.avatar).startsWith('data:') ? d.avatar : await dataUri(d.avatar, 86400, 200, d.partial);
     d.ok = true; // monogram fills in when there is no picture
     return renderSvg(refCardSvg({ name: d.name, avatar }));
   }

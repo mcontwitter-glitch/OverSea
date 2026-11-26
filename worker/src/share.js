@@ -17,6 +17,21 @@ const abs = u => {
 const fmtFloor = n => (n >= 1 ? n.toFixed(2) : n >= 0.01 ? n.toFixed(4) : n.toPrecision(2)).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 
 const shortAddr = a => (a ? a.slice(0, 6) + '…' + a.slice(-4) : 'MultiSea');
+const b64buf = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+async function avatarUri(env, avatar) {
+  const path = typeof avatar === 'string' && avatar.startsWith('/media/') ? avatar.slice('/media/'.length) : '';
+  if (path && env.MEDIA) {
+    try {
+      const o = await env.MEDIA.get(path);
+      if (o) {
+        const buf = await o.arrayBuffer();
+        const t = (o.httpMetadata?.contentType || 'image/png').split(';')[0].trim() || 'image/png';
+        return `data:${t};base64,${b64buf(buf)}`;
+      }
+    } catch {}
+  }
+  return abs(avatar);
+}
 const REF_TOKEN = t => {
   const c = String(t || '').trim().toLowerCase();
   return (isHexCode(c) || SLUG_RE.test(c)) ? c : '';
@@ -111,7 +126,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     return page({ title: `${d.name || slug} · Mint on MultiSea`, desc: mi.desc, image, target });
   }
   function refImg(token, prof) {
-    const f = hash('r1|' + token + '|' + (prof?.name || '') + '|' + (prof?.avatar || ''));
+    const f = hash('r2|' + token + '|' + (prof?.name || '') + '|' + (prof?.avatar || ''));
     return `${API}/s/og/r/${encodeURIComponent(token)}.png?f=${f}`;
   }
   async function ogRef(env, url, token) {
@@ -122,7 +137,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     if (stored) { const res = new Response(stored, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } }); await cache.put(key, res.clone()); return res; }
     try {
       const prof = await refProfile(env, token);
-      const png = await renderCard({ referral: true, name: prof?.name || 'MultiSea', avatar: abs(prof?.avatar || ''), partial: true });
+      const png = await renderCard({ referral: true, name: prof?.name || 'MultiSea', avatar: await avatarUri(env, prof?.avatar || ''), partial: true });
       await env.COLLECTIONS.put(kvKey, png, { expirationTtl: 2592000 }).catch(() => {});
       const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
       await cache.put(key, res.clone()); return res;
