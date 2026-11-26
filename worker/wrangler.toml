@@ -4,7 +4,11 @@ compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Custom domain (multisea.io zone is on this Cloudflare account)
-routes = [{ pattern = "api.multisea.io", custom_domain = true }]
+routes = [
+  { pattern = "api.multisea.io", custom_domain = true },
+  { pattern = "multisea.io/r/*", zone_name = "multisea.io" },
+  { pattern = "www.multisea.io/r/*", zone_name = "multisea.io" },
+]
 
 # Create with: npx wrangler kv namespace create COLLECTIONS / NONCES, then paste the ids here.
 kv_namespaces = [

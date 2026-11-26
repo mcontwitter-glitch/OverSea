@@ -4,6 +4,12 @@ import CFG from '../config/collections.json';
 const path = location.pathname.replace(/\/+$/, '') || '/';
 // Legacy links (?c=, ?item= on the old single-collection page) -> /c/<slug>
 const q = new URLSearchParams(location.search);
+function captureRef(code: string) {
+  const c = String(code || '').trim().toLowerCase();
+  if (!/^(?:[0-9a-f]{8}|[a-z0-9][a-z0-9-]{1,23})$/.test(c)) return;
+  if (!localStorage.getItem('multisea-ref')) localStorage.setItem('multisea-ref', JSON.stringify({ code: c, at: Date.now() }));
+}
+if (q.get('ref')) captureRef(q.get('ref')!);
 if (path === '/' && (q.get('item') || q.get('tab') || q.get('c'))) { const s = q.get('c') || CFG.default; q.delete('c'); location.replace(`/c/${s}${q.toString() ? '?' + q : ''}`); }
 const m = path.match(/^\/c\/([a-z0-9-]+)$/);
 if (path === '/') import('./home');
@@ -21,7 +27,7 @@ else if (path === '/deploy-pack-factories') import('./packdeploy');
 else if (path === '/deploy-onchain-factories') import('./onchaindeploy');
 else if (path === '/deploy-revshare-factory') import('./revsharedeploy');
 else if (path === '/launchpad' || /^\/launchpad\/[a-z0-9-]{3,40}$/.test(path)) import('./launchpad');
-else if (/^\/r\/[0-9a-fA-F]{8}$/.test(path)) { const code = path.slice(3).toLowerCase(); if (!localStorage.getItem('multisea-ref')) localStorage.setItem('multisea-ref', JSON.stringify({ code, at: Date.now() })); location.replace('/?ref=' + code); }
+else if (/^\/r\/[a-zA-Z0-9][a-zA-Z0-9-]{1,23}$/.test(path)) { const code = path.slice(3).toLowerCase(); captureRef(code); location.replace('/?ref=' + encodeURIComponent(code)); }
 else if (path === '/referrals') import('./referrals');
 else if (path === '/revenue-share') import('./revshare');
 else if (path === '/cart') import('./cartpage');

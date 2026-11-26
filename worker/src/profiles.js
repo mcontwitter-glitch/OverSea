@@ -1,4 +1,5 @@
 import { makeWalletNfts } from './walletnfts.js';
+import { rawSlug, isHexCode, reserveSlug, slugTakenByOther } from './refslug.js';
 const MEDIA = /^\/media\/[0-9a-f]{64}\.(webp|png|jpg|gif)$/;
 const NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,23}$/u;
 const ID = /^\d{1,78}$/;
@@ -96,7 +97,10 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
       if (wl && await env.COLLECTIONS.get('walletprofile:' + lc(s.address))) bad('this wallet is linked to another profile; edit that profile from its main wallet', 409);
       const name = cleanText(b.name, 24); if (name && !NAME.test(name)) bad('display name must be 1-24 letters, numbers, spaces, dots, dashes or underscores');
       if (name) {
-        const matches = await env.COLLECTIONS.list({ prefix: 'profile:name:' + name.toLowerCase() });
+        const slug = rawSlug(name);
+        if (slug && isHexCode(slug)) bad('that name conflicts with a referral code; pick another');
+        if (await slugTakenByOther(env, s.address, name)) bad('display name already in use', 409);
+        const matches = await env.COLLECTIONS.list({ prefix: 'profile:name:' + name.toLowerCase() + ':' });
         if (matches.keys.some(k => k.name !== 'profile:name:' + name.toLowerCase() + ':' + lc(s.address))) bad('display name already in use', 409);
       }
       const old = await one(env, s.address);
@@ -110,6 +114,7 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
       await env.COLLECTIONS.put(key(s.address), JSON.stringify(rec));
       if (old.name && old.name.toLowerCase() !== name.toLowerCase()) await env.COLLECTIONS.delete('profile:name:' + old.name.toLowerCase() + ':' + lc(s.address));
       if (name) await env.COLLECTIONS.put('profile:name:' + name.toLowerCase() + ':' + lc(s.address), '1');
+      await reserveSlug(env, s.address, name);
       return { ok: true, profile: rec };
     }
   };

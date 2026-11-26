@@ -1,6 +1,7 @@
 // Share cards: GET /s/c/<slug>[?item=<id>] -> small HTML page with og:/twitter: tags for X and other link crawlers.
 // multisea.io is a GitHub Pages SPA (deep links 404 there), so crawlers read this page; people are sent to multisea.io.
-import { renderCard } from './ogcard.js';
+import { resolveRef, isHexCode, SLUG_RE } from './refslug.js';
+const renderCard = async d => (await import('./ogcard.js')).renderCard(d);
 const SITE = 'https://multisea.io';
 const API = 'https://api.multisea.io';
 const FALLBACK = SITE + '/og-image.png';
@@ -14,6 +15,20 @@ const abs = u => {
   return /^https:\/\//.test(u) ? u : '';
 };
 const fmtFloor = n => (n >= 1 ? n.toFixed(2) : n >= 0.01 ? n.toFixed(4) : n.toPrecision(2)).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+
+const shortAddr = a => (a ? a.slice(0, 6) + '…' + a.slice(-4) : 'MultiSea');
+const REF_TOKEN = t => {
+  const c = String(t || '').trim().toLowerCase();
+  return (isHexCode(c) || SLUG_RE.test(c)) ? c : '';
+};
+
+async function refProfile(env, token) {
+  const rec = await resolveRef(env, token);
+  if (!rec) return null;
+  const prof = await env.COLLECTIONS.get('profile:' + rec.address, 'json').catch(() => null);
+  const name = (prof && String(prof.name || '').trim()) || shortAddr(rec.address);
+  return { ...rec, name, avatar: (prof && prof.avatar) || '', address: rec.address };
+}
 
 export function makeShare({ getCollection, STATIC, osStats, cached }) {
   async function floorOf(env, slug, col) {
@@ -95,8 +110,44 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     if (ctx?.waitUntil) ctx.waitUntil(ogLaunch(env, new URL(image), slug).catch(() => {}));
     return page({ title: `${d.name || slug} · Mint on MultiSea`, desc: mi.desc, image, target });
   }
+  function refImg(token, prof) {
+    const f = hash('r1|' + token + '|' + (prof?.name || '') + '|' + (prof?.avatar || ''));
+    return `${API}/s/og/r/${encodeURIComponent(token)}.png?f=${f}`;
+  }
+  async function ogRef(env, url, token) {
+    const cache = caches.default, key = new Request(url.toString(), { method: 'GET' });
+    const hit = await cache.match(key); if (hit) return hit;
+    const kvKey = 'og:' + url.pathname + url.search;
+    const stored = await env.COLLECTIONS.get(kvKey, 'arrayBuffer').catch(() => null);
+    if (stored) { const res = new Response(stored, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } }); await cache.put(key, res.clone()); return res; }
+    try {
+      const prof = await refProfile(env, token);
+      const png = await renderCard({ referral: true, name: prof?.name || 'MultiSea', avatar: abs(prof?.avatar || ''), partial: true });
+      await env.COLLECTIONS.put(kvKey, png, { expirationTtl: 2592000 }).catch(() => {});
+      const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
+      await cache.put(key, res.clone()); return res;
+    } catch { return new Response(null, { status: 302, headers: { location: FALLBACK, 'cache-control': 'public, max-age=60' } }); }
+  }
+  async function refPage(req, env, url, token, ctx) {
+    const t = REF_TOKEN(token);
+    const target = t ? `${SITE}/?ref=${encodeURIComponent(t)}` : SITE + '/';
+    if (!BOT.test(req.headers.get('user-agent') || '')) {
+      const prof = t ? await refProfile(env, t) : null;
+      const loc = prof ? target : SITE + '/';
+      return new Response(null, { status: 302, headers: { location: loc, 'cache-control': 'private, max-age=0' } });
+    }
+    const prof = t ? await refProfile(env, t) : null;
+    if (!prof) return page({ title: 'MultiSea', desc: 'Multichain NFTs on MultiSea.', image: FALLBACK, target: SITE + '/' }, 404);
+    const image = env.OG_CARD === '1' ? refImg(t, prof) : (abs(prof.avatar) || FALLBACK);
+    if (env.OG_CARD === '1' && ctx?.waitUntil) ctx.waitUntil(ogRef(env, new URL(image), t).catch(() => {}));
+    const pretty = `${SITE}/r/${t}`;
+    return page({ title: `${prof.name} invited you to MultiSea`, desc: `${prof.name} invited you to MultiSea.`, image, target, canonical: pretty }, 200);
+  }
   return async function share(req, env, url, p, ctx) {
-    if ((req.method !== 'GET' && req.method !== 'HEAD') || p[0] !== 's') return undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD') return undefined;
+    if (p[0] === 'r' && p.length === 2) return refPage(req, env, url, p[1], ctx);
+    if (p[0] !== 's') return undefined;
+    if (p[1] === 'og' && p[2] === 'r' && p.length === 4) { const m = /^([a-z0-9-]{1,24})\.png$/.exec(p[3]); return m ? ogRef(env, url, m[1]) : undefined; }
     if (p[1] === 'og' && p[2] === 'c') return ogImage(req, env, url, p);
     if (p[1] === 'og' && p[2] === 'l' && p.length === 4) { const m = /^([a-z0-9-]{1,64})\.png$/.exec(p[3]); return m ? ogLaunch(env, url, m[1]) : undefined; }
     if (p[1] === 'l' && p.length === 3 && /^[a-z0-9-]{1,64}$/.test(p[2])) return launchPage(req, env, url, p[2], ctx);
@@ -117,13 +168,13 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     return page({ title: `${title} · MultiSea`, desc, image, target });
   };
 }
-function page({ title, desc, image, target }, status = 200) {
-  const t = esc(title), d = esc(desc), i = esc(image), u = esc(target);
+function page({ title, desc, image, target, canonical }, status = 200) {
+  const t = esc(title), d = esc(desc), i = esc(image), u = esc(canonical || target), go = esc(target);
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${t}</title>
 <meta name="description" content="${d}"><link rel="canonical" href="${u}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="MultiSea"><meta property="og:title" content="${t}"><meta property="og:description" content="${d}"><meta property="og:image" content="${i}"><meta property="og:url" content="${u}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${t}"><meta name="twitter:description" content="${d}"><meta name="twitter:image" content="${i}">
-<meta http-equiv="refresh" content="0;url=${u}"><script>location.replace(${JSON.stringify(target).replace(/</g, '\\u003c')})</script>
-</head><body><a href="${u}">${t}</a></body></html>`;
+<meta http-equiv="refresh" content="0;url=${go}"><script>location.replace(${JSON.stringify(target).replace(/</g, '\\u003c')})</script>
+</head><body><a href="${go}">${t}</a></body></html>`;
   return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=600', vary: 'User-Agent' } });
 }

@@ -35,7 +35,7 @@ export function clearCart(keys?: string[]) { saveCart(keys ? cart().filter(x => 
 
 // ---- referrals: first-touch capture from /r/<code> ----
 const RK = 'multisea-ref';
-export function captureRef(code: string) { if (!/^[0-9a-f]{8}$/i.test(code)) return; if (!localStorage.getItem(RK)) localStorage.setItem(RK, JSON.stringify({ code: code.toLowerCase(), at: Date.now() })); }
+export function captureRef(code: string) { const c = String(code || '').trim().toLowerCase(); if (!/^(?:[0-9a-f]{8}|[a-z0-9][a-z0-9-]{1,23})$/.test(c)) return; if (!localStorage.getItem(RK)) localStorage.setItem(RK, JSON.stringify({ code: c, at: Date.now() })); }
 export function pendingRef(): { code: string; at: number } | null { try { return JSON.parse(localStorage.getItem(RK) || 'null'); } catch { return null; } }
 export function markRefDone(addr: string) { localStorage.setItem(RK + ':done:' + addr.toLowerCase(), '1'); }
 export const refDone = (addr: string) => !!localStorage.getItem(RK + ':done:' + addr.toLowerCase());

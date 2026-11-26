@@ -6,6 +6,7 @@ import F600 from './og/inter-600.bin';
 import F800 from './og/inter-800.bin';
 import decodeWebp, { init as initWebp } from '@jsquash/webp/decode';
 import WEBP_WASM from '@jsquash/webp/codec/dec/webp_dec.wasm';
+import { refCardSvg } from './ogsvg.js';
 
 const SITE = 'https://multisea.io';
 let ready;
@@ -83,8 +84,13 @@ async function logoSvg(c) {
 }
 const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
-// d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? } }
+// d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? }, referral? }
 export async function renderCard(d) {
+  if (d.referral) {
+    const avatar = await dataUri(d.avatar, 86400, 200, d.partial);
+    d.ok = true; // monogram fills in when there is no picture
+    return renderSvg(refCardSvg({ name: d.name, avatar }));
+  }
   const [banner, avatar, itemImg, ...rest] = await Promise.all([
     dataUri(d.banner, 86400, 1200), dataUri(d.avatar, 86400, 200, d.partial), dataUri(d.item?.image, 86400, 450, d.partial),
     ...d.chains.map(c => logoSvg(c)),
@@ -117,7 +123,11 @@ ${item ? `<rect x="684" y="64" width="462" height="462" rx="32" fill="#45bdfa" f
 ${chainRow}
 <text x="${W - 60}" y="${item ? 590 : 84}" text-anchor="end" font-family="Inter" font-weight="600" font-size="24" fill="#cfe9ff" fill-opacity=".85">multisea.io</text>
 </svg>`;
+  return renderSvg(svg);
+}
+
+async function renderSvg(svg) {
   await init();
-  const rv = new Resvg(svg, { font: { fontBuffers: [new Uint8Array(F600), new Uint8Array(F800)], defaultFontFamily: 'Inter', loadSystemFonts: false }, fitTo: { mode: 'width', value: W } });
+  const rv = new Resvg(svg, { font: { fontBuffers: [new Uint8Array(F600), new Uint8Array(F800)], defaultFontFamily: 'Inter', loadSystemFonts: false }, fitTo: { mode: 'width', value: 1200 } });
   try { const img = rv.render(); try { return img.asPng(); } finally { img.free(); } } finally { rv.free(); }
 }

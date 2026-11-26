@@ -371,7 +371,7 @@ let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad
 // ---------- router ----------
 async function handle(req, env, url, ctx) {
   const p = url.pathname.split('/').filter(Boolean); const M = req.method;
-  if (p[0] === 's') { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p, ctx); if (r) return r; }
+  if (p[0] === 's' || (p[0] === 'r' && p.length === 2)) { const r = await makeShare({ getCollection, STATIC, osStats, cached })(req, env, url, p, ctx); if (r) return r; }
   const body = async () => { const b = await req.json().catch(() => null); if (!b || typeof b !== 'object') bad('invalid JSON'); return b; };
 
   if (M === 'GET' && p[0] === 'health') return { ok: true, chains: Object.keys(chains), lpNetwork: env.LP_NETWORK || 'mainnet', features: ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'offers', 'growth', 'launchpad', 'packs', 'btc', 'holder-chat', 'profiles', ...(env.MEDIA ? ['media'] : [])] };

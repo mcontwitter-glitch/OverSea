@@ -2,6 +2,7 @@
 // and Worker-coordinated bundles. All state lives in the COLLECTIONS KV namespace. On-chain reads are injectable (tests).
 import { keccak256, toBytes, parseAbi, parseEventLogs, createPublicClient, createWalletClient, http, fallback, verifyTypedData, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { resolveRef, currentSlug } from './refslug.js';
 
 export const QUEST_CHAINS = ['ethereum', 'base', 'bnb', 'apechain', 'robinhood'];
 export const QUEST_KINDS = ['buy', 'list', 'bridge', 'hold'];
@@ -104,8 +105,13 @@ export function makeGrowth(d) {
   // ======================= referrals =======================
   async function registerCode(env, addr) { const c = refCode(addr); if (!(await env.COLLECTIONS.get('refcode:' + c))) await env.COLLECTIONS.put('refcode:' + c, lc(addr)); return c; }
   async function bindReferral(env, buyer, code) {
-    buyer = lc(buyer); code = String(code || '').toLowerCase(); if (!/^[0-9a-f]{8}$/.test(code)) bad('bad referral code');
-    const ref = await env.COLLECTIONS.get('refcode:' + code); if (!ref) bad('unknown referral code', 404);
+    buyer = lc(buyer); code = String(code || '').toLowerCase().trim();
+    const rec = await resolveRef(env, code);
+    if (!rec) {
+      const shape = /^[0-9a-f]{8}$/.test(code) || /^[a-z0-9][a-z0-9-]{1,23}$/.test(code);
+      bad(shape ? 'unknown referral code' : 'bad referral code', shape ? 404 : 400);
+    }
+    const ref = rec.address;
     if (ref === buyer) bad('you cannot refer yourself');
     const cur = await kvj(env, 'refby:' + buyer);
     if (cur) return { ok: true, bound: false, referrer: cur.referrer, note: 'already referred (first touch is permanent)' };
@@ -124,9 +130,11 @@ export function makeGrowth(d) {
   }
   async function refStats(env, addr) {
     addr = lc(addr); const code = await registerCode(env, addr);
+    const prof = await kvj(env, 'profile:' + addr);
+    const slug = await currentSlug(env, addr, prof?.name);
     const fr = await listAll(env, `reffriend:${addr}:`, 500);
     const friends = await Promise.all(fr.map(async x => ({ address: x.name.split(':')[2], ...(await kvj(env, x.name)) })));
-    return { code, path: '/r/' + code, referredBy: (await kvj(env, 'refby:' + addr))?.referrer || null, friends, earnings: (await kvj(env, 'refearn:' + addr)) || { perChain: {}, sales: 0 }, refBps: (await cfgOf(env)).refBps };
+    return { code, slug: slug || null, path: '/r/' + (slug || code), referredBy: (await kvj(env, 'refby:' + addr))?.referrer || null, friends, earnings: (await kvj(env, 'refearn:' + addr)) || { perChain: {}, sales: 0 }, refBps: (await cfgOf(env)).refBps };
   }
 
   // ======================= revenue share =======================
@@ -395,7 +403,7 @@ export function makeGrowth(d) {
     // referrals
     if (p[0] === 'ref') {
       if (M === 'GET' && p[1] === 'stats' && p.length === 3) return refStats(env, addrParam(p[2]));
-      if (M === 'GET' && p[1] === 'code' && p.length === 3) { const c = String(p[2]).toLowerCase(); const a = /^[0-9a-f]{8}$/.test(c) ? await env.COLLECTIONS.get('refcode:' + c) : null; if (!a) bad('unknown code', 404); return { code: c, referrer: a }; }
+      if (M === 'GET' && p[1] === 'code' && p.length === 3) { const rec = await resolveRef(env, p[2]); if (!rec) bad('unknown code', 404); return { code: String(p[2]).toLowerCase(), referrer: rec.address, kind: rec.kind }; }
       if (M === 'POST' && p[1] === 'bind' && p.length === 2) { const s = await requireSession(req, env); const b = await body(); return bindReferral(env, s.address, b.code); }
     }
     // revenue share
