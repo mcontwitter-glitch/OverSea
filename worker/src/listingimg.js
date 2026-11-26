@@ -74,10 +74,14 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
     const uri = await tokenURI(chain, contract, id, prefix);
     if (!uri) return null;
     const meta = await jsonFrom(uri, fetchImpl);
-    if (!meta) return { uri };
-    const image = ipfs(meta.image || meta.image_url || '');
-    const name = meta.name || '';
-    return { image, name, uri, prefix: prefixOf(uri) };
+    if (meta) {
+      const image = ipfs(meta.image || meta.image_url || '');
+      const name = meta.name || '';
+      return { image, name, uri, prefix: prefixOf(uri) };
+    }
+    // Some collections (e.g. Winnie) set tokenURI to the image itself, not JSON metadata.
+    if (/^https?:\/\//.test(uri) && !/\.json(\?|$)/i.test(uri)) return { image: uri, name: '', uri, prefix: prefixOf(uri) };
+    return { uri };
   }
 
   async function enrich(env, col, listings, ctx) {
