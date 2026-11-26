@@ -1,14 +1,15 @@
-// Solana NFTs for the profile grid, FREE (public RPC only, no indexer, no API key). Lazy-loaded.
-// MultiSea's Solana NFTs are Metaplex Core assets (one account each, not SPL tokens), so getTokenAccountsByOwner does not
-// see them, and the public RPCs refuse getProgramAccounts. Two cheap routes instead:
-//  1. MultiSea collections on our program (Island's …): every piece lives at a known address (PDA ["Asset", cid, id]), so
-//     small collections are read directly, 10 accounts per request, and the owner bytes compared. Complete.
+// Solana NFTs for the profile grid. MultiSea's Solana NFTs are Metaplex Core assets (one account each, not SPL tokens),
+// so getTokenAccountsByOwner does not see them, and the public RPCs refuse getProgramAccounts. Two routes:
+//  1. MultiSea collections (Island's …): GET /wallet/<sol>/nfts on the Worker, which reads every PDA server-side and
+//     caches the owner map. (A browser scan through POST /rpc/solana used to miss holdings when publicnode rate-limited
+//     the Worker and the official RPC 403'd Cloudflare IPs.) If that API is down, the same PDA read is done here as a
+//     fallback, 10 accounts per request.
 //  2. Everything else (other Core collections, big MultiSea collections): the wallet's recent transactions are scanned for
 //     Core accounts it still owns. Covers NFTs received or minted recently; very old holdings of other collections need an
 //     indexer (DAS), which we don't use.
 import { PublicKey } from '@solana/web3.js';
 import { solConn } from './solwallet';
-import { readClient } from './wallet';
+import { readClient, API } from './wallet';
 import CFG from '../config/collections.json';
 import LP from '../config/launchpad.json';
 
@@ -45,19 +46,35 @@ export async function solanaNfts(owner: string, fresh = false): Promise<{ nfts: 
   const ck = 'msea-solnfts:' + owner;
   if (!fresh) try { const c = JSON.parse(sessionStorage.getItem(ck) || 'null'); if (c && Date.now() - c.t < 300_000) return c.v; } catch {}
   const me = new PublicKey(owner); const out = new Map<string, SolNft>(); const notes: string[] = [];
-  // 1. MultiSea collections registered on Solana
+  // 1. MultiSea collections registered on Solana (Worker first, local PDA read if the API is down)
+  let fromApi = false;
+  try {
+    const r = await fetch(`${String(API).replace(/\/$/, '')}/wallet/${owner}/nfts${fresh ? '?fresh=1' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    if (r.ok) {
+      const j = await r.json();
+      for (const n of j.nfts || []) {
+        if (n.chain && n.chain !== 'solana') continue;
+        const id = String(n.id), slug = n.collection || n.msSlug, addr = n.contract;
+        out.set((slug && id) ? id + slug : addr, { chain: 'solana', contract: addr, id, name: n.name || (slug ? `${slug} #${id}` : id), image: n.image || (slug ? `/img/${slug}/s/${id}.webp` : null), standard: 'mpl-core', collection: slug, msSlug: slug, href: n.href || (slug ? `/c/${slug}?item=${id}` : `https://solscan.io/token/${addr}`) });
+      }
+      fromApi = true;
+      if (Array.isArray(j.notes)) notes.push(...j.notes.filter(Boolean));
+    }
+  } catch { /* fall back to a direct PDA read */ }
   const ours = new Map<string, { c: any; cid: string }>(); // collection PDA -> config
   await Promise.all(COLS.map(async (c: any) => { const cid = await cidOf(c); if (cid) ours.set(pda([te.encode('Collection'), hex32(cid)]).toBase58(), { c, cid }); }));
-  const live = [...ours.entries()]; const info = live.length ? await solConn.getMultipleAccountsInfo(live.map(([k]) => new PublicKey(k))) : [];
-  for (const [i, [, { c, cid }]] of live.entries()) {
-    if (!info[i]) continue; // not on Solana yet
-    const n = Number(c.supply || 0), start = Number(c.idStart ?? 1);
-    if (n > ENUM_MAX) continue; // big collections: history scan below
-    const ids = Array.from({ length: n }, (_, j) => start + j);
-    const accs = await solConn.getMultipleAccountsInfo(ids.map(id => pda([te.encode('Asset'), hex32(cid), le32(id)])));
-    accs.forEach((a, j) => { if (!a) return; const p = parseAsset(a.data); if (!p?.owner.equals(me)) return; const id = ids[j];
-      out.set(String(id) + c.slug, { chain: 'solana', contract: pda([te.encode('Asset'), hex32(cid), le32(id)]).toBase58(), id: String(id), name: p.name || `${c.name} #${id}`, image: `/img/${c.slug}/s/${id}.webp`, standard: 'mpl-core', collection: c.slug, msSlug: c.slug, href: `/c/${c.slug}?item=${id}` }); });
-  }
+  if (!fromApi) try {
+    const live = [...ours.entries()]; const info = live.length ? await solConn.getMultipleAccountsInfo(live.map(([k]) => new PublicKey(k))) : [];
+    for (const [i, [, { c, cid }]] of live.entries()) {
+      if (!info[i]) continue; // not on Solana yet
+      const n = Number(c.supply || 0), start = Number(c.idStart ?? 1);
+      if (n > ENUM_MAX) continue; // big collections: history scan below
+      const ids = Array.from({ length: n }, (_, j) => start + j);
+      const accs = await solConn.getMultipleAccountsInfo(ids.map(id => pda([te.encode('Asset'), hex32(cid), le32(id)])));
+      accs.forEach((a, j) => { if (!a) return; const p = parseAsset(a.data); if (!p?.owner.equals(me)) return; const id = ids[j];
+        out.set(String(id) + c.slug, { chain: 'solana', contract: pda([te.encode('Asset'), hex32(cid), le32(id)]).toBase58(), id: String(id), name: p.name || `${c.name} #${id}`, image: `/img/${c.slug}/s/${id}.webp`, standard: 'mpl-core', collection: c.slug, msSlug: c.slug, href: `/c/${c.slug}?item=${id}` }); });
+    }
+  } catch { notes.push('Couldn’t load MultiSea Solana NFTs; refresh to retry.'); }
   // 2. Recent history: Core accounts touched by the wallet's last transactions that it still owns
   try {
     const sigs = await solConn.getSignaturesForAddress(me, { limit: HISTORY });

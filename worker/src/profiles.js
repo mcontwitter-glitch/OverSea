@@ -1,4 +1,6 @@
 import { makeWalletNfts } from './walletnfts.js';
+import { makeSolWalletNfts } from './solwalletnfts.js';
+import { SOL_ADDR } from './solanalink.js';
 import { rawSlug, isHexCode, reserveSlug, slugTakenByOther } from './refslug.js';
 const MEDIA = /^\/media\/[0-9a-f]{64}\.(webp|png|jpg|gif)$/;
 const NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,23}$/u;
@@ -57,9 +59,13 @@ export function makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, os
     return { nfts: [], next: null, error: 'unavailable' };
   }
   const walletNfts = makeWalletNfts({ CFG, rpcFanout, accountNfts, bad, ADDR });
+  const solWalletNfts = makeSolWalletNfts({ CFG, rpcFanout, bad });
   return {
     one,
     async handle(req, env, url, p, M, body) {
+      if (p[0] === 'wallet' && p[2] === 'nfts' && p.length === 3 && M === 'GET' && SOL_ADDR.test(p[1]) && !ADDR.test(p[1])) {
+        return solWalletNfts(req, env, url, p, M);
+      }
       const gallery = await walletNfts(req, env, url, p, M); if (gallery !== undefined) return gallery;
       if (p[0] === 'profiles' && M === 'GET') {
         const addresses = (url.searchParams.get('addresses') || '').split(',').filter(Boolean);

@@ -4,9 +4,13 @@
 // surfaced as HTTP 500 and a Chrome "Failed to load resource" line). Heavy methods get a longer timeout;
 // if every URL still fails the proxy returns a JSON-RPC error body with HTTP 200 so the page can fall
 // back to publicnode from the browser without a console 500.
+// Use the same fallback list as "Turn Solana on" (solswitch.js solRpcList): publicnode rate-limits
+// Cloudflare IPs (HTTP 429) and api.mainnet-beta.solana.com often 403s them, which made the profile's
+// Solana NFT scan (many getMultipleAccounts) return nothing.
 import { rpcRace } from './rpcrace.js';
+import { solRpcList } from './solswitch.js';
 
-export const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
+export const SOL_RPCS = solRpcList({ solana: { rpc: 'https://solana-rpc.publicnode.com' } });
 export const SOL_HEAVY = new Set(['getMultipleAccounts', 'getProgramAccounts', 'getTransaction', 'getBlock', 'getBlocks']);
 export const SOL_HEAVY_TIMEOUT_MS = 8000, SOL_HEAVY_HEDGE_MS = 600;
 export const SOL_READ = new Set([
