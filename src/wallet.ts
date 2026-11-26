@@ -3,6 +3,8 @@ import { createWalletClient, createPublicClient, custom, http, fallback, defineC
 import CFG from '../config/collections.json';
 import APP from '../config/app.json';
 import { embeddedConfigured } from './embedded';
+import { unauthorized, authHint, unlockAccount, switchOrAddChain } from './walletauth';
+export { unauthorized, authHint };
 import { sol } from './solconnect';
 import { solConnectSection, bindSolConnectSection, solMenuBlock, openSolMenu, initSol } from './solmenu';
 
@@ -190,18 +192,17 @@ export function bulkClient(k: string) {
   const c = chains[k]; const direct: string[] = c.rpcs?.length ? c.rpcs : [c.rpc];
   return (bulkCache[k] = createPublicClient({ chain: vchain(k), transport: fallback(direct.slice(0, 3).map(u => http(u, { timeout: 15_000, retryCount: 1 }))) }));
 }
+/** Authorized account from the injected wallet (eth_requestAccounts / permissions). Never a guessed or token-bound address. */
+export async function ensureAccount(): Promise<`0x${string}`> {
+  if (!wallet.provider) throw new Error('Connect your wallet first.');
+  const addr = await unlockAccount(wallet.provider);
+  if (wallet.address?.toLowerCase() !== addr.toLowerCase()) { wallet.address = addr; emit(); }
+  return addr as `0x${string}`;
+}
 export async function ensureChain(k: string) {
-  const c = chains[k]; const hex = '0x' + c.chainId.toString(16);
-  const cur = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16);
-  if (cur === c.chainId) return;
-  try { await wallet.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
-  catch (e: any) {
-    if (e?.code === 4902 || /unrecognized|not added|unknown chain/i.test(e?.message || '')) {
-      await wallet.provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: c.name, nativeCurrency: { name: c.native, symbol: c.native, decimals: 18 }, rpcUrls: [c.rpc], blockExplorerUrls: [c.explorer] }] });
-    } else throw e;
-  }
-  const now = parseInt(await wallet.provider.request({ method: 'eth_chainId' }), 16);
-  if (now !== c.chainId) throw Object.assign(new Error(`Please switch your wallet to ${c.name}.`), { kind: 'wrong-chain' });
+  if (!wallet.provider) throw new Error('Connect your wallet first.');
+  const c = chains[k];
+  await switchOrAddChain(wallet.provider, { chainId: c.chainId, name: c.name, native: c.native, rpc: c.rpc, explorer: c.explorer });
 }
 
 // ---- buy ----
@@ -249,6 +250,7 @@ export function friendly(e: any, chainKey?: string): string {
   if (!(e?.code === 4001) && !/user rejected|denied/i.test(full) && (RPC_FAIL.test(full) || e?.name === 'HttpRequestError' || e?.name === 'TimeoutError' || /ContractFunctionExecutionError/.test(String(e?.name)) && RPC_FAIL.test(String(e?.cause?.message || e?.cause?.shortMessage || '')))) {
     const n = (chainKey && chains[chainKey]?.name) || chainOfErr(e, full); return `Couldn't reach the ${n || 'blockchain'} network. Please try again in a moment.`;
   }
+  if (unauthorized(e) || /not been authorized by the user/i.test(full)) return authHint((chainKey && chains[chainKey]?.name) || chainOfErr(e, full));
   if (e?.code === 4001 || /user rejected|denied|rejected the request/i.test(m)) return 'You rejected the request in your wallet.';
   { const r = revertReason(e); if (r) return r; }
   if (/insufficient funds|exceeds balance/i.test(m)) return 'Insufficient funds for price + gas on this chain.';

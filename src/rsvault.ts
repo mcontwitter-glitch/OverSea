@@ -6,7 +6,8 @@
 import { createWalletClient, custom, formatEther, type Hex, type Address } from 'viem';
 import CFG from '../config/collections.json';
 import ART from '../config/revshare-artifact.json';
-import { wallet, bulkClient, ensureChain, vchain, friendly } from './wallet';
+import { wallet, bulkClient, ensureAccount, ensureChain, vchain, friendly, unauthorized, authHint } from './wallet';
+import { ISLAND_CHAINS, islandTba, islandWallet2 } from './islandkit';
 
 export const FACTORIES: Record<string, string> = ((CFG as any).revshareVaults?.factories || {}) as Record<string, string>;
 export const hasFactories = () => Object.keys(FACTORIES).length > 0;
@@ -20,7 +21,17 @@ const VAULT_VIEWS = ['totalDeposited', 'totalClaimed', 'totalPending', 'dust', '
 const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export const fe = (v: bigint, max = 6) => Number(formatEther(v)).toLocaleString(undefined, { maximumFractionDigits: max });
 export const rejected = (e: any) => e?.code === 4001 || e?.cause?.code === 4001 || /user rejected|user denied|rejected in wallet|denied transaction/i.test(String(e?.shortMessage || e?.message || e || ''));
-export const errText = (e: any, k?: string) => rejected(e) ? 'Rejected in wallet.' : (friendly(e, k) || e?.shortMessage || e?.message || String(e));
+export const errText = (e: any, k?: string) => rejected(e) ? 'Rejected in wallet.' : unauthorized(e) ? authHint(k ? chains[k]?.name : undefined) : (friendly(e, k) || e?.shortMessage || e?.message || String(e));
+/** True when `addr` is an Island's ERC-6551 / one-address token wallet, not the holder EOA that ownerOf returns. */
+function isIslandTokenWallet(addr: string, ids: number[]): boolean {
+  const lo = addr.toLowerCase();
+  for (const id of ids) {
+    if (islandWallet2(id).toLowerCase() === lo) return true;
+    for (const k of ISLAND_CHAINS) if (islandTba(k, id).toLowerCase() === lo) return true;
+  }
+  return false;
+}
+const HOLDER_NOT_TBA = "Connect the wallet that holds the Island (your regular holder wallet), not the Island's token wallet. The claim is paid to the holder wallet.";
 /** Read-path errors: never surface a wallet permission / 4100 message; other chain rows are unaffected. */
 const reachErr = (k: string) => `Couldn't reach ${chains[k]?.name || k}, retry`;
 
@@ -53,15 +64,19 @@ export async function pendingFor(k: string, vault: string, ids: number[]): Promi
   return await bulkClient(k).readContract({ address: vault as Address, abi: VAULT_ABI, functionName: 'pending', args: [ids.map(BigInt)] } as any) as bigint;
 }
 
-/** Claim for the connected holder: simulated on-chain first (the wallet is not prompted if it would fail), then signed. */
+/** Claim for the connected holder EOA: simulated on public RPCs first, then signed by that EOA (msg.sender = ownerOf).
+ *  Never sends from an Island ERC-6551 / token wallet — the vault pays msg.sender, which must be the holder wallet. */
 export async function claimVault(k: string, vault: string, ids: number[]): Promise<{ hash: Hex }> {
-  const me = wallet.address as Address | null; if (!me || !wallet.provider) throw new Error('Connect your wallet first.');
+  if (!wallet.provider) throw new Error('Connect your wallet first.');
+  await ensureAccount();
   await ensureChain(k);
+  const me = await ensureAccount();
+  if (isIslandTokenWallet(me, ids)) throw new Error(HOLDER_NOT_TBA);
   const pc = bulkClient(k); const req = { address: vault as Address, abi: VAULT_ABI, functionName: 'claim', args: [ids.map(BigInt)], account: me } as any;
   try { await pc.simulateContract(req); } catch (e: any) { throw new Error(`This claim would fail (${String(friendly(e, k) || e?.shortMessage || e?.message || '').split('\n')[0].slice(0, 160)}). Nothing was sent.`); }
   const est = await pc.estimateContractGas(req).catch(() => 250_000n);
-  const wc = createWalletClient({ chain: vchain(k), transport: custom(wallet.provider) });
-  const hash = await wc.writeContract({ ...req, chain: vchain(k), gas: est * 13n / 10n + 20_000n });
+  const wc = createWalletClient({ chain: vchain(k), account: me, transport: custom(wallet.provider) });
+  const hash = await wc.writeContract({ ...req, account: me, chain: vchain(k), gas: est * 13n / 10n + 20_000n });
   const rc = await pc.waitForTransactionReceipt({ hash }); if (rc.status !== 'success') throw new Error('Claim reverted.');
   return { hash };
 }
