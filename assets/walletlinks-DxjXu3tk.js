@@ -1,1 +1,0 @@
-export{I as profileWallets}from"./wallet-2_ZlPIZW.js";

@@ -1,1 +1,0 @@
-export{O as openSolConnect}from"./wallet-2_ZlPIZW.js";
