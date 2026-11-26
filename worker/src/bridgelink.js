@@ -16,3 +16,30 @@ export function makeLinkBridge({ chains, lc, saveCollectionPatch }) {
     return null;
   };
 }
+
+// A creator who only pays the bridge listing on /submit (no collection form) has no collection record, so the finished bridge never shows on the
+// marketplace. The factory only lets the contract's owner() list, so a finished bridge job IS an owner-verified listing: publish it as an approved
+// collection (source 'bridge-listing') and merge the mirrors. Skips anything already covered by a collection or a pending submission (those keep
+// their own review / link path), so it is idempotent and safe to run from the cron and after every job.
+export function makePublishBridged({ lc, linkBridge }) {
+  return async function publishBridged(env, only) {
+    const K = env.COLLECTIONS; const out = [];
+    const keys = async prefix => { const names = []; let cursor; do { const l = await K.list({ prefix, cursor }); names.push(...l.keys.map(k => k.name)); cursor = l.list_complete ? undefined : l.cursor; } while (cursor); return names; };
+    const cols = (await Promise.all((await keys('col:')).map(n => K.get(n, 'json')))).filter(Boolean);
+    const pend = (await Promise.all((await keys('pending:')).map(n => K.get(n, 'json')))).filter(Boolean);
+    const known = new Set([...cols, ...pend].flatMap(c => (c.deployments || []).map(d => d.chain + ':' + lc(d.address))));
+    const slugs = new Set(cols.map(c => c.slug));
+    for (const name of only ? ['bcol:' + only] : await keys('bcol:')) {
+      const bc = await K.get(name, 'json'); if (!bc?.slug || !bc.native) continue;
+      const nft = lc(bc.contracts?.[bc.native]); if (!nft) continue;
+      if (slugs.has(bc.slug) || known.has(bc.native + ':' + nft)) continue;
+      const job = await K.get('bjob:' + bc.slug, 'json'); if (!job?.direct) continue; // launchpad drops get their collection from the launchpad
+      const esc = bc.escrows?.[bc.native];
+      const col = { slug: bc.slug, name: bc.name, description: '', logo: '', banner: '', deployments: [{ chain: bc.native, address: nft }], escrow: esc ? [{ chain: bc.native, address: lc(esc), label: 'MultiSea bridge escrow' }] : [],
+        submitter: job.owner, status: 'approved', approvedAt: new Date().toISOString(), source: 'bridge-listing' };
+      await K.put('col:' + bc.slug, JSON.stringify(col)); await K.put('idx:' + bc.native + ':' + nft, bc.slug);
+      await linkBridge(env, bc.slug, col); slugs.add(bc.slug); out.push(bc.slug);
+    }
+    return out;
+  };
+}
