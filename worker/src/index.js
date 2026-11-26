@@ -16,6 +16,7 @@ import { makeBridgeAuto } from './bridgeauto.js';
 import { kput } from './kvput.js';
 import { makeLinkBridge, makePublishBridged } from './bridgelink.js';
 import { makeBridgeEnrich, isBridgedCol } from './bridgeenrich.js';
+import { makeListingImages } from './listingimg.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
@@ -252,7 +253,7 @@ async function osSlugFor(env, chainKey, contract) {
   const r = await osFetch(env, `/chain/${os}/contract/${contract}`); const j = await r.json().catch(() => ({}));
   if (j.collection) slugCache.set(k, j.collection); return j.collection || null;
 }
-async function osListings(env, col) {
+async function osListings(env, col, ctx) {
   const out = [];
   for (const d of col.deployments || []) {
     const s = await osSlugFor(env, d.chain, d.address); if (!s) continue;
@@ -275,7 +276,7 @@ async function osListings(env, col) {
       if (!cursor) break;
     }
   }
-  return out;
+  return listingImages().enrich(env, col, out, ctx);
 }
 async function osStats(env, col) {
   const per = {};
@@ -332,6 +333,7 @@ async function bustListings(contract, key) {
   for (const s of slugs) {
     await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
     await caches.default.delete(new Request('https://cache.multisea/l2:' + s)).catch(() => {});
+    await caches.default.delete(new Request('https://cache.multisea/l3:' + s)).catch(() => {});
   }
 }
 
@@ -366,6 +368,7 @@ const launchpad = env => env?.LP_NETWORK === 'testnet'
 const linkBridge = (...a) => makeLinkBridge({ chains, lc, saveCollectionPatch })(...a);
 const publishBridged0 = (...a) => makePublishBridged({ lc, linkBridge })(...a);
 let _be; const bridgeEnrich = () => (_be ??= makeBridgeEnrich({ chains, lc, osFetch, osSlugFor, rpcCall, isStatic: s => !!STATIC[s] }));
+let _li; const listingImages = () => (_li ??= makeListingImages({ chains, lc, osFetch, rpcCall }));
 // Publish finished bridge listings, then fill what Island's-style pages need (OpenSea slugs, logo/banner/description, id range).
 const publishBridged = async (env, only) => { const r = await publishBridged0(env, only); await bridgeEnrich().enrichAll(env, { only, force: !!only || r.length > 0 }).catch(e => console.log('bridge enrich', e?.message)); return r; };
 // Bridge-listed KV collection (not a static one) for activity / owners / holder chat.
@@ -724,7 +727,7 @@ async function handle(req, env, url, ctx) {
   if (M === 'GET' && p[0] === 'os' && p.length === 3) {
     if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
     const col = await getCollection(env, p[1]); if (!col || col.status !== 'approved') bad('not found', 404);
-    if (p[2] === 'listings') return listingJson({ listings: await cached(`l2:${p[1]}`, LISTING_TTL, () => osListings(env, col), LISTING_SWR, ctx) });
+    if (p[2] === 'listings') return listingJson({ listings: await cached(`l3:${p[1]}`, LISTING_TTL, () => osListings(env, col, ctx), LISTING_SWR, ctx) });
     if (p[2] === 'stats') return { stats: await cached(`s:${p[1]}`, 300, () => osStats(env, col)) };
     if (p[2] === 'items') { const ch = url.searchParams.get('chain') || ''; const nx = url.searchParams.get('next') || ''; if (nx.length > 400) bad('bad cursor'); return await cached(`i:${p[1]}:${ch}:${nx}`, 600, () => osItems(env, col, ch, nx)); }
   }
