@@ -256,11 +256,23 @@ async function osListings(env, col) {
   const out = [];
   for (const d of col.deployments || []) {
     const s = await osSlugFor(env, d.chain, d.address); if (!s) continue;
-    const j = await (await osFetch(env, `/listings/collection/${s}/all?limit=100`)).json().catch(() => ({}));
-    for (const l of j.listings || []) {
-      const offer = l.protocol_data?.parameters?.offer?.[0]; const p = l.price?.current; if (!offer || !p) continue;
-      if (lc(offer.token) !== lc(d.address)) continue;
-      out.push({ chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(p.value) / 10 ** p.decimals, currency: p.currency, orderHash: l.order_hash, protocolAddress: l.protocol_address, seller: lc(l.protocol_data?.parameters?.offerer) || undefined });
+    let cursor = '';
+    for (let page = 0; page < 20; page++) {
+      const r = await osFetch(env, `/listings/collection/${s}/all?limit=100${cursor ? '&next=' + encodeURIComponent(cursor) : ''}`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) break;
+      for (const l of j.listings || []) {
+        const offer = l.protocol_data?.parameters?.offer?.[0]; const p = l.price?.current; if (!offer || !p) continue;
+        if (lc(offer.token) !== lc(d.address)) continue;
+        const row = { chain: d.chain, id: Number(offer.identifierOrCriteria), price: Number(p.value) / 10 ** p.decimals, currency: p.currency, orderHash: l.order_hash, protocolAddress: l.protocol_address, seller: lc(l.protocol_data?.parameters?.offerer) || undefined };
+        const img = l.display_image_url || l.image_url || l.asset?.display_image_url || l.asset?.image_url;
+        const name = l.asset?.name || l.item?.name;
+        if (img) row.image = img;
+        if (name) row.name = name;
+        out.push(row);
+      }
+      cursor = j.next || '';
+      if (!cursor) break;
     }
   }
   return out;
@@ -317,7 +329,10 @@ function cleanOrder(o) {
 }
 async function bustListings(contract, key) {
   const slugs = CFG.collections.filter(c => c.deployments.some(d => d.chain === key && lc(d.address) === lc(contract))).map(c => c.slug);
-  for (const s of slugs) await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
+  for (const s of slugs) {
+    await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
+    await caches.default.delete(new Request('https://cache.multisea/l2:' + s)).catch(() => {});
+  }
 }
 
 // ---------- fees helpers ----------
@@ -709,7 +724,7 @@ async function handle(req, env, url, ctx) {
   if (M === 'GET' && p[0] === 'os' && p.length === 3) {
     if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
     const col = await getCollection(env, p[1]); if (!col || col.status !== 'approved') bad('not found', 404);
-    if (p[2] === 'listings') return listingJson({ listings: await cached(`l:${p[1]}`, LISTING_TTL, () => osListings(env, col), LISTING_SWR, ctx) });
+    if (p[2] === 'listings') return listingJson({ listings: await cached(`l2:${p[1]}`, LISTING_TTL, () => osListings(env, col), LISTING_SWR, ctx) });
     if (p[2] === 'stats') return { stats: await cached(`s:${p[1]}`, 300, () => osStats(env, col)) };
     if (p[2] === 'items') { const ch = url.searchParams.get('chain') || ''; const nx = url.searchParams.get('next') || ''; if (nx.length > 400) bad('bad cursor'); return await cached(`i:${p[1]}:${ch}:${nx}`, 600, () => osItems(env, col, ch, nx)); }
   }
