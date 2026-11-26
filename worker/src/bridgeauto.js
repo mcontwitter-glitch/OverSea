@@ -6,7 +6,7 @@
 // /bridge/direct (verified against the on-chain Listed event) and a cron scan of recent Listed logs is the backstop. Those jobs start at
 // the `refuel` step (the escrow already exists), read name/symbol/baseURI/supply from the NFT, and PAUSE visibly (job.waiting / job.hold)
 // instead of failing when the operator lacks gas on a chain or the token range is unclear.
-import { createPublicClient, createWalletClient, http, parseAbi, parseEventLogs, keccak256, toBytes, pad, defineChain, formatEther } from 'viem';
+import { createPublicClient, createWalletClient, http, fallback, parseAbi, parseEventLogs, keccak256, toBytes, pad, defineChain, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 const FAC = parseAbi([
@@ -32,15 +32,18 @@ const NOGAS = /insufficient funds|exceeds the balance|gas required exceeds allow
 const lc = s => String(s || '').toLowerCase();
 const MAX_TX_PER_RUN = 8, MAX_TRIES = 6;
 
-export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fetchImpl = fetch, clients, onPublish, now = () => Date.now() } = {}) {
+export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fetchImpl = fetch, clients, rpcsFor, onPublish, now = () => Date.now() } = {}) {
   let cfgP = null;
   const cfg = () => (cfgP ??= fetchImpl(cfgUrl, { cf: { cacheTtl: 300 } }).then(r => r.json()).catch(e => { cfgP = null; throw e; }));
   const keyByEid = (c, eid) => Object.keys(c.chains).find(k => c.chains[k].eid === Number(eid));
   const mk = clients || ((c, k, pk) => {
     const ch = c.chains[k];
     const chain = defineChain({ id: ch.chainId, name: ch.name, nativeCurrency: { name: ch.native, symbol: ch.native, decimals: 18 }, rpcUrls: { default: { http: [ch.rpc] } } });
-    const pub = createPublicClient({ chain, transport: http(ch.rpc, { timeout: 15000, retryCount: 2 }) });
-    const wal = pk ? createWalletClient({ chain, account: privateKeyToAccount(pk), transport: http(ch.rpc, { timeout: 15000, retryCount: 2 }) }) : null;
+    // Public RPCs often answer 429 to Cloudflare Worker egress (Robinhood's own RPC always does), so fall through a list of endpoints.
+    const urls = [...new Set([...(rpcsFor?.(k) || []), ch.rpc])];
+    const transport = () => urls.length > 1 ? fallback(urls.map(u => http(u, { timeout: 10000, retryCount: 0 })), { retryCount: 1 }) : http(ch.rpc, { timeout: 15000, retryCount: 2 });
+    const pub = createPublicClient({ chain, transport: transport() });
+    const wal = pk ? createWalletClient({ chain, account: privateKeyToAccount(pk), transport: transport() }) : null;
     return { pub, wal };
   });
 

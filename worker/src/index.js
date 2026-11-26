@@ -347,7 +347,7 @@ const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet, resnapAuto }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr), resnapAuto }));
 const linkBridge = (...a) => makeLinkBridge({ chains, lc, saveCollectionPatch })(...a);
-let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto({ onPublish: async (env, job) => { const slug = await env.COLLECTIONS.get('idx:' + job.native + ':' + job.nft); if (slug) await linkBridge(env, slug); } }));
+let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto({ rpcsFor: k => chains[k]?.rpcs, onPublish: async (env, job) => { const slug = await env.COLLECTIONS.get('idx:' + job.native + ':' + job.nft); if (slug) await linkBridge(env, slug); } }));
 // EVM message check shared with SIWE: EOA first, then ERC-1271 smart wallets on each chain.
 async function verifyEvmMessage(address, message, signature) {
   if (await verifyMessage({ address, message, signature }).catch(() => false)) return true;
