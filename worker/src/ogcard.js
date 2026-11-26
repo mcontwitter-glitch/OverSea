@@ -84,11 +84,43 @@ async function logoSvg(c) {
 }
 const fit = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
+function dataUriBuf(s) {
+  const i = s.indexOf(',');
+  if (i < 0) return null;
+  const t = s.slice(5, i).split(';')[0];
+  const bin = atob(s.slice(i + 1));
+  const u = new Uint8Array(bin.length);
+  for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j);
+  return { t, buf: u.buffer };
+}
+// resvg paints PNG/JPEG only. Convert a data URI (R2 avatars are often WebP) or fetch a URL.
+async function embedAvatar(avatar, partial) {
+  if (!avatar) return '';
+  const s = String(avatar);
+  if (s.startsWith('data:')) {
+    try {
+      const d = dataUriBuf(s); if (!d) return '';
+      const head = new Uint8Array(d.buf, 0, Math.min(64, d.buf.byteLength));
+      if (d.t === 'image/gif' || (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46)) return '';
+      if (d.t === 'image/webp' || new TextDecoder().decode(head.subarray(8, 12)) === 'WEBP') {
+        if ((String.fromCharCode(...head.subarray(30, 34)) === 'ANIM') || (String.fromCharCode(...head.subarray(12, 16)) === 'VP8X' && (head[20] & 2))) {
+          const f = firstFrame(new Uint8Array(d.buf));
+          if (f) return `data:image/png;base64,${b64(await webpToPng(f, 200))}`;
+        }
+        return `data:image/png;base64,${b64(await webpToPng(d.buf, 200))}`;
+      }
+      return s;
+    } catch { return ''; }
+  }
+  return dataUri(s, 86400, 200, partial);
+}
+
 // d: { name, sub?, floor, chains[], banner?, avatar?, tiles[] (urls), item? { name, image, color? }, referral? }
 export async function renderCard(d) {
   if (d.referral) {
-    const avatar = d.avatar && String(d.avatar).startsWith('data:') ? d.avatar : await dataUri(d.avatar, 86400, 200, d.partial);
-    d.ok = true; // monogram fills in when there is no picture
+    const wanted = !!d.avatar;
+    const avatar = await embedAvatar(d.avatar, d.partial);
+    d.ok = !wanted || !!avatar; // false if the profile had a picture that failed to load
     return renderSvg(refCardSvg({ name: d.name, avatar }));
   }
   const [banner, avatar, itemImg, ...rest] = await Promise.all([

@@ -126,7 +126,7 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     return page({ title: `${d.name || slug} · Mint on MultiSea`, desc: mi.desc, image, target });
   }
   function refImg(token, prof) {
-    const f = hash('r2|' + token + '|' + (prof?.name || '') + '|' + (prof?.avatar || ''));
+    const f = hash('r3|' + token + '|' + (prof?.name || '') + '|' + (prof?.avatar || ''));
     return `${API}/s/og/r/${encodeURIComponent(token)}.png?f=${f}`;
   }
   async function ogRef(env, url, token) {
@@ -137,7 +137,10 @@ export function makeShare({ getCollection, STATIC, osStats, cached }) {
     if (stored) { const res = new Response(stored, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } }); await cache.put(key, res.clone()); return res; }
     try {
       const prof = await refProfile(env, token);
-      const png = await renderCard({ referral: true, name: prof?.name || 'MultiSea', avatar: await avatarUri(env, prof?.avatar || ''), partial: true });
+      const opts = { referral: true, name: prof?.name || 'MultiSea', avatar: await avatarUri(env, prof?.avatar || ''), partial: true };
+      const png = await renderCard(opts);
+      // Don't pin a blank-avatar card in KV/edge cache for 30 days — a transient load failure would stick.
+      if (!opts.ok) return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=60' } });
       await env.COLLECTIONS.put(kvKey, png, { expirationTtl: 2592000 }).catch(() => {});
       const res = new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=600' } });
       await cache.put(key, res.clone()); return res;
