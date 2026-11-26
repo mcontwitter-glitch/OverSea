@@ -103,7 +103,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     const q = s.quote; const tot = q ? q.p + q.lz : 0n;
     el.innerHTML = `<div class="bridge">
      <div class="bhead"><div><h2>Bridge</h2><p class="mut">Move an NFT between chains. It's locked in the escrow contract on the source chain and released from the escrow on the destination by a LayerZero v2 message.</p></div><span class="tnet">${esc(cfg.network)}${cfg.mode === 'fork' ? ' · preview' : ''}</span></div>
-     ${cols.length > 1 ? `<label class="bl">Collection<select data-k="col">${cols.map((c, i) => `<option value="${i}" ${i === s.col ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>` : `<div class="bcol"><img src="${C().img}1.webp" alt=""><b>${esc(C().name)}</b><span class="mut small">${keys(s.col).length} chains</span></div>`}
+     ${cols.length > 1 ? `<label class="bl">Collection<select data-k="col">${cols.map((c, i) => `<option value="${i}" ${i === s.col ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>` : `<div class="bcol"><img src="${C().img ? C().img + "1.webp" : ""}" alt=""><b>${esc(C().name)}</b><span class="mut small">${keys(s.col).length} chains</span></div>`}
      <div class="bft"><label class="bl">From<div class="bsel">${lg(s.from)}<select data-k="from">${chainOpt(s.from, s.to)}</select></div></label>
       <button class="bswap" data-act="swap" title="Swap" aria-label="Swap chains">⇄</button>
       <label class="bl">To<div class="bsel">${lg(s.to)}<select data-k="to">${chainOpt(s.to, s.from)}</select></div></label></div>
@@ -111,7 +111,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
      <div class="gh">Your NFTs on ${esc(cfg.chains[s.from].name)}</div>
      <div class="bnfts">${isSol(s.from) && !solMe() ? `<div class="bempty"><p class="mut">Connect your Solana wallet to see your NFTs on Solana.</p><button class="bbtn" data-act="solconnect">Connect Phantom, Solflare…</button></div>`
        : !isSol(s.from) && !wallet.address ? `<div class="bempty"><p class="mut">Connect your wallet to see your NFTs.</p><button class="bbtn" data-act="connect">Connect wallet</button></div>`
-       : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img}${id}.webp" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')
+       : s.loading ? '<div class="spin"></div>' : s.ids.length ? s.ids.map(id => `<button class="bnft ${s.sel === id ? 'on' : ''}" data-id="${id}"><img src="${C().img ? C().img + id + ".webp" : ""}" alt="" loading="lazy" width="96" height="96"><span>#${id}</span></button>`).join('')
        : `<p class="mut">No ${esc(C().name)} NFTs in this wallet on ${esc(cfg.chains[s.from].name)}.</p>`}</div>
      <label class="bl">Recipient on ${esc(cfg.chains[s.to].name)}<input data-k="recip" placeholder="${esc(isSol(s.to) ? solMe() || 'Solana address' : wallet.address || '0x…')}" value="${esc(s.recip)}"></label>
      ${picksHtml()}

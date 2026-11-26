@@ -9,38 +9,52 @@ import { logo } from './gx';
 import { parseAbi, type Hex } from 'viem';
 import type { LiveStats } from './liveowners';
 import { imageSrc } from './datauri';
+import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string; openseaSlug: string | null; explorer?: string }>;
 const slug = location.pathname.split('/')[2];
 let col: any = null, stats: Record<string, any> = {}, listings: any[] = [], items: any[] = [], next: string | null = null, chain = '', editable = false, founder = false, state = 'loading';
+let view: 'items' | 'chains' | 'bridge' = 'items';
+let bridgeEl: HTMLElement | null = null;
 let chainStats: LiveStats | null = null, chainStatsAt: number | null = null, chainStatsFailed: string[] = [];
 const fmt = (n: number) => (n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(4)).toString());
 const lmap = () => { const m = new Map<string, any>(); listings.forEach(l => { const k = l.chain + ':' + l.id; const c = m.get(k); if (!c || l.price < c.price) m.set(k, l); }); return m; };
 let dynUsd: number | null = null; ethUsdRate().then(r => { if (r) { dynUsd = r; render(); } });
+function canBridge() { return !!(col && (col.source === 'bridge-listing' || col.source === 'launchpad' || ((col.escrow || []).length && (col.deployments || []).length > 1))); }
 function render() {
   if (state !== 'ok') { app.innerHTML = `${navHtml()}<section class="page">${state === 'offline' ? soon('This collection page') : state === 'missing' ? '<h2>Collection not found</h2><p><a href="/">Back to collections</a></p>' : '<div class="spin"></div> Loading…'}</section>`; return; }
   const v = Object.values(stats); const L = lmap();
   const vol = v.reduce((a, x) => a + (x.volume || 0), 0), own = v.reduce((a, x) => a + (x.num_owners || 0), 0);
   const fl = listings.filter(l => /^W?ETH$/.test(l.currency)).sort((a, b) => a.price - b.price)[0];
+  const avatar = media(col.logo) || imageSrc(items[0]?.image) || '';
+  const itemsHtml = `<div class="chips dchips">${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>
+  <div class="content">${listings.length ? '<div class="bar"><button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button></div>' : ''}
+  <div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${imageSrc(it.image) ? `<img src="${esc(imageSrc(it.image))}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
+  ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</div>`;
   app.innerHTML = `${navHtml()}
   <div class="banner ${col.banner ? 'has-img' : ''}" style="${col.banner ? `background-image:url(${esc(media(col.banner))})` : ''}"><div class="banner-fade"></div>
-   <div class="hero2"><img class="avatar" src="${esc(media(col.logo))}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
+   <div class="hero2"><img class="avatar" src="${esc(avatar)}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${listings.length}</b><span>Listings</span></div>${(() => { const sup = v.reduce((a, x) => a + (x.total_supply || 0), 0) || col.supply || 0; return mcapStatHtml(mcapUsd(fl?.price, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
-  <div class="chips dchips">${listings.length ? '<button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button>' : ''}${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}</button>`).join('')}</div>
-  <div class="content"><div class="grid">${items.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${imageSrc(it.image) ? `<img src="${esc(imageSrc(it.image))}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
-  ${next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}${chainsBlock()}</div>`;
+  <div class="tabs"><button data-tab="items" class="${view === 'items' ? 'on' : ''}">Items</button><button data-tab="chains" class="${view === 'chains' ? 'on' : ''}">Chains</button>${canBridge() ? `<button data-tab="bridge" data-bridge-flag hidden class="${view === 'bridge' ? 'on' : ''}">Bridge</button>` : ''}</div>
+  ${view === 'items' ? itemsHtml : view === 'chains' ? `<div class="content">${chainsBlock()}</div>` : '<div class="content"><div id="bridgebox"></div></div>'}`;
+  applyBridgeFlag();
+  if (view === 'bridge') {
+    const box = document.getElementById('bridgebox')!;
+    if (bridgeEl) { box.replaceWith(bridgeEl); return; }
+    bridgeEl = box; bridgeEnabled().then(on => { if (!on) { bridgeEl = null; view = 'items'; render(); return; } import('./bridgekit').then(b => b.mountBridge(bridgeEl!, { slug: col.slug || slug })); });
+  }
 }
-function isLiveCountsCol() { return !!(col?.escrow?.length || col?.source === 'launchpad' || col?.mode === 'multichain'); }
+function isLiveCountsCol() { return !!(col?.escrow?.length || col?.source === 'launchpad' || col?.source === 'bridge-listing' || col?.mode === 'multichain'); }
 function chainsBlock() {
-  if (!isLiveCountsCol() || !col?.deployments?.length) return '';
+  if (!col?.deployments?.length) return '';
   const at = chainStatsAt ? `; ownership and live counts read from chain (ownerOf) at ${new Date(chainStatsAt).toLocaleTimeString()}` : '';
   return `<div class="ctab">${col.deployments.map((d: any) => {
     const st = chainStats?.[d.chain]; const failed = chainStatsFailed.includes(d.chain);
     const c = chains[d.chain];
     return `<div class="cc">${logo(d.chain, 'cl lg')}<div><h3>${esc(c?.name || d.chain)}</h3>
       ${c?.explorer ? `<a class="mono" href="${c.explorer}/address/${d.address}" target="_blank" rel="noopener">${esc(d.address)}</a>` : `<span class="mono">${esc(d.address)}</span>`}
-      ${st ? `<div class="kv"><span>Held (ownerOf)</span><b>${st.held}</b><span>In vault/escrow</span><b>${st.inEscrow}</b><span>Live on chain</span><b>${st.live}</b><span>Holders</span><b>${st.holders}</b></div>` : `<div class="mut">${failed ? 'Could not read this chain' : 'Reading live counts…'}</div>`}
+      ${st ? `<div class="kv"><span>Held (ownerOf)</span><b>${st.held}</b><span>In vault/escrow</span><b>${st.inEscrow}</b><span>Live on chain</span><b>${st.live}</b><span>Holders</span><b>${st.holders}</b></div>` : `<div class="mut">${failed ? 'Could not read this chain' : isLiveCountsCol() ? 'Reading live counts…' : ''}</div>`}
     </div></div>`;
   }).join('')}<p class="mut small">Vault/escrow addresses excluded from holders${at}.</p></div>`;
 }
@@ -56,7 +70,8 @@ async function refreshEditable() {
 }
 app.addEventListener('click', e => {
   const t = e.target as HTMLElement;
-  const c = t.closest('[data-chain]') as HTMLElement; if (c) { chain = c.dataset.chain!; loadItems(true); return; }
+  const tab = t.closest('[data-tab]') as HTMLElement; if (tab) { view = tab.dataset.tab as typeof view; render(); return; }
+  const c = t.closest('[data-chain]') as HTMLElement; if (c) { chain = c.dataset.chain!; view = 'items'; loadItems(true); return; }
   const a = t.closest('[data-act]') as HTMLElement;
   if (a?.dataset.act === 'more') loadItems();
   if (a?.dataset.act === 'sweep') { const L = lmap(); const me = wallet.address?.toLowerCase(); const ci = [...L.values()].filter(l => chains[l.chain]?.openseaSlug && (!l.seller || l.seller.toLowerCase() !== me)).map(l => { const dep = col.deployments.find((x: any) => x.chain === l.chain); const it = items.find(x => x.chain === l.chain && x.id === l.id); return dep ? { key: `${l.chain}:${dep.address.toLowerCase()}:${l.id}`, chain: l.chain, contract: dep.address, id: l.id, name: it?.name || `${col.name} #${l.id}`, img: it?.image || '', price: l.price, currency: l.currency, source: l.source || 'opensea', orderHash: l.orderHash, protocolAddress: l.protocolAddress, slug } : null; }).filter(Boolean); import('./cart').then(c => c.openSweep(ci as any, col.name)); return; }
