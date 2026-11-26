@@ -15,6 +15,7 @@ import { verifySolanaSetup } from './solswitch.js';
 import { makeBridgeAuto } from './bridgeauto.js';
 import { kput } from './kvput.js';
 import { makeLinkBridge, makePublishBridged } from './bridgelink.js';
+import { makeBridgeEnrich, isBridgedCol } from './bridgeenrich.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
@@ -348,7 +349,13 @@ const launchpad = env => env?.LP_NETWORK === 'testnet'
   ? (_launchpadT ??= makeLaunchpad({ LP: { ...LP, ...LPT0.worker, approver: LPT0.worker.approver ?? LPT0.approver ?? null, platformFeeBps: LPT0.platformFeeBps }, chains: TCH, lc, bad, ADDR, admins, requireSession, isDropOnChain: isDropOnTestnet, resnapAuto }))
   : (_launchpad ??= makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSession, isDropOnChain, verifySolana: programId => verifySolanaSetup({ programId, LP, chains }), onDeployed: (env, d, chain, addr) => bridgeAuto().enqueue(env, d, chain, addr), resnapAuto }));
 const linkBridge = (...a) => makeLinkBridge({ chains, lc, saveCollectionPatch })(...a);
-const publishBridged = (...a) => makePublishBridged({ lc, linkBridge })(...a);
+const publishBridged0 = (...a) => makePublishBridged({ lc, linkBridge })(...a);
+let _be; const bridgeEnrich = () => (_be ??= makeBridgeEnrich({ chains, lc, osFetch, osSlugFor, rpcCall, isStatic: s => !!STATIC[s] }));
+// Publish finished bridge listings, then fill what Island's-style pages need (OpenSea slugs, logo/banner/description, id range).
+const publishBridged = async (env, only) => { const r = await publishBridged0(env, only); await bridgeEnrich().enrichAll(env, { only, force: !!only || r.length > 0 }).catch(e => console.log('bridge enrich', e?.message)); return r; };
+// Bridge-listed KV collection (not a static one) for activity / owners / holder chat.
+const bridgedCol = async (env, slug) => (STATIC[slug] ? null : (c => (isBridgedCol(c) ? c : null))(await env.COLLECTIONS.get('col:' + slug, 'json')));
+const bridgedCols = env => bridgeEnrich().list(env);
 let _ba; const bridgeAuto = () => (_ba ??= makeBridgeAuto({ rpcsFor: k => chains[k]?.rpcs, onPublish: async (env, job) => { const slug = await env.COLLECTIONS.get('idx:' + job.native + ':' + job.nft); if (slug) await linkBridge(env, slug); else await publishBridged(env, job.slug); } }));
 // EVM message check shared with SIWE: EOA first, then ERC-1271 smart wallets on each chain.
 async function verifyEvmMessage(address, message, signature) {
@@ -361,12 +368,12 @@ let _ha; const holderAllow = () => (_ha ??= makeHolderAllow({ CFG, chains, lc, b
 const resnapAuto = (env, d) => holderAllow().resnapDrop(env, d);
 let _sollink; const solanaLink = () => (_sollink ??= makeSolanaLink({ lc, bad, ADDR, rand, verifyEvm: verifyEvmMessage, wl: walletLink() }));
 let _profiles; const profiles = () => (_profiles ??= makeProfiles({ CFG, lc, bad, ADDR, requireSession, rpcFanout, osFetch, wl: walletLink() }));
-let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }));
+let _chat; const holderChat = () => (_chat ??= makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit, getDyn: bridgedCol }));
 let _btc; const btcRoutes = () => (_btc ??= makeBtcRoutes({ bad }));
-let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC, cached }));
+let _activity; const activity = () => (_activity ??= makeActivity({ chains, lc, STATIC, cached, getDyn: bridgedCol, listDyn: bridgedCols }));
 let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
-let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc }));
+let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc, getDyn: bridgedCol, listDyn: bridgedCols }));
 let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch, saveCollectionPatch }));
 

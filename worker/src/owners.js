@@ -70,11 +70,11 @@ export function packOwners(slug, idStart, idEnd, perChain, failed, at = Date.now
   return { v: 1, slug, at, idStart, idEnd, addrs, chains, failed };
 }
 
-export function makeOwners({ chains, STATIC, getCollection, lc }) {
+export function makeOwners({ chains, STATIC, getCollection, lc, getDyn = async () => null, listDyn = async () => [] }) {
   const urlsOf = k => { const c = chains[k]; return c ? (c.rpcs?.length ? c.rpcs : [c.rpc]) : null; };
   async function build(env, slug) {
-    const st = STATIC[slug]; if (!st?.idEnd) return null;
-    const col = (await getCollection(env, slug)) || st;
+    const st = STATIC[slug] || await getDyn(env, slug); if (!st?.idEnd) return null; // bridge-listed: idStart/idEnd set at publish
+    const col = STATIC[slug] ? ((await getCollection(env, slug)) || st) : st;
     const ids = Array.from({ length: st.idEnd - st.idStart + 1 }, (_, i) => st.idStart + i);
     const perChain = {}, failed = [];
     await Promise.all((col.deployments || []).map(async d => {
@@ -88,7 +88,8 @@ export function makeOwners({ chains, STATIC, getCollection, lc }) {
   // Cron: rebuild every static collection; write only on change (or hourly) to keep KV writes low.
   async function refreshAll(env) {
     const res = {};
-    for (const slug of Object.keys(STATIC)) {
+    const dyn = (await listDyn(env).catch(() => [])).map(c => c.slug).filter(s => !STATIC[s]);
+    for (const slug of [...Object.keys(STATIC), ...dyn]) {
       try {
         const snap = await build(env, slug); if (!snap) { res[slug] = 'skip'; continue; }
         const prev = await env.COLLECTIONS.get('owners:' + slug, 'json');
@@ -107,7 +108,6 @@ export function makeOwners({ chains, STATIC, getCollection, lc }) {
     return out;
   }
   async function get(env, slug) {
-    if (!STATIC[slug]) return null;
     const s = await env.COLLECTIONS.get('owners:' + slug, 'json');
     if (!s || Date.now() - s.at > OWNERS_MAX_AGE_SEC * 1000) return null;
     return s;

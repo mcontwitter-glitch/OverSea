@@ -4,20 +4,31 @@
 import CFG from '../config/collections.json';
 import GATES from '../config/gates.json';
 import { parseAbi } from 'viem';
-import { wallet, onWallet, openConnect, readClient } from './wallet';
+import { wallet, onWallet, openConnect, readClient, API } from './wallet';
 import { frame, esc, logo, chains } from './gx';
 import { addrHtml } from './names';
 import { mountHolderChat } from './holderchat';
 type Gate = { title: string; minBalance: number; lockedText: string; perks: { title: string; body: string }[] };
 const gates = (GATES as any).gates as Record<string, Gate>;
 const slug = location.pathname.replace(/\/+$/, '').split('/')[2] || '';
+type HCol = { slug: string; name: string; deployments: { chain: string; address: string }[] };
+const cols: HCol[] = [...(CFG.collections as HCol[])];
+// Bridge-listed collections (Worker KV record, source 'bridge-listing' or escrow + several chains) get a default holder area;
+// the Worker grants the same gate (worker/src/holderchat.js).
+if (slug && !gates[slug] && !cols.some(c => c.slug === slug)) {
+  const c: any = await fetch(`${API}/collections/${slug}`).then(r => (r.ok ? r.json() : null)).then(j => j?.collection).catch(() => null);
+  if (c && !c.static && c.status === 'approved' && (c.source === 'bridge-listing' || ((c.escrow || []).length && (c.deployments || []).length > 1))) {
+    cols.push({ slug: c.slug, name: c.name, deployments: c.deployments });
+    gates[slug] = { title: `${c.name} holder area`, minBalance: 1, lockedText: `Hold a ${c.name} to unlock`, perks: [] };
+  }
+}
 const el = frame('holders', slug && gates[slug] ? gates[slug].title : 'Holder areas');
 const ABI = parseAbi(['function balanceOf(address) view returns (uint256)']);
 const q = new URLSearchParams(location.search); const previewAs = /^0x[0-9a-fA-F]{40}$/.test(q.get('as') || '') ? q.get('as')! : '';
 let res: Record<string, number | null> = {}; let checking = false; let checkedFor = '';
 const who = () => previewAs || wallet.address || '';
 async function check() {
-  const col = CFG.collections.find(c => c.slug === slug); const a = who(); if (!col || !a) { draw(); return; }
+  const col = cols.find(c => c.slug === slug); const a = who(); if (!col || !a) { draw(); return; }
   if (checkedFor === a) return; checkedFor = a; checking = true; res = {}; draw();
   await Promise.all(col.deployments.map(async d => {
     try { res[d.chain] = Number(await Promise.race([readClient(d.chain).readContract({ address: d.address as any, abi: ABI, functionName: 'balanceOf', args: [a as any] }), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 12_000))])); }
@@ -28,9 +39,9 @@ async function check() {
 function draw() {
   if (!slug || !gates[slug]) {
     const existingChat = el.querySelector('#holder-chat');
-  el.innerHTML = `<div class="gate"><h1>Holder areas</h1><p class="mut">Holder-only pages for collections on MultiSea.</p>${Object.entries(gates).map(([s, g]) => `<a class="fcard" style="display:block" href="/holders/${s}"><b>${esc(g.title)}</b><div class="mut small">${esc(CFG.collections.find(c => c.slug === s)?.name || s)} · hold ${g.minBalance}+ on any chain</div></a>`).join('')}</div>`; return;
+  el.innerHTML = `<div class="gate"><h1>Holder areas</h1><p class="mut">Holder-only pages for collections on MultiSea.</p>${Object.entries(gates).map(([s, g]) => `<a class="fcard" style="display:block" href="/holders/${s}"><b>${esc(g.title)}</b><div class="mut small">${esc(cols.find(c => c.slug === s)?.name || s)} · hold ${g.minBalance}+ on any chain</div></a>`).join('')}</div>`; return;
   }
-  const g = gates[slug]; const col = CFG.collections.find(c => c.slug === slug)!; const a = who();
+  const g = gates[slug]; const col = cols.find(c => c.slug === slug)!; const a = who();
   const total = Object.values(res).reduce<number>((s, v) => s + (v || 0), 0); const ok = total >= g.minBalance;
   const chips = col.deployments.map(d => `<span>${logo(d.chain)} ${esc(chains[d.chain].name)}: ${res[d.chain] === undefined ? (a ? '…' : '-') : res[d.chain] === null ? '<i class="mut">unavailable</i>' : `<b>${res[d.chain]}</b>`}</span>`).join('');
   const existingChat = el.querySelector('#holder-chat');

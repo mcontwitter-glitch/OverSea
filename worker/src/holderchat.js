@@ -6,8 +6,14 @@ const keyOf = id => String(id || '').replace(/^chat:[^:]+:/, '');
 
 /** Holder-only group chat. KV keys are ordered by time, so list(reverse) is a page newest-first;
  * responses are reversed for the UI (oldest to newest). No public writes or client-supplied addresses. */
-export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit }) {
+export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, getCollection, rpcFanout, canEdit, getDyn = async () => null }) {
   const gates = GATES.gates || {};
+  // Static gates (gates.js), or the default holder area every bridge-listed collection gets (hold 1 on any of its chains).
+  async function gateOf(env, slug) {
+    if (gates[slug]) return gates[slug];
+    const c = await getDyn(env, slug); if (!c) return null;
+    return { title: `${c.name} holder area`, minBalance: 1, lockedText: `Hold a ${c.name} to unlock`, perks: [] };
+  }
   // Collection owners (admin, editor, approved submitter or contract owner()) may set a display name; cached per isolate.
   const ownerCache = new Map();
   async function isOwner(env, slug, address) {
@@ -22,7 +28,7 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
   }
   async function holdings(env, slug, address) {
     if (!ADDR.test(address || '')) return false;
-    const gate = gates[slug]; if (!gate) bad('holder chat not found', 404);
+    const gate = await gateOf(env, slug); if (!gate) bad('holder chat not found', 404);
     const cacheKey = `chatgate:${slug}:${lc(address)}`;
     const cached = await env.COLLECTIONS.get(cacheKey, 'json');
     if (cached && cached.exp > Date.now()) return cached.ok === true;
@@ -42,7 +48,7 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
   }
   async function holder(req, env, slug) {
     const s = await requireSession(req, env);
-    if (!(await holdings(env, slug, s.address))) bad(gates[slug]?.lockedText || 'holders only', 403);
+    if (!(await holdings(env, slug, s.address))) bad((await gateOf(env, slug))?.lockedText || 'holders only', 403);
     const mute = await env.COLLECTIONS.get(`chatmute:${slug}:${lc(s.address)}`, 'json');
     if (mute && mute.until > Date.now()) return { ...s, muted: true };
     return s;
@@ -50,8 +56,8 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
   async function verifyHolderSignature(env, fields) {
     const slug = (fields.resources || []).map(r => String(r).match(/^multisea:holders:([a-z0-9-]+)$/)?.[1]).find(Boolean);
     if (!slug) return;
-    if (!gates[slug]) bad('holder chat not found', 404);
-    if (!(await holdings(env, slug, fields.address))) bad(gates[slug].lockedText, 403);
+    const gate = await gateOf(env, slug); if (!gate) bad('holder chat not found', 404);
+    if (!(await holdings(env, slug, fields.address))) bad(gate.lockedText, 403);
   }
   async function page(env, slug, before) {
     // KV lists keys ascending only, so collect them and take the newest page.
@@ -72,7 +78,7 @@ export function makeHolderChat({ CFG, lc, bad, ADDR, admins, requireSession, get
     holdings, verifyHolderSignature,
     async handle(req, env, url, p, M, body) {
       if (p[0] !== 'holders') return undefined;
-      const slug = p[1]; if (!gates[slug]) bad('holder chat not found', 404);
+      const slug = p[1]; if (!(await gateOf(env, slug))) bad('holder chat not found', 404);
       if (M === 'GET' && p[2] === 'messages' && p.length === 3) {
         const s = await holder(req, env, slug); const out = await page(env, slug, url.searchParams.get('before'));
         return { ...out, address: s.address, isAdmin: admins(env).includes(s.address), isOwner: await isOwner(env, slug, s.address), muted: !!s.muted, pollAfter: 4000 };

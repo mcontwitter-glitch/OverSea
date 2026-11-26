@@ -20,7 +20,8 @@ function blockscoutOrigin(c) {
 const IMMUTABLE = 30 * 86400;
 export const ACT_TTL = 60, ACT_SWR = 240, ACT_REWRITE_SEC = 1800, ACT_MAX_AGE_SEC = 3 * 3600;
 
-export function makeActivity({ chains, lc, STATIC, cached }) {
+// Bridge-listed collections (KV col: records, see bridgeenrich.js) are served and precomputed the same way via getDyn / listDyn.
+export function makeActivity({ chains, lc, STATIC, cached, getDyn = async () => null, listDyn = async () => [] }) {
   const R = makeRpc(chains);
 
   function makeKv(env) {
@@ -124,7 +125,7 @@ export function makeActivity({ chains, lc, STATIC, cached }) {
   }
 
   async function get(env, slug) {
-    if (!STATIC[slug] || !env?.COLLECTIONS) return null;
+    if (!env?.COLLECTIONS) return null;
     const s = await env.COLLECTIONS.get('act:' + slug, 'json');
     if (!s || Date.now() / 1000 - s.at > ACT_MAX_AGE_SEC) return null;
     return s;
@@ -139,9 +140,10 @@ export function makeActivity({ chains, lc, STATIC, cached }) {
 
   async function refreshAll(env) {
     const res = {};
-    for (const slug of Object.keys(STATIC)) {
+    const targets = { ...Object.fromEntries((await listDyn(env).catch(() => [])).map(c => [c.slug, c])), ...STATIC };
+    for (const slug of Object.keys(targets)) {
       try {
-        const snap = await build(env, STATIC[slug]);
+        const snap = await build(env, targets[slug]);
         const prev = await env.COLLECTIONS.get('act:' + slug, 'json');
         const same = prev && JSON.stringify({ ...prev, at: 0 }) === JSON.stringify({ ...snap, at: 0 });
         if (same && Date.now() / 1000 - prev.at < ACT_REWRITE_SEC) { res[slug] = 'unchanged'; continue; }
@@ -155,7 +157,7 @@ export function makeActivity({ chains, lc, STATIC, cached }) {
 
   async function handle(req, env, url, p, M, ctx) {
     if (!(M === 'GET' && p[0] === 'activity' && p.length === 2)) return undefined;
-    const col = STATIC[p[1]]; if (!col) return { slug: p[1], failed: [], browser: [], raw: [] };
+    const col = STATIC[p[1]] || await getDyn(env, p[1]); if (!col) return { slug: p[1], failed: [], browser: [], raw: [] };
     const load = () => getOrBuild(env, col);
     const v = cached ? await cached('act:' + col.slug, ACT_TTL, load, ACT_SWR, ctx) : await load();
     return new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ACT_TTL}, stale-while-revalidate=${ACT_SWR}` } });
