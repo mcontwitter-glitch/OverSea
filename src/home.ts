@@ -1,11 +1,11 @@
 import AV from './assetv.json';
 import CFG from '../config/collections.json';
 import { checkApi, onApiUp, onWallet, API, apiReady } from './wallet';
-import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
+import { navHtml, bindNav, esc, media , ethUsdRate, mcapUsd, mcapStatHtml, priceInEth, bestFloor } from './shell';
 import { SOLANA_ON, SOL_SOON, onSolanaFlag } from './solflag';
 const app = document.getElementById('app')!;
 const chains = CFG.chains as Record<string, { name: string }>;
-type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
+type Card = { slug: string; name: string; description?: string; logo?: string; banner?: string; chains: string[]; supply?: number; floor?: string; volume?: string; owners?: string; mcap?: string; featured?: boolean; thumb?: string };
 const fmt = (n: number) => (n >= 100 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : (+n.toFixed(4)).toString());
 let cards: Card[] = []; let is404 = false; const sums: Record<string, any> = {};
 export function notFound() { is404 = true; render(); }
@@ -126,11 +126,24 @@ const homeLoad = async () => {
     const j = await (await fetch(API + '/collections')).json();
     for (const [slug, o] of Object.entries(j.overrides || {})) { const c = cards.find(x => x.slug === slug); if (c && o) Object.assign(c, { logo: (o as any).logo || c.logo, banner: (o as any).banner || c.banner }); }
     const have = new Set(cards.map(x => x.slug));
-    const dyn: Card[] = (j.collections || []).filter((c: any) => !have.has(c.slug)).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain) }));
+    const dyn: Card[] = (j.collections || []).filter((c: any) => !have.has(c.slug)).map((c: any) => ({ slug: c.slug, name: c.name, logo: c.logo, banner: c.banner, chains: c.deployments.map((d: any) => d.chain), supply: Number(c.supply || (c.idEnd ? c.idEnd - (Number(c.idStart) || 1) + 1 : 0)) || undefined }));
     cards.push(...dyn); render();
-    await Promise.all(dyn.map(async c => { try { const s = (await (await fetch(`${API}/os/${c.slug}/stats`)).json()).stats || {}; const v = Object.values(s) as any[];
-      c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : '-'; const vol = v.reduce((a, x) => a + (x.volume || 0), 0); c.volume = v.length ? fmt(vol) + ' ETH' : '-';
-      const fl = v.filter(x => x.floor_price && x.floor_price_symbol === 'ETH').map(x => x.floor_price); c.floor = fl.length ? fmt(Math.min(...fl)) + ' ETH' : '-'; } catch {} }));
+    await Promise.all(dyn.map(async c => { try {
+      const [sj, lj] = await Promise.all([
+        fetch(`${API}/os/${c.slug}/stats`).then(r => r.json()).catch(() => ({})),
+        fetch(`${API}/os/${c.slug}/listings`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      const s = sj.stats || {}; const v = Object.values(s) as any[];
+      c.owners = v.length ? v.reduce((a, x) => a + (x.num_owners || 0), 0).toLocaleString() : '-';
+      const vol = v.reduce((a, x) => a + (x.volume || 0), 0); c.volume = v.length ? fmt(vol) + ' ETH' : '-';
+      const usd = await ethUsdRate();
+      const fromList = bestFloor(lj?.listings || [], usd);
+      const fromStats = v.map(x => ({ price: x.floor_price, currency: x.floor_price_symbol || '' })).filter(x => x.price > 0 && x.currency);
+      const fl = fromList || bestFloor(fromStats, usd);
+      if (fl) c.floor = /^W?ETH$/i.test(fl.currency) ? `${fmt(fl.price)} ETH` : `${fmt(fl.price)} ${fl.currency}`;
+      else c.floor = '-';
+      c.mcap = mcapUsd(fl?.priceEth, c.supply || 0, usd);
+    } catch {} }));
     render(); homeLoaded = true;
   } catch {}
 };

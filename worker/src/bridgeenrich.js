@@ -55,9 +55,13 @@ export function makeBridgeEnrich({ chains, lc, osFetch, osSlugFor, rpcCall, isSt
     const replaceable = f => { const v = col[f]; if (!v) return true; if (auto[f] && v === auto[f]) return true; return !col.updatedBy && !String(v).startsWith('/media/'); };
     for (const f of ['logo', 'banner', 'description']) if (m[f] && replaceable(f) && col[f] !== m[f]) { patch[f] = m[f]; auto[f] = m[f]; }
     if (Object.keys(m.openseaSlugs).length) patch.openseaSlugs = { ...(col.openseaSlugs || {}), ...m.openseaSlugs };
-    if (!col.idEnd) {
+    if (!col.idEnd || !col.supply) {
       const job = await K.get('bjob:' + col.slug, 'json');
-      if (job?.supply > 0) { const s = Number.isInteger(job.firstId) ? job.firstId : 1; patch.idStart = s; patch.idEnd = s + job.supply - 1; patch.supply = job.supply; }
+      if (job?.supply > 0) { const s = Number.isInteger(job.firstId) ? job.firstId : 1; if (!col.idEnd) { patch.idStart = s; patch.idEnd = s + job.supply - 1; } if (!col.supply) patch.supply = job.supply; }
+    }
+    if (!col.supply && !patch.supply && (col.idEnd || patch.idEnd)) {
+      const start = Number(patch.idStart || col.idStart) || 1, end = Number(patch.idEnd || col.idEnd);
+      if (end >= start) patch.supply = end - start + 1;
     }
     const cur = (await K.get('col:' + col.slug, 'json')) || col; // re-read: never clobber an edit made while this ran
     const v = { ...cur, ...patch, auto, enrichedAt: new Date().toISOString() };

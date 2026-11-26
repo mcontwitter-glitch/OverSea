@@ -2,7 +2,7 @@
 import { shareBtns } from './share';
 import CFG from '../config/collections.json';
 import { checkApi, onWallet, wallet, apiReady, API, startBuy, readClient } from './wallet';
-import { navHtml, bindNav, esc, soon, media , ethUsdRate, mcapUsd, mcapStatHtml } from './shell';
+import { navHtml, bindNav, esc, soon, media , ethUsdRate, mcapUsd, mcapStatHtml, bestFloor } from './shell';
 import { openEdit, linksHtml } from './edit';
 import { openFounder, isFounder, founderBtn } from './founder';
 import { logo } from './gx';
@@ -57,7 +57,7 @@ function render() {
   if (state !== 'ok') { app.innerHTML = `${navHtml()}<section class="page">${state === 'offline' ? soon('This collection page') : state === 'missing' ? '<h2>Collection not found</h2><p><a href="/">Back to collections</a></p>' : '<div class="spin"></div> Loading…'}</section>`; return; }
   const v = Object.values(stats); const L = lmap();
   const vol = v.reduce((a, x) => a + (x.volume || 0), 0), own = v.reduce((a, x) => a + (x.num_owners || 0), 0);
-  const fl = listings.filter(l => /^W?ETH$/.test(l.currency)).sort((a, b) => a.price - b.price)[0];
+  const fl = bestFloor(listings, dynUsd);
   const avatar = media(col.logo) || imageSrc(items[0]?.image) || '';
   const shown = gridItems();
   const itemsHtml = `<div class="chips dchips">${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}${chainStats?.[d.chain] != null ? ` <em>${chainStats[d.chain].live.toLocaleString()}</em>` : ''}</button>`).join('')}</div>
@@ -67,7 +67,7 @@ function render() {
   app.innerHTML = `${navHtml()}
   <div class="banner ${col.banner ? 'has-img' : ''}" style="${col.banner ? `background-image:url(${esc(media(col.banner))})` : ''}">${col.banner ? '' : `<div class="banner-art">${items.slice(0, 12).map(i => imageSrc(i.image) ? `<span><img src="${esc(imageSrc(i.image))}" alt="" loading="lazy" fetchpriority="low"></span>` : '').join('')}</div>`}<div class="banner-fade"></div>
    <div class="hero2"><img class="avatar" src="${esc(avatar)}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
-   <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${L.size}</b><span>Listings</span></div>${(() => { const sup = v.reduce((a, x) => a + (x.total_supply || 0), 0) || col.supply || 0; return mcapStatHtml(mcapUsd(fl?.price, sup, dynUsd)); })()}</div></div>
+   <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}${!/^W?ETH$/i.test(fl.currency) && fl.priceEth ? ` <span class="mut">(≈ ${fmt(fl.priceEth)} ETH)</span>` : ''}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${L.size}</b><span>Listings</span></div>${(() => { const sup = Number(col.supply || (col.idEnd ? col.idEnd - (Number(col.idStart) || 1) + 1 : 0)) || Math.max(0, ...v.map((x: any) => x.total_supply || 0)); return mcapStatHtml(mcapUsd(fl?.priceEth, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${canBridge() ? `<a class="obtn sm" href="/holders/${esc(col.slug || slug)}">💬 Holders chat</a>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
   <div class="tabs"><button data-tab="items" class="${view === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${view === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${view === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${view === 'chains' ? 'on' : ''}">Chains</button>${canBridge() ? `<button data-tab="bridge" data-bridge-flag hidden class="${view === 'bridge' ? 'on' : ''}">Bridge</button>` : ''}</div>
   ${view === 'items' ? itemsHtml : view === 'activity' ? `<div class="content">${activityView()}</div>` : view === 'holders' ? `<div class="content">${holdersView()}</div>` : view === 'chains' ? `<div class="content">${chainsBlock()}</div>` : '<div class="content"><div id="bridgebox"></div></div>'}`;

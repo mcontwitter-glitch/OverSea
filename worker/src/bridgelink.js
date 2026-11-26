@@ -36,8 +36,11 @@ export function makePublishBridged({ lc, linkBridge }) {
       if (slugs.has(bc.slug) || known.has(bc.native + ':' + nft)) continue;
       const job = await K.get('bjob:' + bc.slug, 'json'); if (!job?.direct) continue; // launchpad drops get their collection from the launchpad
       const esc = bc.escrows?.[bc.native];
+      const idStart = Number.isInteger(job.firstId) ? job.firstId : 1;
+      const supply = job.supply > 0 ? job.supply : undefined;
       const col = { slug: bc.slug, name: bc.name, description: '', logo: '', banner: '', deployments: [{ chain: bc.native, address: nft }], escrow: esc ? [{ chain: bc.native, address: lc(esc), label: 'MultiSea bridge escrow' }] : [],
-        submitter: job.owner, status: 'approved', approvedAt: new Date().toISOString(), source: 'bridge-listing' };
+        submitter: job.owner, status: 'approved', approvedAt: new Date().toISOString(), source: 'bridge-listing',
+        ...(supply ? { supply, idStart, idEnd: idStart + supply - 1 } : {}) };
       await kput(K, 'col:' + bc.slug, JSON.stringify(col)); await kput(K, 'idx:' + bc.native + ':' + nft, bc.slug);
       await linkBridge(env, bc.slug, col); slugs.add(bc.slug); out.push(bc.slug);
     }

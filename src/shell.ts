@@ -72,5 +72,22 @@ export function usdRates(): Promise<UsdRates> {
   })();
 }
 export function ethUsdRate(): Promise<number | null> { return usdRates().then(r => r.ETH); }
+const STABLE = /^(USD[CGT]|DAI)$/i;
+/** ETH amount for a listing price. USDG/USDC/USDT/DAI are treated as $1. */
+export function priceInEth(price: number, currency: string, ethUsd?: number | null): number | null {
+  if (!(price > 0)) return null;
+  if (/^W?ETH$/i.test(currency)) return price;
+  if (STABLE.test(currency) && ethUsd) return price / ethUsd;
+  return null;
+}
+export function bestFloor<T extends { price: number; currency: string }>(listings: T[], ethUsd?: number | null): (T & { priceEth: number }) | null {
+  let best: (T & { priceEth: number }) | null = null;
+  for (const l of listings) {
+    const priceEth = priceInEth(l.price, l.currency, ethUsd);
+    if (priceEth == null) continue;
+    if (!best || priceEth < best.priceEth) best = { ...l, priceEth };
+  }
+  return best;
+}
 export function mcapUsd(floorEth: number | null | undefined, supply: number, usd: number | null | undefined) { return floorEth && supply && usd ? '$' + Math.round(floorEth * supply * usd).toLocaleString() : '-'; }
 export const mcapStatHtml = (v: string) => `<div class="stat tip mcap"><b>${v}</b><span>Market cap ⓘ</span><div class="tipbox"><div class="tipnote">Floor price × total supply</div></div></div>`;
