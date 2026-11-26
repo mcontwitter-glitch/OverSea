@@ -191,3 +191,16 @@ test('referral card SVG and 1200x630 PNG: MultiSea, name, invite line, cyan bar'
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, png);
 });
+
+test('currentSlug/refStats reserve a name that was never given a slug', async () => {
+  const ref = privateKeyToAccount(generatePrivateKey()).address;
+  const { env, sessions, callG } = setup();
+  sessions.R = ref;
+  await env.COLLECTIONS.put('profile:' + lc(ref), JSON.stringify({ address: lc(ref), name: 'Hooch Crack Island King', avatar: '', nft: null }));
+  assert.equal(await env.COLLECTIONS.get('refslug:hooch-crack-island-king'), null);
+  const st = await callG('GET', '/ref/stats/' + ref);
+  assert.equal(st.j.slug, 'hooch-crack-island-king');
+  assert.equal(st.j.path, '/r/hooch-crack-island-king');
+  assert.equal(await env.COLLECTIONS.get('refslug:hooch-crack-island-king'), lc(ref));
+  assert.equal(await env.COLLECTIONS.get('refslugof:' + lc(ref)), 'hooch-crack-island-king');
+});

@@ -54,12 +54,15 @@ export async function reserveSlug(env, addr, name) {
   return slug;
 }
 
-/** Current name-link slug for a wallet, only if it still matches today's display name. */
+/** Current name-link slug for a wallet. If they have a usable name but it was never reserved, reserve it now. */
 export async function currentSlug(env, addr, name) {
   const s = slugify(name);
   if (!s) return null;
+  addr = String(addr || '').toLowerCase();
   const owner = await env.COLLECTIONS.get('refslug:' + s);
-  return owner === String(addr || '').toLowerCase() ? s : null;
+  if (owner === addr) return s;
+  if (owner) return null;
+  return reserveSlug(env, addr, name);
 }
 
 export async function slugTakenByOther(env, addr, name) {
