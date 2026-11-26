@@ -7,7 +7,7 @@ import { parseEther, parseUnits } from 'viem';
 import { merkle, parseAllowlist, setPhasesCalldata, thirdwebClaimConditions, onchainPhases, PHASE_T, type RuleIn } from './lpmerkle';
 import { holderCollections, snapshotHolders, srcLabel, snapNote, type HolderSrc, type HolderCol, type HolderSnap } from './lpholders';
 import { encodeAbiParameters } from 'viem';
-import { checkApi, onWallet, wallet, openConnect, apiFeatures } from './wallet';
+import { checkApi, onWallet, wallet, openConnect, apiFeatures, apiReachable, API_DOWN_MSG } from './wallet';
 import { navHtml, bindNav, esc, usdRates, type UsdRates } from './shell';
 import { api, getSession, errMsg } from './auth';
 import { uploadHtml, addMedia, clearMedia, loadCsv, downloadTemplate, uploadProblem, usingUpload, pinAll, media, ph as phd, setPlaceholder, placeholderHtml, pinPlaceholder, agentMediaProblem, agentPin, death, setDeath, deathHtml, pinDeath, DEATH_RE, pinJson, pinningReady, onchainMediaProblem, ONCHAIN_MAX } from './lpmedia';
@@ -327,7 +327,7 @@ function txBox() {
 }
 function render() {
   app.innerHTML = `${navHtml('launchpad')}<section class="page form ldcreate"><a class="mut small" href="/launchpad">← Launchpad</a><h2>Create a drop</h2>
-  ${done ? `<div class="okbox">✓ <b>${esc(done)}</b> submitted for review. ${apiFeatures.includes('launchpad') ? 'Once MultiSea approves it, open its page on /launchpad, sign in with this wallet and press <b>Deploy</b> on each chain (you pay the gas and own the contract).' : `Preview mode: saved in this browser only (the Worker launchpad endpoints are not deployed).${isLocalHost() ? ' Open <a href="/admin">/admin</a> to see it in the review queue.' : ''}`}</div><p><a class="obtn" href="/launchpad">Back to Launchpad</a> <button class="obtn" data-act="new">Create another</button></p>` : `
+  ${done ? `<div class="okbox">${apiFeatures.includes('launchpad') ? `✓ <b>${esc(done)}</b> was saved for review (lpending:${esc(done)}). Once MultiSea approves it, open its page on /launchpad, sign in with this wallet and press <b>Deploy</b> on each chain (you pay the gas and own the contract).` : `✓ Local preview only: <b>${esc(done)}</b> was saved in this browser, not in MultiSea's review queue.${isLocalHost() ? ' Open <a href="/admin">/admin</a> to see it.' : ''}`}</div><p><a class="obtn" href="/launchpad">Back to Launchpad</a> <button class="obtn" data-act="new">Create another</button></p>` : `
   <ol class="ldsteps">${STEPS.map((n, i) => `<li class="${i === st.step ? 'on' : i < st.step ? 'done' : ''}"><button type="button" data-go="${i}" ${i > st.step ? 'disabled' : ''}><span>${i < st.step ? '✓' : i + 1}</span><em>${n}</em></button></li>`).join('')}</ol>
   <div class="ldstepn mut small">Step ${st.step + 1} of ${STEPS.length} · <b>${STEPS[st.step]}</b></div>
   ${st.step === 0 && !st.name ? '<button type="button" class="pill ldfill" data-act="demo">Fill with LIL FOOTS demo</button>' : ''}
@@ -439,8 +439,13 @@ async function submit() {
         ...(isOrd() ? { ordinals: { priceUsdc: st.ordPrice, orderLimit: +(st.ordLimit || 50), deliveryHours: ORD_HOURS, feeBps: ORD_FEE_PCT * 100, buyerPaysInscriptionFee: true, chain: 'base', currency: 'USDC' } } : {}),
         nftType: st.nftType, packs: st.nftType === 'packs' ? packPayload(st.packs, media.rows?.length || 0, st.storage === 'own', st.baseURI) : undefined, agent: st.nftType === 'erc463n7' ? { ...st.ag, mediaBase: st.storage === 'own' ? '' : st.mediaBase || '', mediaExt: st.storage === 'own' ? '' : st.mediaExt || '', deathURI: st.deathURI || '', traitRows: st.storage === 'own' ? 0 : st.traitRows || 0, traitsURI: st.storage === 'own' ? '' : st.traitsURI || '', starvation: true, starveDays: +st.ag.starveDays, skillPct: +st.ag.skillPct, fertPct: st.ag.fertility ? +st.ag.fertPct : 0, twinPct: +st.ag.twinPct, mutPct: st.ag.mutation ? +st.ag.mutPct : 0, mutSkillPct: +st.ag.mutSkillPct, infPct: st.ag.infect ? +st.ag.infPct : 0, infCooldownH: st.ag.infect ? +st.ag.infCooldownH : 0, infScore: st.ag.infect ? +st.ag.infScore : 0, infMaxEth: st.ag.infect ? String(st.ag.infMaxEth).trim() : undefined, repo: st.ag.repo && st.ag.deathSkill, repoPct: st.ag.repo ? +st.ag.repoPct : 0, queenPct: st.ag.queen ? +st.ag.queenPct : 0, queenCap: st.ag.queen ? +st.ag.queenCap : undefined, tribEth: st.ag.queen ? String(st.ag.tribEth).trim() : undefined, tribDays: st.ag.queen ? +st.ag.tribDays : undefined, zombiePct: st.ag.zombie ? +st.ag.zombiePct : 0, limits: st.ag.deathSkill ? { grace: Math.round(+st.ag.graceH * 3600) } : undefined } : undefined, royaltyBps: Math.round(+st.royalty * 100), payout: st.payout || undefined, royaltyReceiver: st.royaltyReceiver || undefined, reveal: isOnchain() ? 'instant' : st.reveal, baseURI: isOnchain() ? '' : st.baseURI, preRevealURI: isOnchain() ? '' : st.preRevealURI, metadataHost: st.storage, onchainStore: isOnchain() ? (st.onchainStore || 'home') : undefined,
         phases: phases.map(p => ({ ...p, price: parseEther(p.price || '0').toString(), prices: p.prices ? Object.fromEntries(Object.entries(p.prices).map(([k, v]) => [k, (k === 'solana' ? parseUnits(v, 9) : parseEther(v)).toString()])) : undefined })) } });
+      if (!j?.slug) throw new Error('Server did not confirm the submission. Please try again.');
       done = j.slug;
     } catch (er: any) { subBusy = false; msg = errMsg(er, 'Submission failed'); msgCls = 'err'; render(); return; }
+  } else if (!isLocalHost()) {
+    subBusy = false;
+    msg = apiReachable === false ? API_DOWN_MSG : 'Could not reach the MultiSea launchpad. Wait a moment and click Submit again — your drop is not in the review queue yet.';
+    msgCls = 'err'; render(); return;
   } else {
     const l = localDrops(); if (l.some(d => d.slug === st.slug)) { subBusy = false; msg = 'You already submitted that slug in this browser.'; msgCls = 'err'; render(); return; }
     const art = st.slug.includes('foot') ? [2396, 1858, 3958, 4356].map(i => `/img/lil-foots/m/${i}.webp`) : ['/brand/icon-128.webp'];

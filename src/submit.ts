@@ -96,7 +96,7 @@ function render(initFields?: Record<string, string>) {
   subform.innerHTML = `
   <h2>Submit a collection</h2><p class="mut">List your multichain ERC-721 collection on MultiSea. Connect the wallet that deployed or owns it, then sign a message to prove it (Sign-In With Ethereum). An admin reviews every submission.</p>
   ${off ? soon('Submitting') : ''}
-  ${done ? `<div class="okbox">✓ Submitted <b>${esc(done)}</b>. It's in the review queue.</div>` : ''}
+  ${done ? `<div class="okbox">✓ <b>${esc(done)}</b> was saved for review (pending:${esc(done)}). MultiSea will review it — you can close this page.</div>` : ''}
   <fieldset ${off ? 'disabled' : ''}>
    <div class="two"><label>Project name<input name="name" maxlength="60" required></label><label>Slug <span class="mut small">multisea.io/c/<b class="slugpv">your-slug</b></span><input name="slug" pattern="[a-z0-9-]{3,40}" maxlength="40" placeholder="lowercase-with-dashes" required></label></div>
    <label>Description<textarea name="description" rows="4" maxlength="1000"></textarea></label>
@@ -238,6 +238,7 @@ subform.addEventListener('click', async e => {
           escrow: esc_rows.map(r => ({ chain: r.chain, address: r.address.trim() })).filter(r => r.address),
         },
       });
+      if (!j?.slug) throw new Error('Server did not confirm the submission. Please try again.');
       done = j.slug; msg = ''; msgCls = 'mut'; busy = false;
       rows = [{ chain: 'ethereum', address: '' }]; esc_rows = [];
       delete up.logo; delete up.banner; checks.clear(); resetPicks();

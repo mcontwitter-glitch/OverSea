@@ -22,7 +22,7 @@ export const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '
 // ---- API health. Optimistic: features that are live render enabled; a real error only shows if the action itself fails.
 // /health is retried with backoff (3 tries over ~15s), then re-checked on window focus / back online.
 export let apiReachable: boolean | null = null;
-const LIVE_FEATURES = ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'media'];
+const LIVE_FEATURES = ['buy', 'siwe', 'submit', 'admin', 'edit', 'sell', 'native', 'media', 'launchpad'];
 apiReady = !!API; apiFeatures = API ? [...LIVE_FEATURES] : [];
 const upListeners: (() => void)[] = [];
 export const onApiUp = (f: () => void) => { upListeners.push(f); };

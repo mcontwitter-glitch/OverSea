@@ -474,8 +474,13 @@ export function makeLaunchpad({ LP, chains, lc, bad, ADDR, admins, requireSessio
         if ((await K.get('ldrop:' + d.slug)) || (await K.get('lpending:' + d.slug)) || (await K.get('col:' + d.slug))) bad('slug already used');
         if (resnapAuto) d = await resnapAuto(env, d);
         for (const [i, ph] of (d.phases || []).entries()) if (ph.kind === 'allowlist' && !(d.allowlists || {})[i]?.length) bad(`phase ${i + 1}: allowlist is empty`);
-        await K.put('lpending:' + d.slug, JSON.stringify({ ...d, kind: 'drop', submitter: s.address, status: 'pending', submittedAt: new Date(now()).toISOString() }));
-        return { ok: true, status: 'pending', slug: d.slug };
+        const rec = { ...d, kind: 'drop', submitter: s.address, status: 'pending', submittedAt: new Date(now()).toISOString() };
+        const key = 'lpending:' + d.slug;
+        await K.put(key, JSON.stringify(rec));
+        const saved = await K.get(key);
+        if (!saved) bad('Submission could not be saved. Please try again.', 503);
+        console.log(JSON.stringify({ ev: 'launchpad-submit', slug: d.slug, key, submitter: s.address }));
+        return { ok: true, status: 'pending', slug: d.slug, key };
       }
       if (M === 'GET' && p[1] === 'mine' && p.length === 2) { // the signed-in creator's own drops (submitter is never public)
         const s = await requireSession(req, env); const l = await K.list({ prefix: 'ldrop:' });

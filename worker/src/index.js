@@ -499,8 +499,12 @@ async function handle(req, env, url, ctx) {
     const logo = str(b.logo, 120); if (logo && !MEDIA.test(logo)) bad('Invalid logo upload reference — please re-upload');
     const banner = str(b.banner, 120); if (banner && !MEDIA.test(banner)) bad('Invalid banner upload reference — please re-upload');
     const rec = { slug, name, description: str(b.description, 1000), ...cleanLinks(b), logo, banner, deployments: checked, escrow, submitter: s.address, status: 'pending', submittedAt: new Date().toISOString() };
-    await env.COLLECTIONS.put('pending:' + slug, JSON.stringify(rec));
-    return { ok: true, status: 'pending', slug };
+    const key = 'pending:' + slug;
+    await env.COLLECTIONS.put(key, JSON.stringify(rec));
+    const saved = await env.COLLECTIONS.get(key);
+    if (!saved) bad('Submission could not be saved. Please try again.', 503);
+    console.log(JSON.stringify({ ev: 'collection-submit', slug, key, submitter: s.address }));
+    return { ok: true, status: 'pending', slug, key };
   }
 
   // --- fees (Relay app fees + fee wallet balances): admins and the fee wallet only ---
