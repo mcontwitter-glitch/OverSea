@@ -1,3 +1,4 @@
+import { kput } from './kvput.js';
 // Mirrors of a bridged collection become part of its record (deployments + escrows) so the collection page, holder counts and trading cover every chain.
 // Called when the bridge job publishes (collection already approved) and on approval (job already finished). A collection that is still pending is
 // merged at approval, because the finished bridge collection (bcol:) and the nft -> job marker (bnft:) are kept in KV.
@@ -8,9 +9,9 @@ export function makeLinkBridge({ chains, lc, saveCollectionPatch }) {
       const js = await K.get('bnft:' + d.chain + ':' + lc(d.address)); if (!js) continue;
       const bc = await K.get('bcol:' + js, 'json'); if (!bc) continue;
       const dep = [...col.deployments], esc = [...(col.escrow || [])];
-      for (const [k, a] of Object.entries(bc.contracts || {})) if (chains[k] && !dep.some(x => x.chain === k && lc(x.address) === lc(a))) { dep.push({ chain: k, address: lc(a), mirror: true }); await K.put('idx:' + k + ':' + lc(a), slug); }
+      for (const [k, a] of Object.entries(bc.contracts || {})) if (chains[k] && !dep.some(x => x.chain === k && lc(x.address) === lc(a))) { dep.push({ chain: k, address: lc(a), mirror: true }); await kput(K, 'idx:' + k + ':' + lc(a), slug); }
       for (const [k, a] of Object.entries(bc.escrows || {})) if (chains[k] && !esc.some(x => x.chain === k && lc(x.address) === lc(a))) esc.push({ chain: k, address: lc(a), label: 'MultiSea bridge escrow' });
-      if (bc.mirrorsSlug !== slug) await K.put('bcol:' + js, JSON.stringify({ ...bc, mirrorsSlug: slug }));
+      if (bc.mirrorsSlug !== slug) await kput(K, 'bcol:' + js, JSON.stringify({ ...bc, mirrorsSlug: slug }));
       return saveCollectionPatch(env, slug, { deployments: dep, escrow: esc });
     }
     return null;
@@ -37,7 +38,7 @@ export function makePublishBridged({ lc, linkBridge }) {
       const esc = bc.escrows?.[bc.native];
       const col = { slug: bc.slug, name: bc.name, description: '', logo: '', banner: '', deployments: [{ chain: bc.native, address: nft }], escrow: esc ? [{ chain: bc.native, address: lc(esc), label: 'MultiSea bridge escrow' }] : [],
         submitter: job.owner, status: 'approved', approvedAt: new Date().toISOString(), source: 'bridge-listing' };
-      await K.put('col:' + bc.slug, JSON.stringify(col)); await K.put('idx:' + bc.native + ':' + nft, bc.slug);
+      await kput(K, 'col:' + bc.slug, JSON.stringify(col)); await kput(K, 'idx:' + bc.native + ':' + nft, bc.slug);
       await linkBridge(env, bc.slug, col); slugs.add(bc.slug); out.push(bc.slug);
     }
     return out;

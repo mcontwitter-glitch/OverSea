@@ -8,6 +8,7 @@
 // instead of failing when the operator lacks gas on a chain or the token range is unclear.
 import { createPublicClient, createWalletClient, http, fallback, parseAbi, parseEventLogs, keccak256, toBytes, pad, defineChain, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { kput } from './kvput.js';
 
 const FAC = parseAbi([
   'struct Prepaid { address payer; uint32[] eids; uint256 paid; bool used; }',
@@ -55,12 +56,12 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     const job = { slug: drop.slug, name: drop.name, symbol: drop.symbol, supply: Number(drop.allocations?.[chain] ?? drop.maxSupply),
       baseURI: drop.baseURI || drop.preRevealURI || '', img: drop.logo || '', native: chain, nft: lc(nft), dropId: keccak256(toBytes(drop.slug)),
       step: 'list', escrows: {}, mirrors: {}, fromBlock: {}, wired: {}, tries: 0, createdAt: new Date().toISOString() };
-    await K.put('bjob:' + drop.slug, JSON.stringify(job)); await K.put('bnft:' + chain + ':' + lc(nft), drop.slug); return job;
+    await kput(K, 'bjob:' + drop.slug, JSON.stringify(job)); await kput(K, 'bnft:' + chain + ':' + lc(nft), drop.slug); return job;
   }
 
   async function advance(env, job, budget) {
     const c = await cfg(); const pk = env.BRIDGE_OPERATOR_PK; if (!pk) throw new Error('BRIDGE_OPERATOR_PK not set');
-    const K = env.COLLECTIONS; const save = () => K.put('bjob:' + job.slug, JSON.stringify(job));
+    const K = env.COLLECTIONS; const save = () => kput(K, 'bjob:' + job.slug, JSON.stringify(job));
     // Send (or resume) one tx and return its receipt. Stored hash => no double-send after a crash.
     const tx = async (k, tag, args) => {
       const { pub, wal } = mk(c, k, pk);
@@ -124,7 +125,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     }
     if (job.step === 'publish') {
       const col = { id: `${job.native}:${job.listingId}`, slug: job.slug, mirrorsSlug: job.slug, name: job.name, native: job.native, contracts: job.mirrors, escrows: job.escrows, img: job.img, fromBlock: job.fromBlock };
-      await K.put('bcol:' + job.slug, JSON.stringify(col)); job.step = 'done'; job.doneAt = new Date().toISOString(); job.waiting = undefined; await save();
+      await kput(K, 'bcol:' + job.slug, JSON.stringify(col)); job.step = 'done'; job.doneAt = new Date().toISOString(); job.waiting = undefined; await save();
       if (onPublish) await Promise.resolve(onPublish(env, job, col)).catch(e => console.log('bridge onPublish failed', e?.message));
     }
     return job;
@@ -177,12 +178,12 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     const { pub } = mk(c, chain);
     const esc = lc(await pub.readContract({ address: ch.factory, abi: FAC, functionName: 'escrowOf', args: [a.nft] }));
     if (esc !== lc(a.escrow) || esc === '0x0000000000000000000000000000000000000000') throw perm('escrow does not match the factory registry');
-    const prev = await findJobByNft(K, chain, nft); if (prev) { await K.put('bnft:' + chain + ':' + nft, prev.slug); return { slug: prev.slug, existing: true }; }
+    const prev = await findJobByNft(K, chain, nft); if (prev) { await kput(K, 'bnft:' + chain + ':' + nft, prev.slug); return { slug: prev.slug, existing: true }; }
     const meta = await readMeta(c, chain, nft); const slug = await resolveSlug(K, chain, nft, meta, Number(a.id));
     const job = { slug, name: meta.name, symbol: meta.symbol, supply: meta.supply, firstId: meta.firstId, baseURI: meta.baseURI, img: '', native: chain, nft, dropId: null,
       step: 'refuel', eids, listingId: Number(a.id), escrows: { [chain]: esc }, mirrors: { [chain]: nft }, fromBlock: { [chain]: Number(block) }, wired: {}, tries: 0,
       direct: true, owner: lc(a.owner), listTx: txHash, note: meta.note || undefined, hold: meta.hold || undefined, createdAt: new Date(now()).toISOString() };
-    await K.put('bjob:' + slug, JSON.stringify(job)); await K.put('bnft:' + chain + ':' + nft, slug);
+    await kput(K, 'bjob:' + slug, JSON.stringify(job)); await kput(K, 'bnft:' + chain + ':' + nft, slug);
     return { slug, existing: false, job };
   }
   // POST /bridge/direct {chain, tx}: public, safe because the Listed event is checked on-chain against the configured factory.
@@ -196,7 +197,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     const evs = parseEventLogs({ abi: FAC, logs: r.logs.filter(l => lc(l.address) === lc(ch.factory)), eventName: 'Listed' });
     if (!evs.length) throw perm('no MultiSea Listed event from the factory in that transaction');
     let first = null; for (const ev of evs) { const o = await enqueueListed(env, c, chain, ev.args, r.blockNumber, tx); first ||= ev.args.nft; }
-    await K.put('btx:' + chain + ':' + lc(tx), JSON.stringify({ nft: lc(first) }));
+    await kput(K, 'btx:' + chain + ':' + lc(tx), JSON.stringify({ nft: lc(first) }));
     return directStatus(env, chain, first);
   }
   async function directStatus(env, chain, nft) {
@@ -223,10 +224,10 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
             try { const r = await enqueueListed(env, c, k, l.args, l.blockNumber, l.transactionHash); if (!r.existing) out[k].enqueued.push(r.slug); }
             catch (e) { if (!e.perm) throw e; console.log('bridge scan skipped', k, l.transactionHash, e.message); }
           }
-          await K.put('bscan:' + k, String(to)); out[k].to = to; from = to + 1;
+          await kput(K, 'bscan:' + k, String(to)); out[k].to = to; from = to + 1;
         }
         await K.delete('bscanerr:' + k);
-      } catch (e) { out[k].err = String(e.shortMessage || e.message || e).slice(0, 200); await K.put('bscanerr:' + k, out[k].err); }
+      } catch (e) { out[k].err = String(e.shortMessage || e.message || e).slice(0, 200); await kput(K, 'bscanerr:' + k, out[k].err); }
     }
     return out;
   }
@@ -240,15 +241,15 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
       const job = await K.get(name, 'json'); if (!job || job.step === 'done' || job.step === 'failed') continue;
       if (job.hold) { out.push({ slug: job.slug, step: job.step, hold: job.hold }); continue; }
       if (job.lease && job.lease > now()) { out.push({ slug: job.slug, step: job.step, busy: true }); continue; }
-      job.lease = now() + LEASE_MS; await K.put(name, JSON.stringify(job));
-      try { await advance(env, job, budget); job.lease = 0; job.waiting = undefined; job.waitingSince = undefined; job.err = undefined; await K.put(name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step }); }
+      job.lease = now() + LEASE_MS; await kput(K, name, JSON.stringify(job));
+      try { await advance(env, job, budget); job.lease = 0; job.waiting = undefined; job.waitingSince = undefined; job.err = undefined; await kput(K, name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step }); }
       catch (e) {
         job.lease = 0;
-        if (e.budget) { await K.put(name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, paused: true }); break; }
-        if (e.wait) { job.waiting = String(e.message).slice(0, 300); job.waitingSince ||= new Date(now()).toISOString(); await K.put(name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, waiting: e.message }); continue; }
+        if (e.budget) { await kput(K, name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, paused: true }); break; }
+        if (e.wait) { job.waiting = String(e.message).slice(0, 300); job.waitingSince ||= new Date(now()).toISOString(); await kput(K, name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, waiting: e.message }); continue; }
         job.tries = (job.tries || 0) + 1; job.err = String(e.shortMessage || e.message || e).slice(0, 300);
         if (e.fatal || job.tries >= MAX_TRIES) job.step = 'failed';
-        await K.put(name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, err: job.err });
+        await kput(K, name, JSON.stringify(job)); out.push({ slug: job.slug, step: job.step, err: job.err });
       }
     }
     return out;
@@ -279,7 +280,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
       if (typeof over.baseURI === 'string') job.baseURI = over.baseURI.slice(0, 300); if (over.name) job.name = String(over.name).slice(0, 100); if (over.symbol) job.symbol = String(over.symbol).slice(0, 32); }
     job.hold = undefined; job.waiting = undefined; job.waitingSince = undefined; job.lease = 0;
     if (job.step === 'failed') { job.step = job.listingId ? (!Object.keys(job.escrows).some(k => k !== job.native) && !job.gas?.refuel ? 'refuel' : Object.keys(job.wired).length ? 'wire' : 'mirrors') : 'list'; job.tries = 0; job.err = undefined; }
-    await K.put('bjob:' + slug, JSON.stringify(job));
+    await kput(K, 'bjob:' + slug, JSON.stringify(job));
     return job;
   }
 

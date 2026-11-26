@@ -13,6 +13,7 @@ import { makeLaunchpad } from './launchpad.js';
 import { makeHolderAllow } from './holderallow.js';
 import { verifySolanaSetup } from './solswitch.js';
 import { makeBridgeAuto } from './bridgeauto.js';
+import { kput } from './kvput.js';
 import { makeLinkBridge, makePublishBridged } from './bridgelink.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
@@ -182,7 +183,7 @@ async function saveCollectionPatch(env, slug, patch) {
   const stamp = { ...patch, updatedAt: new Date().toISOString() };
   if (STATIC[slug]) { const cur = (await env.COLLECTIONS.get('ovr:' + slug, 'json')) || {}; const v = { ...cur, ...stamp }; await env.COLLECTIONS.put('ovr:' + slug, JSON.stringify(v)); return v; }
   const cur = await env.COLLECTIONS.get('col:' + slug, 'json'); if (!cur) bad('not found', 404);
-  const v = { ...cur, ...stamp }; await env.COLLECTIONS.put('col:' + slug, JSON.stringify(v)); return v;
+  const v = { ...cur, ...stamp }; await kput(env.COLLECTIONS, 'col:' + slug, JSON.stringify(v)); return v;
 }
 async function allowedContract(env, osChain, contract) {
   const key = osToKey[osChain]; if (!key) return false; const c = lc(contract);
