@@ -253,7 +253,7 @@ async function osSlugFor(env, chainKey, contract) {
   const r = await osFetch(env, `/chain/${os}/contract/${contract}`); const j = await r.json().catch(() => ({}));
   if (j.collection) slugCache.set(k, j.collection); return j.collection || null;
 }
-async function osListings(env, col, ctx) {
+async function osListings(env, col) {
   const out = [];
   for (const d of col.deployments || []) {
     const s = await osSlugFor(env, d.chain, d.address); if (!s) continue;
@@ -276,7 +276,7 @@ async function osListings(env, col, ctx) {
       if (!cursor) break;
     }
   }
-  return listingImages().enrich(env, col, out, ctx);
+  return out;
 }
 async function osStats(env, col) {
   const per = {};
@@ -334,6 +334,7 @@ async function bustListings(contract, key) {
     await caches.default.delete(new Request('https://cache.multisea/l:' + s)).catch(() => {});
     await caches.default.delete(new Request('https://cache.multisea/l2:' + s)).catch(() => {});
     await caches.default.delete(new Request('https://cache.multisea/l3:' + s)).catch(() => {});
+    await caches.default.delete(new Request('https://cache.multisea/l4:' + s)).catch(() => {});
   }
 }
 
@@ -727,7 +728,7 @@ async function handle(req, env, url, ctx) {
   if (M === 'GET' && p[0] === 'os' && p.length === 3) {
     if (!env.OPENSEA_API_KEY) bad('server not configured', 503);
     const col = await getCollection(env, p[1]); if (!col || col.status !== 'approved') bad('not found', 404);
-    if (p[2] === 'listings') return listingJson({ listings: await cached(`l3:${p[1]}`, LISTING_TTL, () => osListings(env, col, ctx), LISTING_SWR, ctx) });
+    if (p[2] === 'listings') { const rows = await cached(`l4:${p[1]}`, LISTING_TTL, () => osListings(env, col), LISTING_SWR, ctx); return listingJson({ listings: await listingImages().enrich(env, col, rows, ctx) }); }
     if (p[2] === 'stats') return { stats: await cached(`s:${p[1]}`, 300, () => osStats(env, col)) };
     if (p[2] === 'items') { const ch = url.searchParams.get('chain') || ''; const nx = url.searchParams.get('next') || ''; if (nx.length > 400) bad('bad cursor'); return await cached(`i:${p[1]}:${ch}:${nx}`, 600, () => osItems(env, col, ch, nx)); }
   }

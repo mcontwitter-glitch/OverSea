@@ -5,7 +5,7 @@ import { kput } from './kvput.js';
 
 const TTL = 14 * 24 * 3600;
 const OS_BUDGET = 12; // leave room in the 60/min OpenSea budget for the listings pages themselves
-const CONCURRENCY = 8;
+const CONCURRENCY = 10;
 const GATEWAYS = ['https://ipfs.filebase.io/ipfs/', 'https://gateway.pinata.cloud/ipfs/'];
 
 const ipfs = (u) => {
@@ -61,13 +61,23 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
     const name = n.name || '';
     return image ? { image, name } : null;
   }
-  async function fromURI(chain, contract, id) {
+  async function tokenURI(chain, contract, id, prefix) {
+    if (prefix) return prefix + id + (prefix.endsWith('.json') ? '' : '');
     const hex = await rpcCall(chain, contract, '0xc87b56dd' + BigInt(id).toString(16).padStart(64, '0'));
-    const meta = await jsonFrom(decodeString(hex), fetchImpl);
-    if (!meta) return null;
+    return decodeString(hex) || '';
+  }
+  function prefixOf(uri) {
+    const m = String(uri || '').match(/^(.*\/)\d+(\.json)?$/);
+    return m ? m[1] + (m[2] && !m[1].endsWith('.json') ? '' : '') : '';
+  }
+  async function fromURI(chain, contract, id, prefix) {
+    const uri = await tokenURI(chain, contract, id, prefix);
+    if (!uri) return null;
+    const meta = await jsonFrom(uri, fetchImpl);
+    if (!meta) return { uri };
     const image = ipfs(meta.image || meta.image_url || '');
     const name = meta.name || '';
-    return image ? { image, name } : null;
+    return { image, name, uri, prefix: prefixOf(uri) };
   }
 
   async function enrich(env, col, listings, ctx) {
@@ -84,12 +94,22 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
     const miss = [];
     jobs.forEach((j, i) => { if (cached[i]?.image) have.set(j.k, { image: cached[i].image, name: cached[i].name || '' }); else miss.push(j); });
 
+    // Learn a tokenURI prefix (…/id) from one RPC, then fetch metadata for the rest without more eth_calls.
+    // OpenSea is the fallback, capped, so a listings page does not burn the 60/min budget.
+    const prefixBy = {};
+    const byContract = new Map();
+    for (const j of miss) { const pk = j.chain + ':' + lc(j.contract); (byContract.get(pk) || byContract.set(pk, []).get(pk)).push(j); }
+    for (const [pk, js] of byContract) {
+      const rec = await fromURI(js[0].chain, js[0].contract, js[0].id, '').catch(() => null);
+      if (rec?.prefix) prefixBy[pk] = rec.prefix;
+    }
     let osLeft = OS_BUDGET;
     const writes = [];
     await pool(miss, CONCURRENCY, async (j) => {
-      let rec = null;
-      if (osLeft > 0) { osLeft--; rec = await fromOS(env, j.chain, j.contract, j.id).catch(() => null); }
-      if (!rec?.image) rec = await fromURI(j.chain, j.contract, j.id).catch(() => null);
+      const pk = j.chain + ':' + lc(j.contract);
+      let rec = await fromURI(j.chain, j.contract, j.id, prefixBy[pk] || '').catch(() => null);
+      if (rec?.prefix) prefixBy[pk] = rec.prefix;
+      if (!rec?.image && osLeft > 0) { osLeft--; rec = await fromOS(env, j.chain, j.contract, j.id).catch(() => null); }
       if (!rec?.image) return;
       rec = { image: ipfs(rec.image), name: rec.name || '' };
       have.set(j.k, rec);
