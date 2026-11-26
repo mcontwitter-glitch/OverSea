@@ -13,6 +13,8 @@ import { sol, onSol, shortSol, signSolMessage } from './solconnect';
 import { openSolConnect } from './solmenu';
 import { profileWallets, authorizeLink, finishLink, unlinkWallet, MAX_LINKED, type ProfileWallets } from './walletlinks';
 import { imageSrc } from './datauri';
+import { cacheGet, cachePut } from './colcache';
+import { apiFetch } from './apifetch';
 const ERC20 = parseAbi(['function transfer(address,uint256) returns (bool)']);
 const ERC721 = parseAbi(['function safeTransferFrom(address,address,uint256)']);
 const ERC1155 = parseAbi(['function safeTransferFrom(address,address,uint256,uint256,bytes)', 'function balanceOf(address,uint256) view returns (uint256)']);
@@ -145,27 +147,41 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
   let buf: Nft[] | null = null; // refresh collects here so the grid doesn't flash empty
   const merge = (list: Nft[], w: string) => { const out = [...new Map([...((buf ?? S.nfts) || []), ...list.map(own).map(n => ({ ...n, wallet: w }))].map(n => [wkey(n), n])).values()]; if (buf) buf = out; else S.nfts = out; };
   // Cursor / insight-page keys are `${wallet}|${chain}` so each linked EVM wallet pages on its own.
-  async function walletNftsOf(w: Hex, fresh: boolean) {
-    const r = await fetch(`${API}/wallet/${w}/nfts${fresh ? "?fresh=1" : ""}`); if (!r.ok) throw Error(`NFT list unavailable (API ${r.status}).`);
-    const j = await r.json(); merge(j.nfts || [], w);
-    Object.entries(j.cursors || {}).forEach(([k, c]) => { S.cursors[w + '|' + k] = c as string; });
-    const failures = new Set<string>(j.failed || []), unsupported: string[] = [];
-    await Promise.all((j.unsupported || []).map(async (k: string) => {
-      if (!insightOn(k)) { unsupported.push(k); return; }
+  const nftKeyCache = () => 'ms:wnfts:' + primary().toLowerCase();
+  const persistNfts = () => { if (S.nfts) cachePut(nftKeyCache(), { at: Date.now(), nfts: S.nfts, cursors: S.cursors, insightPage: S.insightPage }).catch(() => {}); };
+  function applyPart(j: any, w: string) {
+    merge(j?.nfts || [], w);
+    Object.entries(j?.cursors || {}).forEach(([k, c]) => { S.cursors[w + '|' + k] = c as string; });
+    const failures = new Set<string>(j?.failed || []), unsupported: string[] = [];
+    return { notes: (j?.notes || []) as string[], failures, unsupported, rest: (j?.unsupported || []) as string[] };
+  }
+  async function fillInsight(w: Hex, unsupported: string[], failures: Set<string>) {
+    await Promise.all(unsupported.map(async (k: string) => {
+      if (!insightOn(k)) return;
       try { const x = await ownedNfts(k, w); merge(x.nfts, w); if (x.more) S.insightPage[w + '|' + k] = 1; } catch { failures.add(k); }
     }));
-    return { notes: (j.notes || []) as string[], failures, unsupported };
+    return unsupported.filter(k => !insightOn(k));
   }
   async function nfts(fresh = false) {
+    const ws = evmWallets();
+    const r = await apiFetch(`${API}/wallets/nfts?addresses=${ws.join(',')}${fresh ? '&fresh=1' : ''}`, { retries: 3 });
+    if (!r?.ok) { if (S.nfts?.length) return; throw Error("Couldn't load the NFT list right now. Try Refresh in a moment."); }
+    const j = await r.json();
     buf = []; S.cursors = {}; S.insightPage = {};
-    const ws = evmWallets(); const res = await Promise.allSettled(ws.map(w => walletNftsOf(w, fresh)));
-    const got = buf as Nft[]; buf = null;
-    if (res.every(r => r.status === 'rejected')) { S.nfts = null; throw (res[0] as PromiseRejectedResult).reason; }
-    S.nfts = [...got, ...(S.nfts || []).filter(n => n.chain === 'solana')];
     const failures = new Set<string>(), unsupported = new Set<string>(), notes = new Set<string>();
-    res.forEach(r => { if (r.status === 'fulfilled') { r.value.failures.forEach(k => failures.add(k)); r.value.unsupported.forEach(k => unsupported.add(k)); r.value.notes.forEach(n => notes.add(n)); } });
-    const down = ws.filter((_, i) => res[i].status === 'rejected');
+    const down: string[] = [];
+    for (const w of ws) {
+      const part = j.wallets?.[w.toLowerCase()] || j.wallets?.[w];
+      if (!part) { down.push(w); continue; }
+      const a = applyPart(part, w);
+      a.notes.forEach(n => notes.add(n)); a.failures.forEach(k => failures.add(k));
+      (await fillInsight(w, a.rest, failures)).forEach(k => unsupported.add(k));
+    }
+    const got = buf as Nft[]; buf = null;
+    if (!got.length && down.length === ws.length) { if (S.nfts?.length) return; throw Error("Couldn't load the NFT list right now. Try Refresh in a moment."); }
+    S.nfts = [...got, ...(S.nfts || []).filter(n => n.chain === 'solana')];
     S.note = [...notes, down.length ? `Couldn't load NFTs of ${down.map(short).join(', ')}; refresh to retry.` : '', failures.size ? `Couldn't load all NFTs on ${[...failures].map(k => chains[k]?.name || k).join(', ')}; refresh to retry.` : '', unsupported.size ? `NFT indexing unavailable on ${[...unsupported].map(k => chains[k]?.name || k).join(', ')}.` : ''].filter(Boolean).join(' ');
+    persistNfts();
     await Promise.all(ws.map(w => attachTimes((S.nfts || []).filter(n => n.wallet === w), w)));
   }
   // Linked wallets (worker KV) and the Solana NFTs of the Solana ones (src/solnfts.ts, public RPC, free).
@@ -223,7 +239,7 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     if (S.busy) return; S.busy = true; draw();
     await (profTask ?? fetchProf(fresh));
     const ws = evmWallets(), mi = ws.indexOf(me0 as Hex);
-    const nftTask = nfts(fresh).catch(e => { S.note = friendly(e); }).then(draw);
+    const nftTask = nfts(fresh).catch(e => { if (!S.nfts?.length) S.note = friendly(e); }).then(draw);
     const solTask = nftTask.then(() => loadSol(fresh)).catch(() => {}).then(draw);
     const rates = await usdRates().catch(() => ({ ETH: null, APE: null, BNB: null } as UsdRates)); S.rates = rates;
     const price = (k: string, bal: ChainBal) => {
@@ -459,11 +475,16 @@ export function mountUserWallet(root: HTMLElement, address: Hex) {
     const k = b.dataset.more || b.dataset.insight;
     if (k) { const [w, ck] = k.split('|') as [Hex, string]; b.setAttribute('disabled', ''); try {
       if (b.dataset.more) {
-        const r = await fetch(`${API}/wallet/${w}/nfts?chain=${ck}&next=${encodeURIComponent(S.cursors[k])}`); if (!r.ok) throw Error('NFT page unavailable');
+        const r = await apiFetch(`${API}/wallet/${w}/nfts?chain=${ck}&next=${encodeURIComponent(S.cursors[k])}`); if (!r?.ok) throw Error('NFT page unavailable');
         const j = await r.json(); if (j.failed?.length) throw Error('NFT page unavailable'); merge(j.nfts || [], w); delete S.cursors[k]; Object.entries(j.cursors || {}).forEach(([c, v]) => { S.cursors[w + '|' + c] = v as string; });
       } else { const j = await ownedNfts(ck, w, S.insightPage[k]); merge(j.nfts, w); if (j.more) S.insightPage[k]++; else delete S.insightPage[k]; }
       await attachTimes((S.nfts || []).filter(n => n.wallet === w), w);
     } catch (e) { S.note = `Couldn't load more NFTs on ${chains[ck].name}: ${friendly(e)}`; } draw(); }
   });
-  onWallet(() => draw()); onSol(() => draw()); loadProfile(address).then(draw); draw(); load();
+  onWallet(() => draw()); onSol(() => draw()); loadProfile(address).then(draw); draw();
+  cacheGet<{ nfts: Nft[]; cursors?: Record<string, string>; insightPage?: Record<string, number> }>('ms:wnfts:' + me0).then(hit => {
+    if (!hit?.nfts?.length || S.nfts) return;
+    S.nfts = hit.nfts; if (hit.cursors) S.cursors = hit.cursors; if (hit.insightPage) S.insightPage = hit.insightPage; draw();
+  }).catch(() => {});
+  load();
 }

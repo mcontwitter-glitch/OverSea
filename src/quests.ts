@@ -23,7 +23,8 @@ function draw() {
   const q = st.q;
   if (prof) {
     const p = st.prof;
-    el.innerHTML = `      ${st.err ? `<p class="err">${esc(st.err)}</p>` : !p ? '<div class="spin"></div>' : `
+    const soft = /couldn't refresh|rate limited|429/i.test(st.err || '');
+    el.innerHTML = `      ${st.err && !soft ? `<p class="err">${esc(st.err)}</p>` : !p ? (soft ? '' : '<div class="spin"></div>') : `
       <div class="fcard"><div class="gh">Chain badges <span class="mut small">${q.count}/${q.total}</span></div>${badgeRow(q)}${q.eligible ? '<p class="ok small">✓ All 5 badges: eligible for the rare Chain Voyager mint.</p>' : ''}<a class="obtn sm" href="/quests">Go to quests →</a></div>
       <div class="gstats"><div class="gstat"><b>${p.referrals.friends}</b><span>Friends referred</span></div><div class="gstat"><b>${p.referrals.earnings?.sales || 0}</b><span>Referred sales</span></div><div class="gstat"><b>${p.bundles.length}</b><span>Bundles listed</span></div></div>
       ${p.bundles.length ? `<div class="fcard"><div class="gh">Bundles</div>${p.bundles.map((b: any) => `<a class="frow" href="/bundles?id=${esc(b.id)}"><span><b>${esc(b.title)}</b><em>${b.legs.map((l: any) => logo(l.chain)).join('')} ${esc(b.status)}</em></span></a>`).join('')}</div>` : ''}`}`;

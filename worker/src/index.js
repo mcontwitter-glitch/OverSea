@@ -82,6 +82,18 @@ function snapKey(url, req) {
   if (p === '/collections') return 'snap:cols';
   if (parts[0] === 'collections' && parts.length === 2 && SLUG.test(parts[1])) return 'snap:col:' + parts[1];
   if (parts[0] === 'os' && parts.length === 3 && SLUG.test(parts[1]) && (parts[2] === 'stats' || parts[2] === 'listings')) return 'snap:' + parts[2] + ':' + parts[1];
+  if (p === '/health') return 'snap:health';
+  if (p === '/launchpad/drops') return 'snap:drops';
+  if (p === '/bridge/collections') return 'snap:bcols';
+  if (parts[0] === 'profile' && parts.length === 2 && ADDR.test(parts[1])) return 'snap:prof:' + parts[1].toLowerCase();
+  if (parts[0] === 'profile' && parts[1] === 'wallets' && parts.length === 3) return 'snap:pw:' + parts[2].toLowerCase();
+  if (parts[0] === 'quests' && parts.length === 2 && ADDR.test(parts[1])) return 'snap:quests:' + parts[1].toLowerCase();
+  // First-page wallet galleries only (no cursor). Batch keys are sorted so order doesn't matter.
+  if (p === '/wallets/nfts' && !url.searchParams.get('next')) {
+    const addrs = [...new Set((url.searchParams.get('addresses') || '').split(',').map(a => a.trim().toLowerCase()).filter(a => ADDR.test(a)))].sort();
+    if (addrs.length && addrs.length <= 12) return 'snap:wnfts:' + addrs.join(',');
+  }
+  if (parts[0] === 'wallet' && parts[2] === 'nfts' && parts.length === 3 && !url.searchParams.get('next')) return 'snap:wnft:' + parts[1].toLowerCase() + ':' + (url.searchParams.get('chain') || '');
   return null;
 }
 async function readSnap(env, key) {
@@ -901,33 +913,40 @@ export default {
     if (url.pathname.startsWith('/onchain-uri/')) { const r = await handleOnchainUri(req, env, url, { chains: { ...chains, ...(LP.mainnet?.chains || {}) }, kv: env.COLLECTIONS }); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
-    // Separate buckets: RPC/media/owner-snapshot traffic (300/min) must not use up the 60/min budget of listings, buy and API routes.
-    const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') || url.pathname.startsWith('/owners/'); // /owners replaces ~140 browser RPC calls
+    // Abuse-only per-IP caps for live origin work. Cache hits (below) never count.
+    // Public/same-origin GETs: 600/min. Other GETs: 180/min. Writes: 60/min. RPC/media/owners: 600/min.
+    const heavy = url.pathname.startsWith('/media/') || url.pathname.startsWith('/rpc/') || url.pathname.startsWith('/owners/');
     const ttl = edgeTtl(url, req);
     const snapK = snapKey(url, req);
+    const wantFresh = url.searchParams.get('fresh') === '1';
     const cache = globalThis.caches?.default;
     const cors = (res) => { const r = new Response(res.body, res); for (const [k, v] of Object.entries(H)) r.headers.set(k, v); return r; };
+    const cc = (max, sMax) => `public, max-age=${Math.max(0, max)}, s-maxage=${sMax || max}, stale-while-revalidate=300, stale-if-error=86400`;
     const serveCached = (hit, kind) => {
       const r = cors(hit);
       const at = Number(hit.headers.get('x-ms-cached-at') || 0);
       const age = at ? Math.max(0, Math.round((Date.now() - at) / 1000)) : 0;
       const fresh = ttl || 30;
-      r.headers.set('cache-control', `public, max-age=${Math.max(0, fresh - age)}, stale-while-revalidate=300, stale-if-error=86400`);
+      r.headers.set('cache-control', cc(Math.max(0, fresh - age), fresh));
       r.headers.set('x-ms-cache', kind);
       return r;
     };
-    // Cheap public GETs: a fresh (or SWR) edge/KV copy is served without spending the 60/min cap.
+    // Public GETs: a fresh (or SWR) edge/KV copy is served without spending the per-IP cap.
+    // `fresh=1` skips a fresh hit so Refresh revalidates, but a stale copy is still kept for fallback.
     let staleHit = null;
     if (ttl && cache) {
       const hit = await cache.match(edgeCacheKey(url)).catch(() => null);
       if (hit) {
         const at = Number(hit.headers.get('x-ms-cached-at') || 0);
         const age = at ? (Date.now() - at) / 1000 : 0;
-        if (!at || age < ttl) return serveCached(hit, 'fresh');
+        if (!wantFresh && (!at || age < ttl)) return serveCached(hit, 'fresh');
         staleHit = hit;
       }
     }
-    const over = limited((heavy ? 'h:' : 'a:') + ip, heavy ? 300 : 60);
+    const isGet = req.method === 'GET';
+    const cap = heavy ? 600 : isGet ? (ch || !req.headers.get('origin') ? 600 : 180) : 60;
+    const bucket = heavy ? 'h:' : isGet ? 'g:' : 'w:';
+    const over = limited(bucket + ip, cap);
     const fallback = async () => {
       if (staleHit) return serveCached(staleHit, 'stale');
       if (snapK) { const snap = await readSnap(env, snapK); if (snap) return cors(snapRes(snap, 'snap')); }
@@ -942,17 +961,21 @@ export default {
       const out = await handle(req, env, url, ctx);
       const res = out instanceof Response ? out : new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json' } });
       for (const [k, v] of Object.entries(H)) res.headers.set(k, v);
-      if (ttl && res.ok && !res.headers.has('cache-control')) res.headers.set('cache-control', `public, max-age=${ttl}, stale-while-revalidate=300, stale-if-error=86400`);
+      if (ttl && res.ok && !res.headers.has('cache-control')) res.headers.set('cache-control', cc(ttl, ttl));
+      else if (ttl && res.ok && res.headers.has('cache-control') && !/s-maxage=/i.test(res.headers.get('cache-control') || '')) {
+        const cur = res.headers.get('cache-control');
+        res.headers.set('cache-control', cur + `, s-maxage=${ttl}, stale-if-error=86400`);
+      }
       if (ttl && res.ok && cache) {
         const body = await res.clone().text();
-        const store = new Response(body, { headers: { 'content-type': res.headers.get('content-type') || 'application/json', 'cache-control': `public, max-age=${EDGE_KEEP}`, 'x-ms-cached-at': String(Date.now()) } });
+        const store = new Response(body, { headers: { 'content-type': res.headers.get('content-type') || 'application/json', 'cache-control': `public, max-age=${EDGE_KEEP}, s-maxage=${EDGE_KEEP}`, 'x-ms-cached-at': String(Date.now()) } });
         const put = cache.put(edgeCacheKey(url), store).catch(() => {});
         if (ctx?.waitUntil) ctx.waitUntil(put); else await put;
         if (snapK) writeSnap(env, ctx, snapK, body);
       }
       return res;
     };
-    if (staleHit) {
+    if (staleHit && !wantFresh) {
       const bg = live().catch(() => {});
       if (ctx?.waitUntil) ctx.waitUntil(bg);
       return serveCached(staleHit, 'swr');

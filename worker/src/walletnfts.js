@@ -54,28 +54,48 @@ export function makeWalletNfts({ CFG, rpcFanout, accountNfts, bad, ADDR }) {
     }
     return { nfts, errors, scanned, failedChains };
   }
-  return async (req, env, url, p, M) => {
-    if (M !== 'GET' || p[0] !== 'wallet' || p[2] !== 'nfts' || p.length !== 3) return undefined;
-    if (!ADDR.test(p[1])) bad('invalid address');
-    const address = p[1].toLowerCase(), want = url.searchParams.get('chain') || '', next = url.searchParams.get('next') || '';
+  // Concurrent viewers of the same wallet share one OpenSea + on-chain refresh.
+  const inflight = new Map();
+  async function loadOne(env, address, want, next, fresh) {
     if (want && !keys.includes(want)) bad('unsupported chain');
     if (next.length > 400 || (next && !want)) bad('bad cursor');
     const selected = want ? [want] : keys;
     const cache = caches.default, cacheReq = new Request('https://cache.multisea/wallet-nfts/' + address + '?' + new URLSearchParams({ chain: want, next }));
     const hit = await cache.match(cacheReq);
-    // fresh=1 always re-reads (used after Send and Refresh) so a just-moved MultiSea NFT is not served from cache.
-    if (hit && url.searchParams.get('fresh') !== '1') { const j = await hit.json(); return { ...j, cached: true }; }
-    const parts = await Promise.all(selected.map(async k => {
-      if (!CFG.chains[k]?.openseaSlug) return { nfts: [], error: null, unsupported: true };
-      if (!env.OPENSEA_API_KEY) return { nfts: [], error: 'OpenSea unavailable' };
-      return accountNfts(env, address, k, next);
-    }));
-    const owned = !next ? await onchain(address, selected) : { nfts: [], errors: [], scanned: new Set(), failedChains: new Set() };
-    const fromIndex = parts.flatMap(x => x.nfts).filter(n => !owned.scanned.has(n.chain + ':' + String(n.contract).toLowerCase()));
-    const dedup = new Map([...fromIndex, ...owned.nfts].map(n => [n.chain + ':' + n.contract.toLowerCase() + ':' + n.id, n]));
-    const failed = selected.filter((k, i) => parts[i].error || owned.failedChains.has(k));
-    const result = { address, nfts: [...dedup.values()], failed, unsupported: selected.filter((k, i) => parts[i].unsupported), cursors: Object.fromEntries(selected.map((k, i) => [k, parts[i].next]).filter(([, n]) => n)), notes: !next ? ['MultiSea collections (LIL FOOTS, Island\'s) are read on-chain; other collections depend on OpenSea indexing.', ...owned.errors] : [], at: Date.now() };
-    await cache.put(cacheReq, new Response(JSON.stringify(result), { headers: { 'cache-control': `public, max-age=${failed.length ? 10 : 30}` } }));
-    return result;
+    if (hit && !fresh) { const j = await hit.json(); return { ...j, cached: true }; }
+    const ik = address + ':' + want + ':' + next;
+    if (inflight.has(ik)) return inflight.get(ik);
+    const run = (async () => {
+      const parts = await Promise.all(selected.map(async k => {
+        if (!CFG.chains[k]?.openseaSlug) return { nfts: [], error: null, unsupported: true };
+        if (!env.OPENSEA_API_KEY) return { nfts: [], error: 'OpenSea unavailable' };
+        return accountNfts(env, address, k, next);
+      }));
+      const owned = !next ? await onchain(address, selected) : { nfts: [], errors: [], scanned: new Set(), failedChains: new Set() };
+      const fromIndex = parts.flatMap(x => x.nfts).filter(n => !owned.scanned.has(n.chain + ':' + String(n.contract).toLowerCase()));
+      const dedup = new Map([...fromIndex, ...owned.nfts].map(n => [n.chain + ':' + n.contract.toLowerCase() + ':' + n.id, n]));
+      const failed = selected.filter((k, i) => parts[i].error || owned.failedChains.has(k));
+      const result = { address, nfts: [...dedup.values()], failed, unsupported: selected.filter((k, i) => parts[i].unsupported), cursors: Object.fromEntries(selected.map((k, i) => [k, parts[i].next]).filter(([, n]) => n)), notes: !next ? ['MultiSea collections (LIL FOOTS, Island\'s) are read on-chain; other collections depend on OpenSea indexing.', ...owned.errors] : [], at: Date.now() };
+      await cache.put(cacheReq, new Response(JSON.stringify(result), { headers: { 'cache-control': `public, max-age=${failed.length ? 10 : 30}` } }));
+      return result;
+    })().finally(() => inflight.delete(ik));
+    inflight.set(ik, run);
+    return run;
+  }
+  return async (req, env, url, p, M) => {
+    if (M !== 'GET') return undefined;
+    const fresh = url.searchParams.get('fresh') === '1';
+    // Batch: one request for every linked wallet on a profile (max 12).
+    if (p[0] === 'wallets' && p[1] === 'nfts' && p.length === 2) {
+      const addrs = [...new Set((url.searchParams.get('addresses') || '').split(',').map(a => String(a || '').trim().toLowerCase()).filter(a => ADDR.test(a)))];
+      if (!addrs.length || addrs.length > 12) bad('provide 1 to 12 addresses');
+      const wallets = {};
+      await Promise.all(addrs.map(async a => { wallets[a] = await loadOne(env, a, '', '', fresh); }));
+      return { wallets, at: Date.now() };
+    }
+    if (p[0] !== 'wallet' || p[2] !== 'nfts' || p.length !== 3) return undefined;
+    if (!ADDR.test(p[1])) bad('invalid address');
+    const address = p[1].toLowerCase(), want = url.searchParams.get('chain') || '', next = url.searchParams.get('next') || '';
+    return loadOne(env, address, want, next, fresh);
   };
 }

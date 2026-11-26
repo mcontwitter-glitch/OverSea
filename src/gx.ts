@@ -2,6 +2,7 @@
 import { createWalletClient, custom, formatUnits, type Hex } from 'viem';
 import CFG from '../config/collections.json';
 import { API, wallet, readClient, ensureChain, vchain } from './wallet';
+import { apiFetch } from './apifetch';
 import { relayQuote, quoteWithFlatFee, summarize, RELAY } from './xpaycore';
 export const chains = CFG.chains as Record<string, { name: string; chainId: number; rpc: string; native: string; openseaSlug: string | null; explorer: string }>;
 export const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -10,7 +11,14 @@ export const logo = (k: string, cls = 'cl') => `<img class="${cls}" src="/logos/
 export const fmtWei = (w: bigint | string, d = 18, max = 6) => (+formatUnits(BigInt(w || 0), d)).toLocaleString(undefined, { maximumFractionDigits: max });
 export const usdTxt = (v: number | null | undefined) => (v == null || !isFinite(v) ? '' : '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-export async function getJ(path: string) { const r = await fetch(API + path); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; }
+export async function getJ(path: string) {
+  const r = await apiFetch(API + path, { retries: 3 });
+  const j = await (r ? r.json() : Promise.resolve({})).catch(() => ({}));
+  if (r?.ok) return j;
+  const raw = String(j.error || (r ? 'HTTP ' + r.status : 'network'));
+  if (r?.status === 429 || /rate limited/i.test(raw)) throw new Error("Couldn't refresh this right now. Try again in a moment.");
+  throw new Error(raw);
+}
 export const closed = (m: HTMLElement) => new Promise<never>((_, rej) => m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) rej(Object.assign(new Error('closed'), { kind: 'closed' })); }));
 // Known MultiSea collections (static) for item thumbnails.
 export function thumbFor(chain: string, token: string, id: string | number) {
