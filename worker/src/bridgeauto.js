@@ -109,7 +109,7 @@ export function makeBridgeAuto({ cfgUrl = 'https://multisea.io/bridge.json', fet
     }
     if (job.step === 'mirrors') {
       for (const k of keys()) { if (job.escrows[k]) continue;
-        { const opb = await mk(c, k).pub.getBalance({ address: privateKeyToAccount(pk).address }), need = await setupWei(k); if (opb < need) throw Object.assign(new Error(`waiting for gas on ${c.chains[k].name}: operator has ${formatEther(opb)}, needs ~${formatEther(need)} ${c.chains[k].native} (LayerZero gas drop in flight, or top up)`), { wait: true }); }
+        if (job.pending?.tag !== 'mirror:' + k) { const opb = await mk(c, k).pub.getBalance({ address: privateKeyToAccount(pk).address }), need = await setupWei(k); if (opb < need) throw Object.assign(new Error(`waiting for gas on ${c.chains[k].name}: operator has ${formatEther(opb)}, needs ~${formatEther(need)} ${c.chains[k].native} (LayerZero gas drop in flight, or top up)`), { wait: true }); }
         const r = await tx(k, 'mirror:' + k, { functionName: 'deployMirror', args: [BigInt(job.listingId), job.name, job.symbol, job.baseURI, BigInt(job.firstId ?? 1), BigInt(job.supply)] });
         const ev = parseEventLogs({ abi: FAC, logs: r.logs, eventName: 'MirrorDeployed' })[0].args;
         job.mirrors[k] = lc(ev.mirror); job.escrows[k] = lc(ev.escrow); job.fromBlock[k] = Number(r.blockNumber); await save(); }
