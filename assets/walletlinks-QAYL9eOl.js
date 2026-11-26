@@ -1,1 +1,0 @@
-export{F as profileWallets}from"./wallet-BmxJ2POa.js";

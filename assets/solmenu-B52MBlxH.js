@@ -1,1 +1,0 @@
-export{D as openSolConnect}from"./wallet-BmxJ2POa.js";
