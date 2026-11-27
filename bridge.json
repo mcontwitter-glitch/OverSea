@@ -75,5 +75,19 @@
  "collections": [],
  "bridgeDisabled": [
   "claymons-dd97cd"
- ]
+ ],
+ "bridgeActivate": {
+  "claymons-dd97cd": {
+   "name": "Claymons",
+   "owner": "0x76Ad4178E6873C7308FCC477001562Ca568C3D6d",
+   "escrow": "0x33a90080853B50049354657b0152632229b299Ae",
+   "validator": "0x721C008fdff27BF06E7E123956E2Fe03B63342e3",
+   "listId": 98,
+   "listType": 1,
+   "chain": "robinhood",
+   "ruleset": "Whitelist",
+   "toolUrl": "https://developers.apptokens.com/modification",
+   "toolLabel": "Transfer Lists"
+  }
+ }
 }
