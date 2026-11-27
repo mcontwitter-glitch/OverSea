@@ -7,6 +7,7 @@ import { wallet, readClient, ensureChain, vchain, friendly } from './wallet';
 import { logo, esc, short } from './gx';
 import { loadFlush, founderFlushHtml, doFlush } from './flushadmin';
 import { initRevshareFounder, mountRevshareFounder, bindRevshareFounder } from './rsvfounder';
+import { bridgeActivateFor, bridgeActivateHtml, bindBridgeActivateCopy, type BridgeActivate } from './bridgeactivate';
 
 export type Dep = { chain: string; address: string };
 export type FounderCol = { name: string; slug?: string; deployments: Dep[]; creator?: string | null; supply?: number };
@@ -53,6 +54,7 @@ type S = {
   col: FounderCol; rows: Row[]; roy: { recv: string; bps: number } | null; canSet: boolean;
   royTo: string; royPct: string; picked: Set<string>; amounts: Record<string, string>; all: boolean;
   prev: Record<string, Prev>; msg: string; busy: boolean; withdrawn: Set<string>; sent: Set<string>; chunkAt: Record<string, number>;
+  activate: BridgeActivate | null;
 };
 let S: S | null = null; let box: HTMLElement | null = null;
 
@@ -71,8 +73,9 @@ export function openFounder(col: FounderCol) {
   document.body.appendChild(m);
   box = m.querySelector('.fndbody');
   m.addEventListener('click', e => { if (e.target === m || (e.target as HTMLElement).classList.contains('mx')) { m.remove(); S = null; box = null; } });
-  S = { col, rows: [], roy: null, canSet: false, royTo: '', royPct: '', picked: new Set(), amounts: {}, all: false, prev: {}, msg: '', busy: false, withdrawn: new Set(), sent: new Set(), chunkAt: {} };
-  load().then(draw); bind(m); bindRevshareFounder(m); initRevshareFounder(col);
+  S = { col, rows: [], roy: null, canSet: false, royTo: '', royPct: '', picked: new Set(), amounts: {}, all: false, prev: {}, msg: '', busy: false, withdrawn: new Set(), sent: new Set(), chunkAt: {} , activate: null };
+  load().then(draw); bind(m); bindBridgeActivateCopy(m); bindRevshareFounder(m); initRevshareFounder(col);
+  if (col.slug) bridgeActivateFor(col.slug).then(n => { if (S && n) { S.activate = n; draw(); } });
 }
 
 async function load() {
@@ -141,6 +144,7 @@ function draw() {
   const airLabel = airTodo.length && S.sent.size ? 'Resume token-bound wallet airdrop' : 'Send to token-bound wallets';
 
   box.innerHTML = `
+    ${S.activate ? bridgeActivateHtml(S.activate) : ''}
     ${founderFlushHtml(S.col.slug)}
     <div class="fndsec"><h4>Claim</h4><p class="mut small">Mint funds sit in the drop until you withdraw. Anyone may call it; the payout always goes to the collection payout address, minus the platform fee.</p>
       ${claimRows || '<p class="mut">No drop contracts.</p>'}

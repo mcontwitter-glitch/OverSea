@@ -3,7 +3,7 @@
 // or on a local/tunnel preview host. Kept tiny so the main bundle never pulls in the bridge code.
 let p: Promise<boolean> | null = null;
 let cfgJ: Promise<any> | null = null;
-const cfgJson = () => (cfgJ ??= fetch('/bridge.json', { cache: 'no-cache' })
+export const cfgJson = () => (cfgJ ??= fetch('/bridge.json', { cache: 'no-cache' })
   .then(r => (r.ok && (r.headers.get('content-type') || '').includes('json') ? r.json() : null)).catch(() => null));
 /** Collections whose bridge is switched off in /bridge.json (`bridgeDisabled: [slug]`); reversible by editing that list. */
 export function bridgeOffFor(slug: string): Promise<boolean> {
