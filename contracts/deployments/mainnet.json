@@ -4,46 +4,51 @@
    "feed": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
    "eid": 30101,
    "chainId": 1,
-   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
-   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495",
+   "factory": "0x5151e5ff163ed2FBff96eDacC9b0e0277c411c8E",
+   "mirrorDeployer": "0x69395808683E00F1140b2Fe38C0e29CfE5294414",
    "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb",
-   "refuelWired": true
+   "refuelWired": true,
+   "escrowDeployer": "0x2aef9B154958842a51dd30AD2BfA5C6406E7f850"
   },
   "base": {
    "feed": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
    "eid": 30184,
    "chainId": 8453,
-   "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
-   "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495",
+   "factory": "0x2aef9B154958842a51dd30AD2BfA5C6406E7f850",
+   "mirrorDeployer": "0xA6afCB16f42cdfE423Dc57e98f6972CcECB08306",
    "refuel": "0xE1f217F8E1c4310B7edBa5BdF5443b4fc1ff1aeb",
-   "refuelWired": true
+   "refuelWired": true,
+   "escrowDeployer": "0x69395808683E00F1140b2Fe38C0e29CfE5294414"
   },
   "apechain": {
    "feed": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35",
    "eid": 30312,
    "chainId": 33139,
-   "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
-   "mirrorDeployer": "0x7093bb0e4695098E74e9028C39488E436E52B74c",
+   "factory": "0x9759c90f4180bE3B502EA4D8E5d820CC888eF4E5",
+   "mirrorDeployer": "0xdfB955F470A676248AC9B6c36Bd4C28b95A53D41",
    "refuel": "0xc12FcB2107fF871f8F48c715f02e72c74B458da9",
-   "refuelWired": true
+   "refuelWired": true,
+   "escrowDeployer": "0x85F8EcA695CD9293ce292590B875e4BE5f8c6E55"
   },
   "bnb": {
    "feed": "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
    "eid": 30102,
    "chainId": 56,
-   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
-   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "factory": "0xBe7B8bEC388E405d13E97121ea1E5a22eFaD96A4",
+   "mirrorDeployer": "0x85F8EcA695CD9293ce292590B875e4BE5f8c6E55",
    "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419",
-   "refuelWired": true
+   "refuelWired": true,
+   "escrowDeployer": "0x9759c90f4180bE3B502EA4D8E5d820CC888eF4E5"
   },
   "robinhood": {
    "feed": "0x697e794251316B02c16b7Be66bae6c98aB702bE5",
    "eid": 30416,
    "chainId": 4663,
-   "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
-   "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+   "factory": "0x85F8EcA695CD9293ce292590B875e4BE5f8c6E55",
+   "mirrorDeployer": "0x68E712847C58B489f648F5397e3dDd3a5f915ce4",
    "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419",
-   "refuelWired": true
+   "refuelWired": true,
+   "escrowDeployer": "0xdfB955F470A676248AC9B6c36Bd4C28b95A53D41"
   }
  },
  "listings": {
@@ -88,6 +93,28 @@
    },
    "robinhood": {
     "factory": "0x3FE49756477D16D5abbe4E635AD73be33cAA2c35"
+   }
+  },
+  "preV3": {
+   "ethereum": {
+    "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+    "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
+   },
+   "base": {
+    "factory": "0x7f93d0719d0896e1c51c66692cdB2309021381eb",
+    "mirrorDeployer": "0x3b26A65Ba6a61e66878ca89F623eEB116f699495"
+   },
+   "apechain": {
+    "factory": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A",
+    "mirrorDeployer": "0x7093bb0e4695098E74e9028C39488E436E52B74c"
+   },
+   "bnb": {
+    "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+    "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
+   },
+   "robinhood": {
+    "factory": "0x6a140fdBa6b79716FF607EA72cbCe09Df8ABd81D",
+    "mirrorDeployer": "0x2063d7386975b97a55bB74669022F2eb0e36Ce5A"
    }
   }
  }

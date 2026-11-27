@@ -11,6 +11,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { kput } from './kvput.js';
 
 const FAC = parseAbi([
+  'error OneWayCollection()',
   'struct Prepaid { address payer; uint32[] eids; uint256 paid; bool used; }',
   'function getPrepaid(bytes32) view returns (Prepaid)',
   'function escrowOf(address) view returns (address)',

@@ -1,5 +1,5 @@
 // MultiSea Bridge: lock an NFT in the source-chain escrow, LayerZero v2 releases it on the destination.
-import { createPublicClient, createWalletClient, custom, http, parseAbi, formatEther, defineChain, type Address } from 'viem';
+import { createPublicClient, createWalletClient, custom, http, parseAbi, formatEther, defineChain, encodeAbiParameters, keccak256, pad, toHex, type Address } from 'viem';
 import { wallet, openConnect, onWallet, API, readClient } from './wallet';
 import { esc } from './shell';
 import { imageSrc } from './datauri';
@@ -17,10 +17,22 @@ export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.js
   if (off.length) c.collections = c.collections.filter(x => !off.includes(x.slug) && !off.includes(x.mirrorsSlug));
   return c; }));
 export const ESCROW = parseAbi(['function quote(uint32,address,uint256,bytes) view returns (uint256,uint256)', 'function bridge(uint32,address,uint256,bytes) payable returns ((bytes32,uint64,(uint256,uint256)))', 'function platformFee() view returns (uint256)']);
+// MultiSeaEscrowV2 (VERSION() == 2): push flow. The holder prepays the fees as credit, then sends the NFT to the escrow
+// itself with safeTransferFrom(data = abi.encode(dstEid, recipient, options)), so creator rules that block contract-
+// initiated transfers (ERC721-C) don't apply to the lock. V1 escrows (no VERSION()) keep the approve + bridge() pull flow.
+export const ESCROW_V2 = parseAbi(['function VERSION() view returns (uint256)', 'function credit(address) view returns (uint256)', 'function prepay() payable', 'function withdrawCredit()', 'function releaseBlocked(address,uint256) view returns (bool)']);
+export const NFT_SAFE = parseAbi(['function safeTransferFrom(address,address,uint256,bytes)', 'error ReleaseBlocked(uint256 tokenId)', 'error InsufficientCredit(uint256 required, uint256 available)', 'error WrongCollection()', 'error BridgeDataRequired()', 'error BadRecipient()', 'error NotHeld(uint256 tokenId)', 'error StalePrice()']);
+const V2_CREDIT_SLOT = 6n; // storage slot of MultiSeaEscrowV2.credit (forge inspect MultiSeaEscrowV2 storageLayout)
+const EVER = new Map<string, Promise<number>>();
+export const escrowVersion = (pub: any, escrow: Address): Promise<number> => {
+  const k = escrow.toLowerCase(); let p = EVER.get(k);
+  if (!p) { p = pub.readContract({ address: escrow, abi: ESCROW_V2, functionName: 'VERSION' }).then((v: bigint) => Number(v)).catch(() => 1); EVER.set(k, p!); }
+  return p!;
+};
 export const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function getApproved(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function approve(address,uint256)', 'function owner() view returns (address)', 'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
 // Launchpad multichain drops (MultiSeaOmniDrop): the holder calls drop.moveTo, priced by the chain's OmniEscrow.quoteMove.
 export const OMNI = parseAbi(['function quoteMove(bytes32,uint32,uint256,address) view returns (uint256,uint256)', 'function moveTo(uint32,uint256,address) payable']);
-export const FACTORY = parseAbi(['function listingFee(uint32[]) view returns (uint256)', 'function list(address,uint32[]) payable returns (uint256,address)', 'function prepay(bytes32,uint32[]) payable', 'function escrowOf(address) view returns (address)']);
+export const FACTORY = parseAbi(['error OneWayCollection()', 'function listingFee(uint32[]) view returns (uint256)', 'function list(address,uint32[]) payable returns (uint256,address)', 'function prepay(bytes32,uint32[]) payable', 'function escrowOf(address) view returns (address)']);
 export const sym = (c: { native?: string }) => c.native || 'ETH';
 const chainOf = (c: BCfg['chains'][string]) => defineChain({ id: c.chainId, name: c.name, nativeCurrency: { name: sym(c), symbol: sym(c), decimals: 18 }, rpcUrls: { default: { http: [new URL(c.rpc, location.origin).href] } } });
 export const pubFor = (c: BCfg['chains'][string]) => createPublicClient({ chain: chainOf(c), transport: http(new URL(c.rpc, location.origin).href) });
@@ -114,7 +126,13 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
     const key = `${s.col}:${s.from}`; const hit = BLK.get(key); if (hit && Date.now() - hit.at < 45_000) return hit.msg;
     const c = cfg.chains[s.from]; const pub = reader(s.from, c); const token = C().contracts[s.from], escrow = C().escrows[s.from]; let msg = '';
     try {
-      const val = await pub.readContract({ address: token, abi: HAS_VALIDATOR, functionName: 'getTransferValidator' }).catch(() => null) as Address | null;
+      const v2 = (await escrowVersion(pub, escrow)) >= 2;
+      if (v2) {
+        const probe = id ?? s.sel ?? s.ids[0] ?? 0;
+        const stuck = await pub.readContract({ address: escrow, abi: ESCROW_V2, functionName: 'releaseBlocked', args: [wallet.address as Address, BigInt(probe)] }).catch(() => true);
+        if (stuck) msg = `${C().name} has creator transfer rules that would stop the MultiSea escrow on ${c.name} from ever sending this NFT back, so bridging is switched off to keep your NFT safe. The collection owner has to allow the escrow ${shortA(escrow)} on its transfer whitelist.`;
+      }
+      const val = v2 ? null : await pub.readContract({ address: token, abi: HAS_VALIDATOR, functionName: 'getTransferValidator' }).catch(() => null) as Address | null;
       if (val && !/^0x0{40}$/i.test(val)) {
         const probe = id ?? s.ids[0] ?? s.sel;
         if (probe != null) {
@@ -290,6 +308,7 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       const [p, lz] = await pub.readContract({ address: escrow, abi: ESCROW, functionName: 'quote', args: [cfg.chains[s.to].eid, to, id, lzOptions(cfg.lzGas)] });
       const value = p + (lz * 102n) / 100n; // small buffer; excess refunded by the escrow
       s.quote = { p, lz };
+      if ((await escrowVersion(pub, escrow)) >= 2) { await pushV2(p, lz, value); return; }
       const bal = await pub.getBalance({ address: wallet.address as Address }).catch(() => null);
       if (bal != null && bal < value) { ctx.need = value; ctx.have = bal; s.status = bridgeErr(new Error('insufficient funds'), ctx); s.cls = 'err'; s.busy = false; return draw(); }
       const ok = (await pub.readContract({ address: token, abi: NFT, functionName: 'getApproved', args: [id] })).toLowerCase() === escrow.toLowerCase()
@@ -306,6 +325,33 @@ export async function mountBridge(el: HTMLElement, opts: { slug?: string } = {})
       s.status = `Step 2/2: confirm the bridge (${fmtE(p + lz)} ${N()}) in your wallet…`; draw();
       const h = await w.writeContract({ address: escrow, abi: ESCROW, functionName: 'bridge', args: [cfg.chains[s.to].eid, to, id, lzOptions(cfg.lzGas)], value });
       await finish(h);
+      }
+      // V2 push: 1) prepay the missing credit, 2) holder's own safeTransferFrom into the escrow. Both dry-run first.
+      async function pushV2(p: bigint, lz: bigint, value: bigint) {
+        const me = wallet.address as Address; const eid = cfg.chains[s.to].eid; const opts = lzOptions(cfg.lzGas);
+        const data = encodeAbiParameters([{ type: 'uint32' }, { type: 'bytes32' }, { type: 'bytes' }], [eid, pad(to, { size: 32 }), opts]);
+        const have = await pub.readContract({ address: escrow, abi: ESCROW_V2, functionName: 'credit', args: [me] }) as bigint;
+        const need = value > have ? value - have : 0n;
+        const bal = await pub.getBalance({ address: me }).catch(() => null);
+        if (bal != null && bal < need) { ctx.need = need; ctx.have = bal; throw new Error('insufficient funds'); }
+        s.status = 'Checking the bridge transaction…'; draw();
+        if (need > 0n) await pub.simulateContract({ account: me, address: escrow, abi: ESCROW_V2, functionName: 'prepay', value: need });
+        // Dry-run the transfer as if the prepay had landed (credit + escrow balance overridden), so a revert shows before any signing.
+        const slot = keccak256(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [me, V2_CREDIT_SLOT]));
+        const ebal = await pub.getBalance({ address: escrow });
+        const sim = () => pub.simulateContract({ account: me, address: token, abi: NFT_SAFE, functionName: 'safeTransferFrom', args: [me, escrow, id, data],
+          stateOverride: need > 0n ? [{ address: escrow, balance: ebal + need, stateDiff: [{ slot, value: pad(toHex(have + need), { size: 32 }) }] }] : undefined });
+        try { await sim(); }
+        catch (e: any) { const m = String(e?.shortMessage || e?.message || '');
+          if (need > 0n && (!/revert/i.test(String(e?.name || '') + m) || /InsufficientCredit/.test(m))) { /* RPC ignores state overrides: re-checked right after the prepay */ }
+          else { if (/ReleaseBlocked|revert/i.test(m)) { BLK.delete(`${s.col}:${s.from}`); const blk = await blockedReason(Number(id)); if (blk) { s.block = blk; ctx.blocked = blk; } } throw e; } }
+        if (need > 0n) { s.status = `Step 1/2: prepay the bridge fee (${fmtE(need)} ${N()}) in your wallet…`; draw();
+          const h1 = await w.writeContract({ address: escrow, abi: ESCROW_V2, functionName: 'prepay', value: need });
+          const r1 = await pub.waitForTransactionReceipt({ hash: h1 }); if (r1.status !== 'success') throw new Error('Prepay reverted');
+          await pub.simulateContract({ account: me, address: token, abi: NFT_SAFE, functionName: 'safeTransferFrom', args: [me, escrow, id, data] }); }
+        s.status = `${need > 0n ? 'Step 2/2: s' : 'S'}end #${s.sel} into the escrow (${fmtE(p + lz)} ${N()} from your prepaid credit) in your wallet…`; draw();
+        const h = await w.writeContract({ address: token, abi: NFT_SAFE, functionName: 'safeTransferFrom', args: [me, escrow, id, data] });
+        await finish(h);
       }
       async function finish(h: `0x${string}`) {
       const r = await pub.waitForTransactionReceipt({ hash: h });

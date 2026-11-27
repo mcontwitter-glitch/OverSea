@@ -5,6 +5,7 @@ import { createSiweMessage, generateSiweNonce } from 'viem/siwe';
 import { wallet, openConnect, onWallet, API } from './wallet';
 import { esc } from './shell';
 import { bridgeCfg, pubFor, walletFor, NFT, FACTORY, sym, type BCfg } from './bridgekit';
+import { oneWayReason } from './twoway';
 
 let S: any = null;
 export async function mountListPay(el: HTMLElement) {
@@ -93,6 +94,9 @@ export async function mountListPay(el: HTMLElement) {
       const eids = eidsOf();
       const ex = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'escrowOf', args: [s.nft as Address] });
       if (!/^0x0{40}$/i.test(ex)) { if (await track(true)) { s.busy = false; draw(); return; } throw new Error('This collection is already listed on MultiSea (escrow ' + ex + ').'); }
+      s.msg = 'Checking the collection can bridge both ways…'; draw();
+      const oneWay = await oneWayReason(pub, s.nft as Address, wallet.address as Address, c.factory as Address);
+      if (oneWay) throw new Error(oneWay);
       const fee = await pub.readContract({ address: c.factory as Address, abi: FACTORY, functionName: 'listingFee', args: [eids] });
       s.msg = `Confirm ${fmt(fee)} ${N()} in your wallet…`; draw();
       try { await pub.simulateContract({ account: wallet.address as Address, address: c.factory as Address, abi: FACTORY, functionName: 'list', args: [s.nft as Address, eids], value: fee * 103n / 100n }); }
