@@ -26,6 +26,7 @@ else if (path === '/my-packs' || path === '/packs') import('./packs').then(m => 
 else if (path === '/deploy-pack-factories') import('./packdeploy');
 else if (path === '/deploy-onchain-factories') import('./onchaindeploy');
 else if (path === '/deploy-revshare-factory') import('./revsharedeploy');
+else if (path === '/deploy-bridge-v3') import('./bridgev3deploy');
 else if (path === '/launchpad' || /^\/launchpad\/[a-z0-9-]{3,40}$/.test(path)) import('./launchpad');
 else if (/^\/r\/[a-zA-Z0-9][a-zA-Z0-9-]{1,23}$/.test(path)) { const code = path.slice(3).toLowerCase(); captureRef(code); location.replace('/?ref=' + encodeURIComponent(code)); }
 else if (path === '/referrals') import('./referrals');
