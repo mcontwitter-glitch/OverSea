@@ -9,7 +9,7 @@ import { logo } from './gx';
 import { parseAbi, type Hex } from 'viem';
 import type { LiveStats } from './liveowners';
 import { imageSrc } from './datauri';
-import { applyBridgeFlag, bridgeEnabled } from './bridgeflag';
+import { applyBridgeFlag, bridgeEnabled, bridgeOffFor } from './bridgeflag';
 import { assemble, escrowSet, type Row } from './activitycore';
 import { mergeHolders } from './holdersmerge';
 import { resolveProfiles } from './walletlinks';
@@ -22,6 +22,7 @@ const chains = CFG.chains as Record<string, { name: string; openseaSlug: string 
 const slug = location.pathname.split('/')[2];
 let col: any = null, stats: Record<string, any> = {}, listings: any[] = [], items: any[] = [], next: string | null = null, chain = '', editable = false, founder = false, state = 'loading';
 let view: 'items' | 'activity' | 'holders' | 'chains' | 'bridge' = 'items';
+let bridgeOff = false; bridgeOffFor(slug).then(o => { if (o) { bridgeOff = true; if (view === 'bridge') view = 'items'; render(); } });
 // Activity / Holders, as on Island's page: GET /activity/<slug> (Worker snapshot) through activitycore, and live owners
 // (GET /owners/<slug> snapshot or ownerOf from chain) merged per MultiSea profile.
 let activity: Row[] = [], activityState: 'idle' | 'loading' | 'ok' | 'error' = 'idle';
@@ -70,9 +71,10 @@ function render() {
    <div class="hero2"><img class="avatar" src="${esc(avatar)}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}${!/^W?ETH$/i.test(fl.currency) && fl.priceEth ? ` <span class="mut">(≈ ${fmt(fl.priceEth)} ETH)</span>` : ''}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${L.size}</b><span>Listings</span></div>${(() => { const sup = Number(col.supply || (col.idEnd ? col.idEnd - (Number(col.idStart) || 1) + 1 : 0)) || Math.max(0, ...v.map((x: any) => x.total_supply || 0)); return mcapStatHtml(mcapUsd(fl?.priceEth, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${canBridge() ? `<a class="obtn sm" href="/holders/${esc(col.slug || slug)}">💬 Holders chat</a>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
-  <div class="tabs"><button data-tab="items" class="${view === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${view === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${view === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${view === 'chains' ? 'on' : ''}">Chains</button>${canBridge() ? `<button data-tab="bridge" data-bridge-flag hidden class="${view === 'bridge' ? 'on' : ''}">Bridge</button>` : ''}</div>
+  <div class="tabs"><button data-tab="items" class="${view === 'items' ? 'on' : ''}">Items</button><button data-tab="activity" class="${view === 'activity' ? 'on' : ''}">Activity</button><button data-tab="holders" class="${view === 'holders' ? 'on' : ''}">Holders</button><button data-tab="chains" class="${view === 'chains' ? 'on' : ''}">Chains</button>${canBridge() && !bridgeOff ? `<button data-tab="bridge" data-bridge-flag hidden class="${view === 'bridge' ? 'on' : ''}">Bridge</button>` : ''}</div>
   ${view === 'items' ? itemsHtml : view === 'activity' ? `<div class="content">${activityView()}</div>` : view === 'holders' ? `<div class="content">${holdersView()}</div>` : view === 'chains' ? `<div class="content">${chainsBlock()}</div>` : '<div class="content"><div id="bridgebox"></div></div>'}`;
   applyBridgeFlag();
+  if (view === 'bridge' && bridgeOff) { view = 'items'; return render(); }
   if (view === 'bridge') {
     const box = document.getElementById('bridgebox')!;
     if (bridgeEl) { box.replaceWith(bridgeEl); return; }

@@ -13,6 +13,8 @@ let cfgP: Promise<BCfg | null> | null = null;
 export const bridgeCfg = (): Promise<BCfg | null> => (cfgP ??= fetch('/bridge.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null).then(async (c: BCfg | null) => {
   if (!c || c.network !== 'mainnet' || !API) return c;
   try { const r = await fetch(API + '/bridge/collections'); if (r.ok) { const { collections } = await r.json(); for (const x of collections || []) if (!c.collections.some(y => y.slug === x.slug)) c.collections.push(x); } } catch {}
+  const off: string[] = Array.isArray((c as any).bridgeDisabled) ? (c as any).bridgeDisabled : [];
+  if (off.length) c.collections = c.collections.filter(x => !off.includes(x.slug) && !off.includes(x.mirrorsSlug));
   return c; }));
 export const ESCROW = parseAbi(['function quote(uint32,address,uint256,bytes) view returns (uint256,uint256)', 'function bridge(uint32,address,uint256,bytes) payable returns ((bytes32,uint64,(uint256,uint256)))', 'function platformFee() view returns (uint256)']);
 export const NFT = parseAbi(['function ownerOf(uint256) view returns (address)', 'function getApproved(uint256) view returns (address)', 'function isApprovedForAll(address,address) view returns (bool)', 'function approve(address,uint256)', 'function owner() view returns (address)', 'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']);
