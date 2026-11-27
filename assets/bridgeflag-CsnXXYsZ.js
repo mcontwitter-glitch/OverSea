@@ -1,0 +1,1 @@
+export{n as bridgeEnabled}from"./bridgeflag-ClTzRvpI.js";

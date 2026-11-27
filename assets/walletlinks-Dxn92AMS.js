@@ -1,1 +1,0 @@
-export{I as profileWallets}from"./wallet-CwDIj6ct.js";

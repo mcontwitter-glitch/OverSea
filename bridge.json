@@ -72,5 +72,8 @@
    "refuel": "0xf601e05639521dBFF5C27Cb0fb104c84FFfFB419"
   }
  },
- "collections": []
+ "collections": [],
+ "bridgeDisabled": [
+  "claymons-dd97cd"
+ ]
 }

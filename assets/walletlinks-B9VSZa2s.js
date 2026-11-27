@@ -1,0 +1,1 @@
+export{I as profileWallets}from"./wallet-BDmdlMEa.js";
