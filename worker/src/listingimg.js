@@ -1,19 +1,14 @@
 // Attach image (and name) to OpenSea listings for dyn collection pages.
 // Lookup order per token: KV cache, OpenSea NFT endpoint (rate-capped), then tokenURI metadata.
 // Images are cached in KV for 14 days so later listing fetches do not hit OpenSea again.
+// Cached and returned URLs for IPFS are rewritten to /img/ipfs/ (gateway fallback + edge cache). Empty images are never cached.
 import { kput } from './kvput.js';
+import { GATEWAYS, ipfsPath, publicImage } from './ipfsimg.js';
 
 const TTL = 14 * 24 * 3600;
 const OS_BUDGET = 12; // leave room in the 60/min OpenSea budget for the listings pages themselves
 const CONCURRENCY = 10;
-const GATEWAYS = ['https://ipfs.filebase.io/ipfs/', 'https://gateway.pinata.cloud/ipfs/'];
-
-const ipfs = (u) => {
-  const s = String(u || '').trim();
-  if (!s) return '';
-  if (s.startsWith('ipfs://')) return GATEWAYS[0] + s.slice(7).replace(/^ipfs\//, '');
-  return s;
-};
+const ipfs = (u) => publicImage(u);
 function decodeString(hex) {
   try {
     const h = String(hex || '').replace(/^0x/, ''); if (h.length < 128) return '';
@@ -96,7 +91,7 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
     const cached = await Promise.all(jobs.map(j => env.COLLECTIONS.get(keyOf(j.chain, j.contract, j.id), 'json').catch(() => null)));
     const have = new Map(); // k -> {image,name}
     const miss = [];
-    jobs.forEach((j, i) => { if (cached[i]?.image) have.set(j.k, { image: cached[i].image, name: cached[i].name || '' }); else miss.push(j); });
+    jobs.forEach((j, i) => { const img = publicImage(cached[i]?.image || ''); if (img) have.set(j.k, { image: img, name: cached[i].name || '' }); else miss.push(j); });
 
     // Learn a tokenURI prefix (…/id) from one RPC, then fetch metadata for the rest without more eth_calls.
     // OpenSea is the fallback, capped, so a listings page does not burn the 60/min budget.
@@ -114,8 +109,8 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
       let rec = await fromURI(j.chain, j.contract, j.id, prefixBy[pk] || '').catch(() => null);
       if (rec?.prefix) prefixBy[pk] = rec.prefix;
       if (!rec?.image && osLeft > 0) { osLeft--; rec = await fromOS(env, j.chain, j.contract, j.id).catch(() => null); }
-      if (!rec?.image) return;
-      rec = { image: ipfs(rec.image), name: rec.name || '' };
+      const image = publicImage(rec?.image || ''); if (!image) return;
+      rec = { image, name: rec.name || '' };
       have.set(j.k, rec);
       writes.push(kput(env.COLLECTIONS, keyOf(j.chain, j.contract, j.id), JSON.stringify({ ...rec, at: Date.now() }), { expirationTtl: TTL }).catch(() => {}));
     });
@@ -124,7 +119,13 @@ export function makeListingImages({ chains, lc, osFetch, rpcCall, fetchImpl = fe
 
     for (const l of listings) {
       const rec = have.get(l.chain + ':' + l.id);
-      if (rec?.image) { l.image = rec.image; if (rec.name) l.name = rec.name; }
+      const prior = l.image || '';
+      if (rec?.image) {
+        if (prior && prior !== rec.image && !ipfsPath(prior)) l.imageAlt = prior;
+        l.image = rec.image; if (rec.name) l.name = rec.name;
+      } else if (prior) {
+        const img = publicImage(prior); if (img) l.image = img;
+      }
     }
     return listings;
   }

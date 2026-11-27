@@ -17,6 +17,7 @@ import { kput } from './kvput.js';
 import { makeLinkBridge, makePublishBridged } from './bridgelink.js';
 import { makeBridgeEnrich, isBridgedCol } from './bridgeenrich.js';
 import { makeListingImages } from './listingimg.js';
+import { makeIpfsImg, publicImage } from './ipfsimg.js';
 import { makeBtcRoutes } from './btc.js';
 import { makeHolderChat } from './holderchat.js';
 import { makeProfiles } from './profiles.js';
@@ -353,7 +354,7 @@ async function osItems(env, col, chainKey, next) {
   const d = (col.deployments || []).find(x => x.chain === chainKey) || col.deployments?.[0]; if (!d) return { nfts: [] };
   const os = chains[d.chain]?.openseaSlug; if (!os) return { nfts: [], next: null, chain: d.chain };
   const j = await (await osFetch(env, `/chain/${os}/contract/${d.address}/nfts?limit=50${next ? '&next=' + encodeURIComponent(next) : ''}`)).json().catch(() => ({}));
-  return { chain: d.chain, next: j.next || null, nfts: (j.nfts || []).map(n => ({ id: Number(n.identifier), name: n.name, image: n.display_image_url || n.image_url, chain: d.chain })) };
+  return { chain: d.chain, next: j.next || null, nfts: (j.nfts || []).map(n => ({ id: Number(n.identifier), name: n.name, image: publicImage(n.display_image_url || n.image_url || ''), chain: d.chain })) };
 }
 
 // ---------- selling helpers ----------
@@ -456,6 +457,7 @@ let _lzlegs; const lzLegs = () => (_lzlegs ??= makeLzLegs({ LP, chains }));
 let _inft; const islandNfts = () => (_inft ??= makeIslandNfts({ CFG, chains, lc, rpcFanout, cached }));
 let _owners; const owners = () => (_owners ??= makeOwners({ chains, STATIC, getCollection, lc, getDyn: bridgedCol, listDyn: bridgedCols }));
 let _solmeta; const solMeta = () => (_solmeta ??= makeSolMeta({ CFG }));
+let _ipfsimg; const ipfsImg = () => (_ipfsimg ??= makeIpfsImg());
 let _growth; const growth = () => (_growth ??= makeGrowth({ CFG, chains, lc, bad, ADDR, HASH, getCollection, feeWallet, admins, requireSession, canEdit, relayFetch, saveCollectionPatch }));
 
 // ---------- router ----------
@@ -910,6 +912,7 @@ export default {
     const ip = req.headers.get('cf-connecting-ip') || 'local';
     // Public marketplace metadata/images (solmeta.js): any origin, no per-minute IP budget (edge-cached, immutable; ME's CDN fetches in bursts). Still counted in FLOOD.
     if (url.pathname.startsWith('/sol/meta/') || url.pathname.startsWith('/sol/img/')) { const r = await solMeta()(req, env, url, ctx); if (r) return r; }
+    if (url.pathname.startsWith('/img/ipfs/')) return ipfsImg().handle(req, url, ctx);
     if (url.pathname.startsWith('/onchain-uri/')) { const r = await handleOnchainUri(req, env, url, { chains: { ...chains, ...(LP.mainnet?.chains || {}) }, kv: env.COLLECTIONS }); if (r) return r; }
     if (req.headers.get('origin') && !ch) return new Response(JSON.stringify({ error: 'origin not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } });
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });

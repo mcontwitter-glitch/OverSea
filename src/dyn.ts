@@ -8,7 +8,8 @@ import { openFounder, isFounder, founderBtn } from './founder';
 import { logo } from './gx';
 import { parseAbi, type Hex } from 'viem';
 import type { LiveStats } from './liveowners';
-import { imageSrc } from './datauri';
+import { imageSrc, installNftImgFallback } from './datauri';
+installNftImgFallback();
 import { applyBridgeFlag, bridgeEnabled, bridgeOffFor } from './bridgeflag';
 import { assemble, escrowSet, type Row } from './activitycore';
 import { mergeHolders } from './holdersmerge';
@@ -37,8 +38,13 @@ let itemStatus: 'all' | 'listed' = 'all';
 let itemSort: 'price-asc' | 'price-desc' = 'price-asc';
 function itemOf(l: any) {
   const it = items.find(x => x.chain === l.chain && x.id === l.id);
-  if (it) return { ...it, name: it.name || l.name || '#' + l.id, image: it.image || l.image || '' };
-  return { id: l.id, name: l.name || '#' + l.id, image: l.image || '', chain: l.chain };
+  if (it) return { ...it, name: it.name || l.name || '#' + l.id, image: it.image || l.image || '', imageAlt: l.imageAlt || it.imageAlt || '' };
+  return { id: l.id, name: l.name || '#' + l.id, image: l.image || '', imageAlt: l.imageAlt || '', chain: l.chain };
+}
+function nftImg(src: string | undefined, alt?: string, w = 384, h = 384) {
+  const s = imageSrc(src, API); if (!s) return '';
+  const altSrc = alt && alt !== src ? (imageSrc(alt, API) || alt) : '';
+  return `<img src="${esc(s)}" width="${w}" height="${h}" alt="" loading="lazy" data-img="${esc(src || '')}" data-img-api="${esc(API)}"${altSrc ? ` data-img-alt="${esc(altSrc)}"` : ''} onerror="window.__nftImgFb&&window.__nftImgFb(this)">`;
 }
 function gridItems() {
   const L = lmap();
@@ -60,14 +66,14 @@ function render() {
   const v = Object.values(stats); const L = lmap();
   const vol = v.reduce((a, x) => a + (x.volume || 0), 0), own = v.reduce((a, x) => a + (x.num_owners || 0), 0);
   const fl = bestFloor(listings, dynUsd);
-  const avatar = media(col.logo) || imageSrc(items[0]?.image) || '';
+  const avatar = media(col.logo) || imageSrc(items[0]?.image, API) || '';
   const shown = gridItems();
   const itemsHtml = `<div class="chips dchips">${col.deployments.map((d: any) => `<button class="chip ${chain === d.chain ? 'on' : ''}" data-chain="${d.chain}"><img class="cl" src="/logos/${d.chain}.svg" alt="">${esc(chains[d.chain]?.name)}${chainStats?.[d.chain] != null ? ` <em>${chainStats[d.chain].live.toLocaleString()}</em>` : ''}</button>`).join('')}</div>
   <div class="content"><div class="bar"><button class="chip ${itemStatus === 'all' ? 'on' : ''}" data-status="all">All</button><button class="chip ${itemStatus === 'listed' ? 'on' : ''}" data-status="listed">Listed</button><select class="sort" aria-label="Sort">${([['price-asc', 'Price: low to high', 'Price ↑'], ['price-desc', 'Price: high to low', 'Price ↓']] as const).map(([v, n, sh]) => `<option value="${v}" ${itemSort === v ? 'selected' : ''}>${window.innerWidth <= 640 ? sh : n}</option>`).join('')}</select>${L.size ? '<button class="sweepbtn" data-act="sweep" title="Buy the cheapest N listings">🧹 Sweep</button>' : ''}</div>
-  <div class="grid">${shown.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${imageSrc(it.image) ? `<img src="${esc(imageSrc(it.image))}" loading="lazy" width="384" height="384" alt="">` : ''}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
+  <div class="grid">${shown.map(it => { const l = L.get(it.chain + ':' + it.id); return `<div class="card"><div class="ci">${nftImg(it.image, it.imageAlt)}<span class="badge"><img class="cl" src="/logos/${it.chain}.svg" alt=""></span></div><div class="cb"><div class="cn">${esc(it.name || '#' + it.id)}</div><div class="cp">${l ? `<b>${fmt(l.price)} ${esc(l.currency)}</b>` : '<span class="mut">Not listed</span>'}</div>${l && chains[it.chain]?.openseaSlug ? `<button class="buy" data-buy="${it.chain}:${it.id}">Buy</button>` : ''}</div></div>`; }).join('')}</div>
   ${itemStatus !== 'listed' && next ? '<div class="more"><button data-act="more">Load more</button></div>' : ''}</div>`;
   app.innerHTML = `${navHtml()}
-  <div class="banner ${col.banner ? 'has-img' : ''}" style="${col.banner ? `background-image:url(${esc(media(col.banner))})` : ''}">${col.banner ? '' : `<div class="banner-art">${items.slice(0, 12).map(i => imageSrc(i.image) ? `<span><img src="${esc(imageSrc(i.image))}" alt="" loading="lazy" fetchpriority="low"></span>` : '').join('')}</div>`}<div class="banner-fade"></div>
+  <div class="banner ${col.banner ? 'has-img' : ''}" style="${col.banner ? `background-image:url(${esc(media(col.banner))})` : ''}">${col.banner ? '' : `<div class="banner-art">${items.slice(0, 12).map(i => nftImg(i.image) ? `<span>${nftImg(i.image, i.imageAlt)}</span>` : '').join('')}</div>`}<div class="banner-fade"></div>
    <div class="hero2"><img class="avatar" src="${esc(avatar)}" alt=""><div class="hero-txt"><h1>${esc(col.name)}</h1><div class="by">${col.deployments.map((d: any) => `<img class="cl" src="/logos/${d.chain}.svg" title="${esc(chains[d.chain]?.name)}" alt="">`).join('')}<span>${col.deployments.length} chain${col.deployments.length > 1 ? 's' : ''}</span></div>${shareBtns(col.slug || slug, col.name)}</div></div>
    <div class="stats"><div class="stat"><b>${v.length ? fmt(vol) + ' ETH' : '-'}</b><span>Total volume</span></div><div class="stat"><b>${fl ? `<img class="cl" src="/logos/${fl.chain}.svg" alt=""> ${fmt(fl.price)} ${esc(fl.currency)}${!/^W?ETH$/i.test(fl.currency) && fl.priceEth ? ` <span class="mut">(≈ ${fmt(fl.priceEth)} ETH)</span>` : ''}` : '-'}</b><span>Floor price</span></div><div class="stat"><b>${v.length ? own.toLocaleString() : '-'}</b><span>Owners</span></div><div class="stat"><b>${L.size}</b><span>Listings</span></div>${(() => { const sup = Number(col.supply || (col.idEnd ? col.idEnd - (Number(col.idStart) || 1) + 1 : 0)) || Math.max(0, ...v.map((x: any) => x.total_supply || 0)); return mcapStatHtml(mcapUsd(fl?.priceEth, sup, dynUsd)); })()}</div></div>
   <div class="descrow"><p class="desc">${esc(col.description)}</p><div class="links">${linksHtml(col)}${canBridge() ? `<a class="obtn sm" href="/holders/${esc(col.slug || slug)}">💬 Holders chat</a>` : ''}${editable ? '<button class="editbtn" data-act="edit">✎ Edit collection</button>' : ''}${founderBtn(founder)}</div></div>
@@ -102,8 +108,8 @@ function activityView() {
   const label = (a: Row) => a.type === 'sale' ? 'Sale' : a.type === 'mint' ? 'Mint' : a.type === 'bridge' ? 'Bridged' : 'Sent';
   const route = (a: Row) => a.type !== 'bridge' ? '' : `<small class="mut">${a.dir === 'out' ? `from ${cn(a.chain)}` : a.dir === 'in' ? `to ${cn(a.chain2!)}` : `${cn(a.chain)} → ${cn(a.chain2!)}`}</small>`;
   return `<div class="act"><div class="acth"><span>Event</span><span>Item</span><span>Price</span><span>From</span><span>To</span><span>Time</span></div>
-   ${rows.slice(0, 200).map(a => { const it = byKey.get(a.chain + ':' + a.id); const img = imageSrc(it?.image); const u = txUrl(a.chain, a.tx), u2 = a.tx2 && a.chain2 ? txUrl(a.chain2, a.tx2) : ''; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
-     <span class="ai">${img ? `<img src="${esc(img)}" width="40" height="40" alt="" loading="lazy">` : ''}<span>${esc(it?.name || '#' + a.id)}</span></span>
+   ${rows.slice(0, 200).map(a => { const it = byKey.get(a.chain + ':' + a.id); const u = txUrl(a.chain, a.tx), u2 = a.tx2 && a.chain2 ? txUrl(a.chain2, a.tx2) : ''; return `<div class="actr"><span class="ev">${logo(a.chain)}<b class="t-${a.type}">${label(a)}</b>${route(a)}</span>
+     <span class="ai">${nftImg(it?.image, it?.imageAlt, 40, 40)}<span>${esc(it?.name || '#' + a.id)}</span></span>
      <span>${a.type === 'sale' && a.price != null ? `${fmt(a.price)} ${esc(String(a.currency || '').startsWith('0x') ? short(a.currency) : a.currency)}` : '-'}</span><span>${addrLink(a.from)}</span><span>${addrLink(a.to)}</span>
      <span>${u ? `<a href="${u}" target="_blank" rel="noopener" title="${cn(a.chain)} transaction">${ago(a.ts)} ↗</a>` : ago(a.ts)}${u2 ? ` <a class="small mut" href="${u2}" target="_blank" rel="noopener" title="${cn(a.chain2!)} transaction">${cn(a.chain2!)} ↗</a>` : ''}</span></div>`; }).join('') || `<div class="empty">${activityState === 'loading' || activityState === 'idle' ? 'Loading on-chain activity…' : activityState === 'error' ? "Couldn't load activity. Try again in a minute." : 'No activity found'}</div>`}</div>`;
 }
